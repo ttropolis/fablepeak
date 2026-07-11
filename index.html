@@ -192,6 +192,8 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<!-- Optional cloud config. Absent (404) = local mode. See backend-config.sample.js -->
+<script src="backend-config.js"></script>
 <script>
 "use strict";
 /* =============== constants =============== */
@@ -271,8 +273,43 @@ function seedDemo(){
   ];
   return {brands:[b], activeBrand:b.id};
 }
-function load(){
-  try{ db = JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){ db=null; }
+/* =============== storage adapters ===============
+   All persistence flows through `store`. The UI never touches
+   localStorage or a network directly — swapping in a real backend
+   means implementing RemoteAdapter only. See BACKEND_SPEC.md. */
+const LocalAdapter = {
+  name: "local",
+  user: null,                                  // no auth in local mode
+  async init(){},
+  async load(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){ return null; } },
+  async persist(data){ localStorage.setItem(LS_KEY, JSON.stringify(data)); },
+  async signIn(){ throw new Error("Local mode has no accounts"); },
+  async signOut(){},
+  onRemoteChange(cb){ /* no-op: nothing else writes local data */ },
+};
+
+/* PLACEHOLDER — cloud backend. Contract is frozen; implementation is not.
+   Implement every method per BACKEND_SPEC.md §4, keep signatures identical,
+   then set window.FABLEPEAK_BACKEND in backend-config.js to activate. */
+const RemoteAdapter = {
+  name: "cloud",
+  user: null,                                  // {id, email, name} after signIn
+  async init(){                                // connect client SDK, restore session
+    throw new Error("Cloud backend not implemented yet — see BACKEND_SPEC.md");
+  },
+  async load(){ throw new Error("unimplemented"); },        // fetch this user's brands
+  async persist(data){ throw new Error("unimplemented"); }, // upsert changed entities
+  async signIn(email, password){ throw new Error("unimplemented"); },
+  async signOut(){ throw new Error("unimplemented"); },
+  onRemoteChange(cb){ /* subscribe to server changes; call cb(freshDb) */ },
+};
+
+const store = window.FABLEPEAK_BACKEND ? RemoteAdapter : LocalAdapter;
+
+async function load(){
+  try{ await store.init(); }
+  catch(e){ if(store===RemoteAdapter) toast("Cloud unavailable — see BACKEND_SPEC.md"); }
+  try{ db = await store.load(); }catch(e){ db = null; }
   if(!db){ // migrate data saved under a previous app name
     for(const k of LEGACY_KEYS){
       try{ const old = JSON.parse(localStorage.getItem(k));
@@ -280,10 +317,18 @@ function load(){
     }
   }
   if(!db || !db.brands || !db.brands.length){ db = seedDemo(); save(); }
+  store.onRemoteChange(fresh => { db = fresh; render(); });
 }
-function save(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(db)); }
-  catch(e){ toast("⚠️ Could not save — storage full. Export a backup and delete old posts."); }
+let _persistT = null;
+function save(){                               // sync signature, debounced async persist
+  clearTimeout(_persistT);
+  _persistT = setTimeout(() => {
+    store.persist(db).catch(e => {
+      toast(store.name==="local"
+        ? "⚠️ Could not save — storage full. Export a backup and delete old posts."
+        : "⚠️ Cloud save failed — changes kept locally, will retry on next edit.");
+    });
+  }, 200);
 }
 function brand(){ return db.brands.find(b=>b.id===db.activeBrand) || db.brands[0]; }
 function netOf(id){ return NETWORKS.find(n=>n.id===id); }
@@ -731,6 +776,17 @@ function renderSettings(m){
       </div>
     </div>
     <div class="card" style="flex:1;min-width:280px">
+      <h4 style="margin-bottom:10px">Cloud sync &amp; team accounts</h4>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
+        Mode: <strong>${store.name==="cloud" ? "☁️ Cloud" : "💻 Local (this browser only)"}</strong>
+        ${store.user ? " · signed in as "+esc(store.user.email) : ""}</p>
+      ${store.name==="cloud" ? `
+        <button class="btn" onclick="cloudSignIn()">Sign in</button>` : `
+        <p style="color:var(--muted);font-size:13px">Multi-user sync is scaffolded but not yet
+        implemented. A developer can wire it up by following <code>BACKEND_SPEC.md</code> in the
+        repo — the app already routes all data through a swappable storage adapter.</p>`}
+    </div>
+    <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Your data</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Back up everything to a JSON file, restore it later, or start fresh with demo data.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -782,9 +838,15 @@ function resetData(){
   if(!confirm("Replace ALL current data with fresh demo data?"))return;
   db=seedDemo(); save(); render(); toast("Demo data restored");
 }
+function cloudSignIn(){
+  const email=prompt("Email:"); if(!email)return;
+  const pw=prompt("Password:"); if(!pw)return;
+  store.signIn(email,pw).then(()=>{ load().then(render); toast("Signed in"); })
+    .catch(e=>toast("Sign-in failed: "+e.message));
+}
 
 /* =============== boot =============== */
-load(); render();
+load().then(render);
 document.getElementById("verSlot").textContent = "v"+APP_VERSION;
 
 /* flip scheduled→published on time, once a minute, without disturbing typing */
