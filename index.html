@@ -1,0 +1,746 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metricoolito — Social Media Manager</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --panel:#ffffff; --ink:#182b3a; --muted:#6b7c8d;
+    --brand:#1c3d5a; --accent:#22c1dc; --accent2:#7ee081; --danger:#e05a5a;
+    --line:#e3e9ef; --chip-draft:#f0ad4e; --chip-sched:#22c1dc; --chip-pub:#5cb87a;
+    --radius:12px; --shadow:0 1px 3px rgba(24,43,58,.08);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);display:flex;min-height:100vh;font-size:14px}
+
+  /* ---------- sidebar ---------- */
+  aside{width:220px;background:var(--brand);color:#dfe9f2;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0}
+  .logo{padding:18px 16px;font-size:18px;font-weight:700;color:#fff;letter-spacing:.3px;display:flex;align-items:center;gap:8px}
+  .logo span{color:var(--accent)}
+  .brandbox{margin:0 12px 14px;padding:10px;background:rgba(255,255,255,.08);border-radius:10px}
+  .brandbox label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#9db4c6}
+  .brandbox select{width:100%;margin-top:6px;padding:7px 8px;border-radius:8px;border:none;background:#fff;color:var(--ink);font-size:13px}
+  nav{flex:1;overflow-y:auto}
+  nav button{display:flex;align-items:center;gap:10px;width:100%;padding:11px 18px;background:none;border:none;color:#c4d4e2;font-size:14px;cursor:pointer;text-align:left;border-left:3px solid transparent}
+  nav button:hover{background:rgba(255,255,255,.06);color:#fff}
+  nav button.active{background:rgba(34,193,220,.15);color:#fff;border-left-color:var(--accent)}
+  nav .ic{width:20px;text-align:center}
+  .sidefoot{padding:12px 16px;font-size:11px;color:#7f95a8;border-top:1px solid rgba(255,255,255,.1)}
+
+  /* ---------- main ---------- */
+  main{flex:1;padding:22px 26px;max-width:1200px}
+  h1{font-size:21px;margin-bottom:2px}
+  .sub{color:var(--muted);margin-bottom:18px}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+  .kpi .n{font-size:24px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:12px;margin-top:2px}
+  .kpi .d{font-size:12px;margin-top:4px}
+  .up{color:#3d9b63}.down{color:var(--danger)}
+  button.btn{background:var(--accent);border:none;color:#04303a;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px}
+  button.btn:hover{filter:brightness(1.08)}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  button.mini{padding:4px 9px;font-size:12px;border-radius:6px}
+  button.dangerb{background:var(--danger);color:#fff}
+  input[type=text],input[type=url],input[type=date],input[type=time],input[type=number],textarea,select.inp{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:var(--ink)}
+  textarea{resize:vertical;min-height:70px}
+  label.f{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:12px 0 4px}
+
+  /* ---------- calendar ---------- */
+  .calhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+  .calhead h2{font-size:17px}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .dow{font-size:11px;font-weight:700;color:var(--muted);text-align:center;text-transform:uppercase;padding:4px 0}
+  .day{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:96px;min-width:0;padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:4px;transition:border-color .15s}
+  .day:hover{border-color:var(--accent)}
+  .day.other{opacity:.42}
+  .day.today{border:2px solid var(--accent)}
+  .day.dragover{background:#e7f8fb;border-color:var(--accent)}
+  .dnum{font-size:12px;font-weight:600;color:var(--muted)}
+  .post{font-size:11px;padding:3px 6px;border-radius:6px;color:#fff;cursor:grab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:4px;align-items:center}
+  .post .nets{font-size:9px;opacity:.9}
+  .post.draft{background:var(--chip-draft)}
+  .post.scheduled{background:var(--chip-sched)}
+  .post.published{background:var(--chip-pub)}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
+
+  /* ---------- modal ---------- */
+  .overlay{position:fixed;inset:0;background:rgba(15,30,42,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .overlay.open{display:flex}
+  .modal{background:#fff;border-radius:14px;width:520px;max-width:100%;max-height:92vh;overflow-y:auto;padding:22px}
+  .modal h3{margin-bottom:4px}
+  .netpick{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .netpick label{display:flex;align-items:center;gap:5px;border:1px solid var(--line);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13px}
+  .netpick label.on{background:#e7f8fb;border-color:var(--accent)}
+  .modalfoot{display:flex;justify-content:space-between;margin-top:18px;gap:8px}
+  .modalfoot .right{display:flex;gap:8px}
+
+  /* ---------- charts ---------- */
+  .chartbox{flex:1;min-width:300px}
+  .chartbox h4{font-size:13px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+  svg text{font-family:inherit}
+  .heat{display:grid;grid-template-columns:36px repeat(24,1fr);gap:2px;font-size:9px}
+  .heat .hl{color:var(--muted);display:flex;align-items:center}
+  .heat .hc{aspect-ratio:1;border-radius:2px;min-width:8px}
+  .heat .hh{color:var(--muted);text-align:center}
+
+  /* ---------- inbox ---------- */
+  .inboxwrap{display:flex;gap:14px;min-height:440px}
+  .msglist{width:320px;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
+  .msg{padding:10px 12px;cursor:pointer}
+  .msg.sel{border-color:var(--accent);background:#f2fbfd}
+  .msg .from{font-weight:600;display:flex;justify-content:space-between;font-size:13px}
+  .msg .prev{color:var(--muted);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .msg.unread .from::before{content:"●";color:var(--accent);margin-right:6px}
+  .thread{flex:1;display:flex;flex-direction:column}
+  .bubbles{flex:1;display:flex;flex-direction:column;gap:8px;padding:6px 2px;overflow-y:auto}
+  .bub{max-width:75%;padding:9px 12px;border-radius:12px;font-size:13px}
+  .bub.them{background:#eef2f6;align-self:flex-start}
+  .bub.me{background:var(--accent);color:#04303a;align-self:flex-end}
+  .replyrow{display:flex;gap:8px;margin-top:10px}
+  .tabbar{display:flex;gap:6px;margin-bottom:12px}
+  .tabbar button{border:1px solid var(--line);background:#fff;padding:6px 12px;border-radius:20px;cursor:pointer;font-size:12px;color:var(--ink)}
+  .tabbar button.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+
+  /* ---------- smartlinks ---------- */
+  .slwrap{display:flex;gap:22px;flex-wrap:wrap}
+  .sledit{flex:1;min-width:300px}
+  .phone{width:290px;border:10px solid #182b3a;border-radius:34px;background:#fff;padding:24px 16px;height:560px;overflow-y:auto;flex-shrink:0}
+  .phone .av{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:34px;margin:0 auto 10px;background:#eef2f6}
+  .phone h5{text-align:center;font-size:16px}
+  .phone .bio{text-align:center;color:var(--muted);font-size:12px;margin:6px 0 16px}
+  .slink{display:block;text-align:center;padding:11px;border-radius:10px;color:#fff;font-weight:600;font-size:13px;margin-bottom:10px;text-decoration:none;cursor:pointer}
+  .slrow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .slrow input{flex:1}
+  .clicks{font-size:11px;color:var(--muted);white-space:nowrap}
+
+  /* ---------- connections ---------- */
+  .conngrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .conn{display:flex;flex-direction:column;gap:8px}
+  .conn .top{display:flex;align-items:center;gap:10px}
+  .nico{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;flex-shrink:0}
+  .conn .st{font-size:12px;color:var(--muted)}
+  .conn .st.on{color:#3d9b63;font-weight:600}
+
+  /* ---------- report ---------- */
+  table.rep{width:100%;border-collapse:collapse;margin-top:10px}
+  table.rep th,table.rep td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
+  table.rep th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+
+  .empty{color:var(--muted);text-align:center;padding:40px 10px}
+  .toast{position:fixed;bottom:22px;right:22px;background:var(--brand);color:#fff;padding:11px 18px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .25s;z-index:99;pointer-events:none}
+  .toast.show{opacity:1}
+  @media print{
+    aside,.noprint,.toast{display:none!important}
+    main{padding:0;max-width:none}
+    body{background:#fff}
+  }
+  @media (max-width:820px){
+    body{flex-direction:column}
+    aside{width:100%;height:auto;position:static}
+    nav{display:flex;flex-wrap:wrap}
+    nav button{width:auto}
+  }
+</style>
+
+<aside>
+  <div class="logo">📊 Metricool<span>ito</span></div>
+  <div class="brandbox">
+    <label>Brand</label>
+    <select id="brandSel" onchange="switchBrand(this.value)"></select>
+  </div>
+  <nav id="nav"></nav>
+  <div class="sidefoot">Local prototype · data lives in your browser</div>
+</aside>
+
+<main id="main"></main>
+
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modalBody"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =============== constants =============== */
+const NETWORKS = [
+  {id:"instagram", name:"Instagram", short:"IG", color:"#d6437f"},
+  {id:"x",         name:"X / Twitter", short:"X",  color:"#111111"},
+  {id:"facebook",  name:"Facebook",  short:"FB", color:"#1877f2"},
+  {id:"linkedin",  name:"LinkedIn",  short:"LI", color:"#0a66c2"},
+  {id:"tiktok",    name:"TikTok",    short:"TT", color:"#00b7b0"},
+  {id:"youtube",   name:"YouTube",   short:"YT", color:"#e04040"},
+  {id:"pinterest", name:"Pinterest", short:"PN", color:"#bd2126"},
+  {id:"gbp",       name:"Google Business", short:"GB", color:"#34a853"},
+];
+const VIEWS = [
+  {id:"planner",    ic:"🗓",  name:"Planner"},
+  {id:"analytics",  ic:"📈", name:"Analytics"},
+  {id:"inbox",      ic:"💬", name:"Inbox"},
+  {id:"smartlinks", ic:"🔗", name:"SmartLinks"},
+  {id:"reports",    ic:"📄", name:"Reports"},
+  {id:"connections",ic:"🔌", name:"Connections"},
+  {id:"settings",   ic:"⚙️", name:"Settings"},
+];
+const LS_KEY = "metricoolito_v1";
+const uid = () => Math.random().toString(36).slice(2,10);
+const fmtDate = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const todayStr = () => fmtDate(new Date());
+
+/* =============== state =============== */
+let db = null;
+let view = "planner";
+let calCursor = new Date();      // month shown in planner
+let selectedMsg = null;
+let inboxFilter = "all";
+let analyticsNet = "all";
+
+function defaultBrand(name){
+  const b = {
+    id: uid(), name,
+    seed: Math.floor(Math.random()*10000),
+    connections: {}, posts: [], inbox: [],
+    smartlink: { title:name, bio:"Welcome! All my links in one place.", avatar:"🚀", color:"#22c1dc",
+      links:[{id:uid(),title:"Our website",url:"https://example.com",clicks:132},
+             {id:uid(),title:"Latest video",url:"https://example.com/video",clicks:87},
+             {id:uid(),title:"Newsletter",url:"https://example.com/news",clicks:45}] }
+  };
+  return b;
+}
+function seedDemo(){
+  const b = defaultBrand("My Brand");
+  b.connections = {instagram:"@mybrand", x:"@mybrand", linkedin:"my-brand", tiktok:"@mybrand"};
+  const base = new Date();
+  const mk = (dayOff,hour,text,nets,status)=>{
+    const d = new Date(base); d.setDate(d.getDate()+dayOff);
+    return {id:uid(), date:fmtDate(d), time:String(hour).padStart(2,"0")+":00",
+            text, networks:nets, status};
+  };
+  b.posts = [
+    mk(-6,10,"Behind the scenes: how we build our product 🛠",["instagram","tiktok"],"published"),
+    mk(-4,15,"5 lessons we learned this quarter — a thread 🧵",["x","linkedin"],"published"),
+    mk(-2,9,"Customer story: +40% growth in 3 months 🚀",["linkedin"],"published"),
+    mk(0,18,"New feature drop! Check the link in bio ✨",["instagram","x","facebook"],"scheduled"),
+    mk(1,11,"Weekly tips: batch your content on Mondays",["instagram"],"scheduled"),
+    mk(3,17,"Live Q&A this Friday — drop your questions 👇",["instagram","tiktok"],"scheduled"),
+    mk(5,12,"Draft: monthly recap carousel",["instagram","linkedin"],"draft"),
+  ];
+  b.inbox = [
+    {id:uid(), net:"instagram", from:"@sofia.designs", resolved:false, unread:true,
+     msgs:[{who:"them",text:"Hi! Do you ship internationally?"}]},
+    {id:uid(), net:"x", from:"@devmarcus", resolved:false, unread:true,
+     msgs:[{who:"them",text:"Loved the thread on quarterly lessons. Any chance of a blog version?"}]},
+    {id:uid(), net:"facebook", from:"Laura P.", resolved:false, unread:false,
+     msgs:[{who:"them",text:"What are your support hours?"},{who:"me",text:"Hi Laura! Mon–Fri, 9–18h CET 😊"},{who:"them",text:"Perfect, thanks!"}]},
+    {id:uid(), net:"linkedin", from:"Carlos M. (Acme Corp)", resolved:true, unread:false,
+     msgs:[{who:"them",text:"Interested in a partnership. Who should I talk to?"},{who:"me",text:"Hi Carlos, just sent you our partnerships deck!"}]},
+  ];
+  return {brands:[b], activeBrand:b.id};
+}
+function load(){
+  try{ db = JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){ db=null; }
+  if(!db || !db.brands || !db.brands.length){ db = seedDemo(); save(); }
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(db)); }
+function brand(){ return db.brands.find(b=>b.id===db.activeBrand) || db.brands[0]; }
+function netOf(id){ return NETWORKS.find(n=>n.id===id); }
+function connectedNets(){ return NETWORKS.filter(n=>brand().connections[n.id]); }
+
+/* auto-publish posts whose scheduled datetime passed */
+function tickPublish(){
+  const now = new Date();
+  let changed = false;
+  db.brands.forEach(b=>b.posts.forEach(p=>{
+    if(p.status==="scheduled" && new Date(p.date+"T"+(p.time||"09:00")) <= now){
+      p.status="published"; changed=true;
+    }
+  }));
+  if(changed) save();
+}
+
+/* =============== deterministic demo metrics =============== */
+function rng(seed){ let s=seed%2147483647; if(s<=0)s+=2147483646;
+  return ()=> (s = s*16807 % 2147483647) / 2147483647; }
+function metricSeries(days, netId){
+  // followers + daily engagement for last `days` days, deterministic per brand+network
+  const b = brand();
+  const seedN = b.seed + (netId==="all"?0:NETWORKS.findIndex(n=>n.id===netId)*97);
+  const r = rng(seedN+1);
+  const baseF = 800 + Math.floor(r()*9000);
+  const out=[];
+  let f = baseF;
+  for(let i=days-1;i>=0;i--){
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const ds = fmtDate(d);
+    f += Math.floor(r()*40 - 8);
+    const posted = b.posts.filter(p=>p.date===ds && p.status==="published" &&
+      (netId==="all" || p.networks.includes(netId))).length;
+    const eng = Math.floor(r()*120 + posted*260);
+    const imp = Math.floor(eng * (14 + r()*10));
+    out.push({date:ds, followers:f, engagement:eng, impressions:imp});
+  }
+  return out;
+}
+
+/* =============== ui plumbing =============== */
+function toast(msg){
+  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200);
+}
+function openModal(html){ document.getElementById("modalBody").innerHTML=html;
+  document.getElementById("overlay").classList.add("open"); }
+function closeModal(){ document.getElementById("overlay").classList.remove("open"); }
+function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function renderNav(){
+  document.getElementById("nav").innerHTML = VIEWS.map(v=>
+    `<button class="${v.id===view?'active':''}" onclick="go('${v.id}')">
+       <span class="ic">${v.ic}</span>${v.name}</button>`).join("");
+  const sel=document.getElementById("brandSel");
+  sel.innerHTML = db.brands.map(b=>`<option value="${b.id}" ${b.id===db.activeBrand?'selected':''}>${esc(b.name)}</option>`).join("");
+}
+function go(v){ view=v; selectedMsg=null; render(); }
+function switchBrand(id){ db.activeBrand=id; save(); render(); }
+function render(){
+  tickPublish(); renderNav();
+  const m=document.getElementById("main");
+  ({planner:renderPlanner, analytics:renderAnalytics, inbox:renderInbox,
+    smartlinks:renderSmartlinks, reports:renderReports,
+    connections:renderConnections, settings:renderSettings}[view])(m);
+}
+
+/* =============== PLANNER =============== */
+function renderPlanner(m){
+  const y=calCursor.getFullYear(), mo=calCursor.getMonth();
+  const monthName = calCursor.toLocaleString("en",{month:"long",year:"numeric"});
+  const first = new Date(y,mo,1);
+  let start = new Date(first); start.setDate(1-((first.getDay()+6)%7)); // Monday start
+  const cells=[];
+  for(let i=0;i<42;i++){ const d=new Date(start); d.setDate(start.getDate()+i); cells.push(d); }
+  const b=brand();
+  const postsBy={}; b.posts.forEach(p=>{ (postsBy[p.date]=postsBy[p.date]||[]).push(p); });
+
+  m.innerHTML = `
+  <h1>Content Planner</h1>
+  <div class="sub">Click a day to schedule. Drag posts between days. ${connectedNets().length? "" : "⚠️ No profiles connected yet — go to Connections."}</div>
+  <div class="card">
+    <div class="calhead">
+      <h2>${monthName}</h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost mini" onclick="calMove(-1)">← Prev</button>
+        <button class="btn ghost mini" onclick="calCursor=new Date();render()">Today</button>
+        <button class="btn ghost mini" onclick="calMove(1)">Next →</button>
+        <button class="btn mini" onclick="openPostModal(null,'${todayStr()}')">+ New post</button>
+      </div>
+    </div>
+    <div class="calgrid">
+      ${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dow">${d}</div>`).join("")}
+      ${cells.map(d=>{
+        const ds=fmtDate(d);
+        const cls=["day", d.getMonth()!==mo?"other":"", ds===todayStr()?"today":""].join(" ");
+        const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>
+          `<div class="post ${p.status}" draggable="true" title="${esc(p.text)}"
+                ondragstart="dragPost(event,'${p.id}')"
+                onclick="event.stopPropagation();openPostModal('${p.id}')">
+             <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</div>`).join("");
+        return `<div class="${cls}" onclick="openPostModal(null,'${ds}')"
+                  ondragover="event.preventDefault();this.classList.add('dragover')"
+                  ondragleave="this.classList.remove('dragover')"
+                  ondrop="dropPost(event,'${ds}')">
+                  <div class="dnum">${d.getDate()}</div>${chips}</div>`;
+      }).join("")}
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--chip-draft)"></i>Draft</span>
+      <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
+      <span><i style="background:var(--chip-pub)"></i>Published</span>
+    </div>
+  </div>`;
+}
+function calMove(n){ calCursor.setMonth(calCursor.getMonth()+n); render(); }
+function dragPost(ev,id){ ev.dataTransfer.setData("text/plain",id); }
+function dropPost(ev,ds){
+  ev.preventDefault(); ev.currentTarget.classList.remove("dragover");
+  const id=ev.dataTransfer.getData("text/plain");
+  const p=brand().posts.find(p=>p.id===id);
+  if(p){ p.date=ds; if(p.status==="published") p.status="scheduled"; save(); render(); toast("Post moved to "+ds); }
+}
+function openPostModal(id, dateStr){
+  const b=brand();
+  const p = id? b.posts.find(x=>x.id===id) : null;
+  const nets = p? p.networks : connectedNets().slice(0,1).map(n=>n.id);
+  openModal(`
+    <h3>${p? "Edit post":"New post"}</h3>
+    <div class="sub">${p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
+    <label class="f">Content</label>
+    <textarea id="pm_text" placeholder="What do you want to say?">${esc(p?.text||"")}</textarea>
+    <label class="f">Networks</label>
+    <div class="netpick" id="pm_nets">
+      ${NETWORKS.map(n=>{
+        const conn=!!b.connections[n.id];
+        const on=nets.includes(n.id);
+        return `<label class="${on?'on':''}" style="${conn?'':'opacity:.4'}" title="${conn?'':'Not connected'}">
+          <input type="checkbox" value="${n.id}" ${on?'checked':''} ${conn?'':'disabled'}
+            onchange="this.parentElement.classList.toggle('on',this.checked)">
+          <span style="color:${n.color};font-weight:700">${n.short}</span> ${n.name}</label>`;
+      }).join("")}
+    </div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label class="f">Date</label><input type="date" id="pm_date" value="${p?.date||dateStr||todayStr()}"></div>
+      <div style="flex:1"><label class="f">Time</label><input type="time" id="pm_time" value="${p?.time||"10:00"}"></div>
+      <div style="flex:1"><label class="f">Status</label>
+        <select class="inp" id="pm_status">
+          ${["draft","scheduled","published"].map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
+        </select></div>
+    </div>
+    <div class="modalfoot">
+      <div>${p?`<button class="btn dangerb mini" onclick="deletePost('${p.id}')">Delete</button>
+               <button class="btn ghost mini" onclick="dupPost('${p.id}')">Duplicate</button>`:""}</div>
+      <div class="right">
+        <button class="btn ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>
+      </div>
+    </div>`);
+}
+function savePost(id){
+  const text=document.getElementById("pm_text").value.trim();
+  const nets=[...document.querySelectorAll("#pm_nets input:checked")].map(i=>i.value);
+  const date=document.getElementById("pm_date").value, time=document.getElementById("pm_time").value;
+  const status=document.getElementById("pm_status").value;
+  if(!text) return toast("Write some content first");
+  if(!nets.length) return toast("Pick at least one network");
+  const b=brand();
+  if(id){ const p=b.posts.find(x=>x.id===id); Object.assign(p,{text,networks:nets,date,time,status}); }
+  else b.posts.push({id:uid(),text,networks:nets,date,time,status});
+  save(); closeModal(); render(); toast(id?"Post updated":"Post scheduled ✔");
+}
+function deletePost(id){ const b=brand(); b.posts=b.posts.filter(p=>p.id!==id); save(); closeModal(); render(); toast("Post deleted"); }
+function dupPost(id){ const b=brand(); const p=b.posts.find(x=>x.id===id);
+  b.posts.push({...p,id:uid(),status:"draft"}); save(); closeModal(); render(); toast("Duplicated as draft"); }
+
+/* =============== ANALYTICS =============== */
+function lineChart(series, key, color){
+  const W=560,H=170,P=28;
+  const vals=series.map(s=>s[key]);
+  const min=Math.min(...vals), max=Math.max(...vals), span=(max-min)||1;
+  const pts=series.map((s,i)=>{
+    const x=P+i*(W-2*P)/(series.length-1);
+    const y=H-P-(s[key]-min)/span*(H-2*P);
+    return [x,y];
+  });
+  const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
+  const area=path+` L${pts[pts.length-1][0]},${H-P} L${pts[0][0]},${H-P} Z`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">
+    <path d="${area}" fill="${color}22"/><path d="${path}" fill="none" stroke="${color}" stroke-width="2.5"/>
+    <text x="${P}" y="14" font-size="11" fill="#6b7c8d">${max.toLocaleString()}</text>
+    <text x="${P}" y="${H-8}" font-size="11" fill="#6b7c8d">${min.toLocaleString()}</text>
+    <text x="${W-P}" y="${H-8}" font-size="11" text-anchor="end" fill="#6b7c8d">${series[series.length-1].date.slice(5)}</text>
+  </svg>`;
+}
+function barChart(series, key, color){
+  const W=560,H=170,P=26;
+  const vals=series.map(s=>s[key]); const max=Math.max(...vals)||1;
+  const bw=(W-2*P)/series.length;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">
+    ${series.map((s,i)=>{
+      const h=(s[key]/max)*(H-2*P);
+      return `<rect x="${(P+i*bw+1).toFixed(1)}" y="${(H-P-h).toFixed(1)}" width="${Math.max(bw-2,1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color}"/>`;
+    }).join("")}
+    <text x="${P}" y="14" font-size="11" fill="#6b7c8d">max ${max.toLocaleString()}</text>
+  </svg>`;
+}
+function bestTimesHeat(){
+  const b=brand(); const r=rng(b.seed+42);
+  const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  let cells=`<div></div>${Array.from({length:24},(_,h)=>`<div class="hh">${h%3===0?h:""}</div>`).join("")}`;
+  for(const d of days){
+    cells+=`<div class="hl">${d}</div>`;
+    for(let h=0;h<24;h++){
+      let v=r();
+      if(h>=8&&h<=11)v=Math.min(1,v+.35); if(h>=17&&h<=20)v=Math.min(1,v+.45); if(h<6)v*=.2;
+      cells+=`<div class="hc" title="${d} ${h}:00 — activity ${(v*100)|0}%" style="background:rgba(34,193,220,${(v*.9+.05).toFixed(2)})"></div>`;
+    }
+  }
+  return `<div class="heat">${cells}</div>`;
+}
+function renderAnalytics(m){
+  const s = metricSeries(30, analyticsNet);
+  const last=s[s.length-1], prev=s[0];
+  const fDelta=last.followers-prev.followers;
+  const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
+  const b=brand();
+  const monthPosts=b.posts.filter(p=>p.status==="published").length;
+  const engRate=((totEng/Math.max(totImp,1))*100).toFixed(1);
+  m.innerHTML=`
+  <h1>Analytics</h1>
+  <div class="sub">Last 30 days · demo metrics generated locally (published posts boost the numbers)</div>
+  <div class="tabbar noprint">
+    <button class="${analyticsNet==="all"?"active":""}" onclick="analyticsNet='all';render()">All networks</button>
+    ${connectedNets().map(n=>`<button class="${analyticsNet===n.id?"active":""}" onclick="analyticsNet='${n.id}';render()">${n.name}</button>`).join("")}
+  </div>
+  <div class="kpis">
+    <div class="card kpi"><div class="n">${last.followers.toLocaleString()}</div><div class="l">Followers</div>
+      <div class="d ${fDelta>=0?"up":"down"}">${fDelta>=0?"▲":"▼"} ${Math.abs(fDelta).toLocaleString()} this month</div></div>
+    <div class="card kpi"><div class="n">${totImp.toLocaleString()}</div><div class="l">Impressions</div></div>
+    <div class="card kpi"><div class="n">${totEng.toLocaleString()}</div><div class="l">Engagements</div></div>
+    <div class="card kpi"><div class="n">${engRate}%</div><div class="l">Engagement rate</div></div>
+    <div class="card kpi"><div class="n">${monthPosts}</div><div class="l">Posts published</div></div>
+  </div>
+  <div class="row">
+    <div class="card chartbox"><h4>Follower growth</h4>${lineChart(s,"followers","#22c1dc")}</div>
+    <div class="card chartbox"><h4>Daily engagement</h4>${barChart(s,"engagement","#7ee081")}</div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Best times to post (audience activity)</h4>
+    ${bestTimesHeat()}
+  </div>`;
+}
+
+/* =============== INBOX =============== */
+function renderInbox(m){
+  const b=brand();
+  const list=b.inbox.filter(c=> inboxFilter==="all" ? !c.resolved
+    : inboxFilter==="unread" ? c.unread && !c.resolved : c.resolved);
+  const sel = selectedMsg? b.inbox.find(c=>c.id===selectedMsg) : null;
+  m.innerHTML=`
+  <h1>Inbox</h1>
+  <div class="sub">Messages and comments from every network, in one place.</div>
+  <div class="tabbar">
+    ${["all","unread","resolved"].map(f=>`<button class="${inboxFilter===f?"active":""}"
+        onclick="inboxFilter='${f}';selectedMsg=null;render()">${f[0].toUpperCase()+f.slice(1)}</button>`).join("")}
+    <button style="margin-left:auto" onclick="fakeIncoming()">＋ Simulate incoming</button>
+  </div>
+  <div class="inboxwrap">
+    <div class="msglist">
+      ${list.length? list.map(c=>{
+        const n=netOf(c.net);
+        return `<div class="card msg ${c.unread?"unread":""} ${sel&&sel.id===c.id?"sel":""}" onclick="openMsg('${c.id}')">
+          <div class="from"><span>${esc(c.from)}</span>
+            <span class="nico" style="background:${n.color};width:22px;height:22px;font-size:9px;border-radius:6px">${n.short}</span></div>
+          <div class="prev">${esc(c.msgs[c.msgs.length-1].text)}</div></div>`;
+      }).join("") : `<div class="empty">Nothing here 🎉</div>`}
+    </div>
+    <div class="card thread">
+      ${sel? `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <strong>${esc(sel.from)} · ${netOf(sel.net).name}</strong>
+          <button class="btn ghost mini" onclick="toggleResolved('${sel.id}')">${sel.resolved?"Reopen":"Mark resolved ✓"}</button>
+        </div>
+        <div class="bubbles">${sel.msgs.map(x=>`<div class="bub ${x.who}">${esc(x.text)}</div>`).join("")}</div>
+        <div class="replyrow">
+          <input type="text" id="replyInp" placeholder="Type a reply…" onkeydown="if(event.key==='Enter')sendReply('${sel.id}')">
+          <button class="btn" onclick="sendReply('${sel.id}')">Send</button>
+        </div>`
+      : `<div class="empty">Select a conversation</div>`}
+    </div>
+  </div>`;
+  if(sel) document.getElementById("replyInp")?.focus();
+}
+function openMsg(id){ selectedMsg=id; const c=brand().inbox.find(x=>x.id===id); if(c){c.unread=false; save();} render(); }
+function sendReply(id){
+  const inp=document.getElementById("replyInp"); const t=inp.value.trim(); if(!t)return;
+  brand().inbox.find(c=>c.id===id).msgs.push({who:"me",text:t}); save(); render(); toast("Reply sent");
+}
+function toggleResolved(id){ const c=brand().inbox.find(x=>x.id===id); c.resolved=!c.resolved;
+  save(); selectedMsg=null; render(); }
+function fakeIncoming(){
+  const samples=[["instagram","@new.follower","Love your content! How can I work with you?"],
+    ["x","@curious_dev","Is there an API for this?"],
+    ["tiktok","@trendwatcher","That last video was 🔥🔥"],
+    ["facebook","Miguel R.","Do you have any discounts this month?"]];
+  const [net,from,text]=samples[Math.floor(Math.random()*samples.length)];
+  brand().inbox.unshift({id:uid(),net,from,resolved:false,unread:true,msgs:[{who:"them",text}]});
+  save(); render(); toast("New message received");
+}
+
+/* =============== SMARTLINKS =============== */
+function renderSmartlinks(m){
+  const sl=brand().smartlink;
+  m.innerHTML=`
+  <h1>SmartLinks</h1>
+  <div class="sub">Your link-in-bio page. Edit on the left, live preview on the right.</div>
+  <div class="slwrap">
+    <div class="card sledit">
+      <label class="f">Page title</label><input type="text" value="${esc(sl.title)}" onchange="slSet('title',this.value)">
+      <label class="f">Bio</label><input type="text" value="${esc(sl.bio)}" onchange="slSet('bio',this.value)">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label class="f">Avatar (emoji)</label><input type="text" value="${esc(sl.avatar)}" maxlength="4" onchange="slSet('avatar',this.value)"></div>
+        <div style="flex:1"><label class="f">Button color</label><input type="color" value="${sl.color}" style="width:100%;height:36px;border:1px solid var(--line);border-radius:8px" onchange="slSet('color',this.value)"></div>
+      </div>
+      <label class="f">Links</label>
+      ${sl.links.map((l,i)=>`
+        <div class="slrow">
+          <input type="text" value="${esc(l.title)}" placeholder="Label" onchange="slLink('${l.id}','title',this.value)">
+          <input type="url" value="${esc(l.url)}" placeholder="https://…" onchange="slLink('${l.id}','url',this.value)">
+          <span class="clicks">${l.clicks} clicks</span>
+          <button class="btn ghost mini" ${i===0?"disabled":""} onclick="slMove('${l.id}',-1)">↑</button>
+          <button class="btn ghost mini" ${i===sl.links.length-1?"disabled":""} onclick="slMove('${l.id}',1)">↓</button>
+          <button class="btn dangerb mini" onclick="slDel('${l.id}')">✕</button>
+        </div>`).join("")}
+      <button class="btn ghost mini" style="margin-top:6px" onclick="slAdd()">+ Add link</button>
+    </div>
+    <div class="phone">
+      <div class="av">${esc(sl.avatar)}</div>
+      <h5>${esc(sl.title)}</h5>
+      <div class="bio">${esc(sl.bio)}</div>
+      ${sl.links.map(l=>`<a class="slink" style="background:${sl.color}" onclick="slClick('${l.id}')">${esc(l.title)}</a>`).join("")}
+      <div style="text-align:center;color:var(--muted);font-size:10px;margin-top:14px">⚡ Metricoolito SmartLink</div>
+    </div>
+  </div>`;
+}
+function slSet(k,v){ brand().smartlink[k]=v; save(); render(); }
+function slLink(id,k,v){ const l=brand().smartlink.links.find(x=>x.id===id); l[k]=v; save(); render(); }
+function slAdd(){ brand().smartlink.links.push({id:uid(),title:"New link",url:"https://",clicks:0}); save(); render(); }
+function slDel(id){ const sl=brand().smartlink; sl.links=sl.links.filter(x=>x.id!==id); save(); render(); }
+function slMove(id,dir){ const ls=brand().smartlink.links; const i=ls.findIndex(x=>x.id===id);
+  const j=i+dir; if(j<0||j>=ls.length)return; [ls[i],ls[j]]=[ls[j],ls[i]]; save(); render(); }
+function slClick(id){ const l=brand().smartlink.links.find(x=>x.id===id); l.clicks++; save(); render(); toast("Click tracked → "+l.url); }
+
+/* =============== REPORTS =============== */
+function renderReports(m){
+  const s=metricSeries(30,"all");
+  const b=brand();
+  const pub=b.posts.filter(p=>p.status==="published");
+  const perNet=NETWORKS.map(n=>{
+    const posts=pub.filter(p=>p.networks.includes(n.id));
+    if(!posts.length && !b.connections[n.id]) return null;
+    const ser=metricSeries(30,n.id);
+    return {n, posts:posts.length,
+      followers:ser[ser.length-1].followers,
+      eng:ser.reduce((a,x)=>a+x.engagement,0),
+      imp:ser.reduce((a,x)=>a+x.impressions,0)};
+  }).filter(Boolean);
+  const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
+  m.innerHTML=`
+  <h1>Report — ${esc(b.name)}</h1>
+  <div class="sub">Last 30 days · generated ${new Date().toLocaleDateString()}
+    <button class="btn mini noprint" style="margin-left:10px" onclick="window.print()">🖨 Print / Save as PDF</button></div>
+  <div class="kpis">
+    <div class="card kpi"><div class="n">${s[s.length-1].followers.toLocaleString()}</div><div class="l">Total followers</div></div>
+    <div class="card kpi"><div class="n">${totImp.toLocaleString()}</div><div class="l">Impressions</div></div>
+    <div class="card kpi"><div class="n">${totEng.toLocaleString()}</div><div class="l">Engagements</div></div>
+    <div class="card kpi"><div class="n">${pub.length}</div><div class="l">Posts published</div></div>
+  </div>
+  <div class="card">
+    <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Performance by network</h4>
+    <table class="rep">
+      <tr><th>Network</th><th>Followers</th><th>Impressions</th><th>Engagements</th><th>Posts</th></tr>
+      ${perNet.map(r=>`<tr>
+        <td><span style="color:${r.n.color};font-weight:700">${r.n.short}</span> ${r.n.name}</td>
+        <td>${r.followers.toLocaleString()}</td><td>${r.imp.toLocaleString()}</td>
+        <td>${r.eng.toLocaleString()}</td><td>${r.posts}</td></tr>`).join("")}
+    </table>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Published posts</h4>
+    ${pub.length? `<table class="rep"><tr><th>Date</th><th>Content</th><th>Networks</th></tr>
+      ${pub.sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr>
+        <td style="white-space:nowrap">${p.date}</td><td>${esc(p.text)}</td>
+        <td>${p.networks.map(n=>netOf(n)?.short).join(", ")}</td></tr>`).join("")}</table>`
+      : `<div class="empty">No published posts yet.</div>`}
+  </div>`;
+}
+
+/* =============== CONNECTIONS =============== */
+function renderConnections(m){
+  const b=brand();
+  m.innerHTML=`
+  <h1>Connections</h1>
+  <div class="sub">Connect the social profiles for <strong>${esc(b.name)}</strong>. (Prototype: connections are simulated locally.)</div>
+  <div class="conngrid">
+    ${NETWORKS.map(n=>{
+      const handle=b.connections[n.id];
+      return `<div class="card conn">
+        <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
+          <div><strong>${n.name}</strong><div class="st ${handle?"on":""}">${handle?("Connected · "+esc(handle)):"Not connected"}</div></div></div>
+        ${handle
+          ? `<button class="btn ghost mini" onclick="disconnectNet('${n.id}')">Disconnect</button>`
+          : `<div style="display:flex;gap:6px">
+               <input type="text" id="h_${n.id}" placeholder="@handle">
+               <button class="btn mini" onclick="connectNet('${n.id}')">Connect</button></div>`}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+function connectNet(id){
+  const inp=document.getElementById("h_"+id);
+  const h=inp.value.trim()||"@"+brand().name.toLowerCase().replace(/\s+/g,"");
+  brand().connections[id]=h; save(); render(); toast(netOf(id).name+" connected ✔");
+}
+function disconnectNet(id){ delete brand().connections[id]; save(); render(); toast(netOf(id).name+" disconnected"); }
+
+/* =============== SETTINGS =============== */
+function renderSettings(m){
+  m.innerHTML=`
+  <h1>Settings</h1>
+  <div class="sub">Manage brands and your data. Everything is stored in this browser (localStorage).</div>
+  <div class="row">
+    <div class="card" style="flex:1;min-width:280px">
+      <h4 style="margin-bottom:10px">Brands</h4>
+      ${db.brands.map(b=>`
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input type="text" value="${esc(b.name)}" onchange="renameBrand('${b.id}',this.value)">
+          <button class="btn dangerb mini" ${db.brands.length<2?"disabled":""} onclick="deleteBrand('${b.id}')">✕</button>
+        </div>`).join("")}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="newBrand" placeholder="New brand name">
+        <button class="btn mini" onclick="addBrand()">Add</button>
+      </div>
+    </div>
+    <div class="card" style="flex:1;min-width:280px">
+      <h4 style="margin-bottom:10px">Your data</h4>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Back up everything to a JSON file, restore it later, or start fresh with demo data.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="exportData()">⬇ Export backup</button>
+        <button class="btn ghost" onclick="document.getElementById('impFile').click()">⬆ Import backup</button>
+        <input type="file" id="impFile" accept=".json" style="display:none" onchange="importData(this)">
+        <button class="btn dangerb" onclick="resetData()">Reset to demo</button>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h4 style="margin-bottom:8px">How to manage this prototype yourself</h4>
+    <ol style="margin-left:18px;color:var(--muted);font-size:13px;line-height:1.9">
+      <li><strong>Open:</strong> double-click <code>index.html</code> — works offline, no install.</li>
+      <li><strong>Data:</strong> saved automatically in your browser. Use <em>Export backup</em> regularly.</li>
+      <li><strong>Move to another computer:</strong> copy <code>index.html</code> + import your backup JSON.</li>
+      <li><strong>Customize:</strong> the file is plain HTML/CSS/JS — edit colors in the <code>:root</code> CSS block, add networks in the <code>NETWORKS</code> array.</li>
+    </ol>
+  </div>`;
+}
+function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
+function addBrand(){
+  const name=document.getElementById("newBrand").value.trim(); if(!name)return toast("Give it a name");
+  const b=defaultBrand(name); db.brands.push(b); db.activeBrand=b.id; save(); render(); toast("Brand created");
+}
+function deleteBrand(id){
+  if(db.brands.length<2)return;
+  if(!confirm("Delete this brand and all its posts, inbox and links?"))return;
+  db.brands=db.brands.filter(b=>b.id!==id);
+  if(db.activeBrand===id)db.activeBrand=db.brands[0].id;
+  save(); render();
+}
+function exportData(){
+  const a=document.createElement("a");
+  a.href="data:application/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(db,null,2));
+  a.download="metricoolito-backup-"+todayStr()+".json"; a.click(); toast("Backup downloaded");
+}
+function importData(inp){
+  const f=inp.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ try{
+      const d=JSON.parse(r.result);
+      if(!d.brands||!Array.isArray(d.brands))throw 0;
+      db=d; db.activeBrand=db.brands[0].id; save(); render(); toast("Backup restored ✔");
+    }catch(e){ toast("Invalid backup file"); } };
+  r.readAsText(f); inp.value="";
+}
+function resetData(){
+  if(!confirm("Replace ALL current data with fresh demo data?"))return;
+  db=seedDemo(); save(); render(); toast("Demo data restored");
+}
+
+/* =============== boot =============== */
+load(); render();
+</script>
