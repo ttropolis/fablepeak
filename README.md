@@ -1,42 +1,51 @@
-# Metricoolito — your local Metricool prototype
+# FablePeak — social media manager
 
-A single-file social media management prototype inspired by [Metricool](https://metricool.com).
-No installs, no accounts, no server. One HTML file you fully own.
+Live at **[fablepeak.com](https://fablepeak.com)** · single-file web app + installable PWA · no accounts, no server, no tracking. Your data never leaves your device.
 
-## How to open it
+Inspired by [Metricool](https://metricool.com).
 
-**Double-click `index.html`.** That's it — it runs in your browser, works offline.
+## Use it
 
-(Optional) To serve it like a website: `python3 -m http.server 4173` in this folder, then open http://localhost:4173.
+- **Web:** open [fablepeak.com](https://fablepeak.com)
+- **Phone (app):** open the site, then *Add to Home Screen* (Safari share menu on iPhone, "Install app" in Chrome on Android). Launches fullscreen, works offline.
+- **Local/offline:** double-click `index.html` — same app, no internet needed.
 
-## What's inside (mirrors Metricool's core features)
+## Features
 
 | View | What it does |
 |------|--------------|
-| **Planner** | Monthly content calendar. Click a day to compose a post, pick networks, date/time and status (draft / scheduled / published). Drag posts between days. Scheduled posts auto-flip to "published" when their time passes. |
-| **Analytics** | Followers, impressions, engagement KPIs + growth chart, daily engagement bars, and a best-times-to-post heatmap. Filter per network. Demo metrics are generated locally; your published posts boost the numbers. |
-| **Inbox** | Unified messages from all networks. Reply, mark resolved, filter All/Unread/Resolved. "Simulate incoming" adds a fake message so you can play. |
-| **SmartLinks** | Link-in-bio page builder with live phone preview, click tracking, reorder/add/remove links, custom color and avatar. |
-| **Reports** | 30-day performance report per network + published-post log. "Print / Save as PDF" gives you a client-ready file. |
-| **Connections** | Simulate connecting Instagram, X, Facebook, LinkedIn, TikTok, YouTube, Pinterest, Google Business profiles. Only connected networks are selectable when posting. |
-| **Settings** | Multiple brands (like Metricool brands = one per client), export/import JSON backups, reset demo data. |
+| **Planner** | Monthly content calendar. Compose posts per network with date/time and status (draft / scheduled / published). Drag between days. Scheduled posts auto-publish when their time passes. |
+| **Analytics** | Follower/impression/engagement KPIs, growth chart, daily engagement, best-times heatmap. Per-network filter. Demo metrics generated locally; published posts boost them. |
+| **Inbox** | Unified messages across networks. Reply, resolve, filter. |
+| **SmartLinks** | Link-in-bio page builder with live phone preview and click tracking. |
+| **Reports** | 30-day per-network report + post log. Print / save as PDF. |
+| **Connections** | Simulated profile connections for 8 platforms. |
+| **Settings** | Multiple brands, JSON export/import backups, demo reset. |
 
 ## Managing it yourself
 
-- **Where's my data?** In your browser's localStorage, saved automatically on every change. Nothing leaves your machine.
-- **Backups:** Settings → *Export backup* downloads a JSON file. *Import backup* restores it. Do this before clearing browser data or switching browsers.
-- **Multiple clients:** Settings → add a brand. Each brand has its own calendar, inbox, links and metrics.
-- **Move computers:** copy `index.html` + your backup JSON, then import.
+- **Data** lives in your browser's localStorage, auto-saved on every change. Different browser/device = separate data.
+- **Backups:** Settings → *Export backup* (JSON file). *Import backup* restores. Export before clearing browser data.
+- **Deploy an update:** edit files, then `git add -A && git commit -m "..." && git push` — GitHub Pages redeploys fablepeak.com automatically in ~1 minute.
 - **Start over:** Settings → *Reset to demo*.
 
-## Customizing (it's just one file)
+## Hosting setup (already done)
 
-Open `index.html` in any text editor:
+- Repo: `ttropolis/fablepeak` on GitHub, Pages enabled from `main` branch root.
+- Domain: `fablepeak.com` via `CNAME` file + 4 GitHub Pages A records (185.199.108–111.153) at Hostinger DNS. `www` CNAMEs to the root domain.
+- HTTPS: certificate auto-issued by GitHub; enforced once available.
 
-- **Colors/theme:** the `:root { ... }` CSS block at the top (`--brand`, `--accent`, etc.).
-- **Networks:** the `NETWORKS` array in the script — add or remove platforms.
-- **Demo data:** the `seedDemo()` function.
+## Customizing
 
-## Limits (it's a prototype)
+Everything is in `index.html` (plain HTML/CSS/JS):
 
-Posting, connections and metrics are simulated — nothing is published to real social networks. To go real, each network requires its own developer API (Meta Graph API, X API, LinkedIn API…), OAuth and a backend. This file is the full UI/workflow layer you'd put in front of that.
+- **Theme:** `:root { ... }` CSS variables at the top.
+- **Networks:** the `NETWORKS` array.
+- **Demo data:** `seedDemo()`.
+- **Version:** `APP_VERSION` constant (shown in the sidebar).
+
+Icons are generated by a small PIL script (see git history) — swap the PNGs to rebrand.
+
+## Limits
+
+Posting, connections, and metrics are simulated — nothing publishes to real social networks. Going real requires each platform's API (Meta Graph, X, LinkedIn…), OAuth, and a backend. This app is the complete UI/workflow layer for that.
