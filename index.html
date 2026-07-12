@@ -59,7 +59,7 @@
   button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
   button.mini{padding:4px 9px;font-size:12px;border-radius:6px}
   button.dangerb{background:var(--danger);color:#fff}
-  input[type=text],input[type=url],input[type=date],input[type=time],input[type=number],textarea,select.inp{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:var(--ink)}
+  input[type=text],input[type=url],input[type=email],input[type=password],input[type=date],input[type=time],input[type=number],textarea,select.inp{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:var(--ink)}
   textarea{resize:vertical;min-height:70px}
   label.f{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:12px 0 4px}
 
@@ -147,8 +147,43 @@
   table.rep th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
 
   .empty{color:var(--muted);text-align:center;padding:40px 10px}
-  .toast{position:fixed;bottom:22px;right:22px;background:var(--brand);color:#fff;padding:11px 18px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .25s;z-index:99;pointer-events:none}
+  .toast{position:fixed;bottom:22px;right:22px;background:var(--brand);color:#fff;padding:11px 18px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .25s;z-index:120;pointer-events:none}
   .toast.show{opacity:1}
+
+  /* ---------- welcome / auth gate ---------- */
+  #welcome{position:fixed;inset:0;z-index:100;background:linear-gradient(160deg,#12283c 0%,#1c3d5a 55%,#0e4a5c 100%);overflow-y:auto;padding:28px calc(16px + env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left))}
+  .wwrap{min-height:100%;display:flex;gap:56px;max-width:980px;margin:0 auto;align-items:center;justify-content:center;flex-wrap:wrap}
+  .whero{flex:1;min-width:290px;max-width:480px;color:#e8f1f8;padding-top:env(safe-area-inset-top)}
+  .whero .wlogo{font-size:30px;font-weight:800;letter-spacing:.3px;color:#fff;margin-bottom:14px}
+  .whero .wlogo span{color:var(--accent)}
+  .whero h2{font-size:30px;line-height:1.2;margin-bottom:12px;font-weight:800}
+  .whero p.tag{color:#b6cddd;font-size:15px;line-height:1.6;margin-bottom:24px}
+  .wfeat{list-style:none;display:flex;flex-direction:column;gap:12px;font-size:14px;color:#d3e2ed}
+  .wfeat li{display:flex;gap:10px;align-items:flex-start}
+  .wfeat .fi{font-size:17px;line-height:1.2}
+  .wsmall{margin-top:26px;font-size:12px;color:#7f99ac}
+  .wcard{width:370px;max-width:100%;background:#fff;border-radius:18px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  .wtabs{display:flex;background:#eef2f6;border-radius:10px;padding:4px;margin-bottom:18px}
+  .wtabs button{flex:1;border:none;background:transparent;padding:9px;border-radius:8px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer}
+  .wtabs button.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
+  .wcard label.f{margin-top:14px}
+  .werr{color:var(--danger);font-size:12.5px;margin-top:10px;min-height:16px}
+  .wnote{color:#3d9b63;font-size:12.5px;margin-top:10px}
+  .wsubmit{width:100%;margin-top:14px;padding:12px;font-size:14px}
+  .wdivide{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;margin:16px 0 10px;text-transform:uppercase;letter-spacing:1px}
+  .wdivide::before,.wdivide::after{content:"";flex:1;height:1px;background:var(--line)}
+  .wdemo{width:100%;padding:11px;font-size:13.5px}
+  .wfoot{margin-top:14px;font-size:11.5px;color:var(--muted);text-align:center;line-height:1.5}
+  .demobadge{display:inline-block;background:#f0ad4e;color:#4a3305;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;letter-spacing:.5px}
+
+  /* ---------- first-brand onboarding ---------- */
+  .obwrap{max-width:520px;margin:8vh auto 0}
+  .obwrap .card{padding:30px;text-align:center}
+  .obwrap .obi{font-size:44px;margin-bottom:10px}
+  .obwrap h2{margin-bottom:8px}
+  .obwrap p{color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:18px}
+  .obrow{display:flex;gap:10px}
+  .obrow input{flex:1}
   @media print{
     aside,.noprint,.toast{display:none!important}
     main{padding:0;max-width:none}
@@ -157,7 +192,7 @@
   @media (max-width:820px){
     body{flex-direction:column;font-size:15px}
     /* 16px stops iOS Safari auto-zooming the page on input focus */
-    input[type=text],input[type=url],input[type=date],input[type=time],input[type=number],textarea,select.inp,#brandSel{font-size:16px}
+    input[type=text],input[type=url],input[type=email],input[type=password],input[type=date],input[type=time],input[type=number],textarea,select.inp,#brandSel{font-size:16px}
     aside{width:100%;height:auto;position:sticky;top:0;z-index:40;padding-bottom:6px;padding-top:env(safe-area-inset-top)}
     main{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
     .toast{bottom:calc(22px + env(safe-area-inset-bottom))}
@@ -181,7 +216,7 @@
 </head>
 <body>
 <aside>
-  <div class="logo">⛰️ Fable<span>Peak</span></div>
+  <div class="logo">⛰️ Fable<span>Peak</span><span id="demoBadge"></span></div>
   <div class="brandbox">
     <label>Brand</label>
     <select id="brandSel" onchange="switchBrand(this.value)"></select>
@@ -195,6 +230,7 @@
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modalBody"></div>
 </div>
+<div id="welcome" hidden></div>
 <div class="toast" id="toast"></div>
 
 <!-- Optional cloud config. Absent (404) = local mode. See backend-config.sample.js -->
@@ -432,17 +468,33 @@ const RemoteAdapter = {
 
 const store = window.FABLEPEAK_BACKEND ? RemoteAdapter : LocalAdapter;
 
+const DEMO_KEY = "fablepeak_demo";
+const demoMode = () => localStorage.getItem(DEMO_KEY) === "1";
+
 async function load(){
   try{ await store.init(); }
-  catch(e){ if(store===RemoteAdapter) toast("Cloud unavailable — see BACKEND_SPEC.md"); }
+  catch(e){ if(store===RemoteAdapter) toast("Cloud unavailable — running locally"); }
+  // Cloud mode, signed out, not exploring the demo → welcome gate.
+  if(store.name === "cloud" && !store.user && !demoMode()){
+    db = { brands: [], activeBrand: null };
+    showWelcome();
+    return;
+  }
+  hideWelcome();
   try{ db = await store.load(); }catch(e){ db = null; }
+  if(!db && demoMode()){ // demo persists locally between visits
+    try{ db = JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){}
+  }
   if(!db){ // migrate data saved under a previous app name
     for(const k of LEGACY_KEYS){
       try{ const old = JSON.parse(localStorage.getItem(k));
         if(old && old.brands){ db = old; save(); break; } }catch(e){}
     }
   }
-  if(!db || !db.brands || !db.brands.length){ db = seedDemo(); save(); }
+  if(!db || !db.brands || !db.brands.length){
+    if(store.name === "local" || demoMode()){ db = seedDemo(); save(); }
+    else db = { brands: [], activeBrand: null };   // signed in, fresh account → onboarding
+  }
   store.onRemoteChange(fresh => { db = fresh; render(); });
 }
 let _persistT = null;
@@ -507,6 +559,8 @@ function closeModal(){ document.getElementById("overlay").classList.remove("open
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function renderNav(){
+  document.getElementById("demoBadge").innerHTML =
+    (store.name==="cloud" && !store.user && demoMode()) ? `<span class="demobadge">DEMO</span>` : "";
   document.getElementById("nav").innerHTML = VIEWS.map(v=>
     `<button class="${v.id===view?'active':''}" onclick="go('${v.id}')">
        <span class="ic">${v.ic}</span>${v.name}</button>`).join("");
@@ -516,11 +570,111 @@ function renderNav(){
 function go(v){ view=v; selectedMsg=null; render(); }
 function switchBrand(id){ db.activeBrand=id; save(); render(); }
 function render(){
+  if(!document.getElementById("welcome").hidden) return;   // auth gate is up
   tickPublish(); renderNav();
   const m=document.getElementById("main");
+  if(!db.brands.length){ renderOnboarding(m); return; }    // fresh account, no brand yet
   ({planner:renderPlanner, analytics:renderAnalytics, inbox:renderInbox,
     smartlinks:renderSmartlinks, reports:renderReports,
     connections:renderConnections, settings:renderSettings}[view])(m);
+}
+
+/* =============== welcome gate (cloud mode, signed out) =============== */
+let wMode = "signin";
+function showWelcome(){
+  const w = document.getElementById("welcome");
+  w.hidden = false;
+  w.innerHTML = `
+  <div class="wwrap">
+    <div class="whero">
+      <div class="wlogo">⛰️ Fable<span>Peak</span></div>
+      <h2>All your social media, one clean workspace.</h2>
+      <p class="tag">Plan your content calendar, answer every message, track what works,
+        and share one link-in-bio — without juggling ten tabs.</p>
+      <ul class="wfeat">
+        <li><span class="fi">🗓</span> Visual planner — schedule posts across Instagram, Facebook, YouTube and more</li>
+        <li><span class="fi">📈</span> Analytics and best-times heatmap that read themselves</li>
+        <li><span class="fi">💬</span> One inbox for every network's messages</li>
+        <li><span class="fi">🔗</span> Link-in-bio pages with click tracking</li>
+        <li><span class="fi">📱</span> Installs on your phone, works offline, syncs everywhere</li>
+      </ul>
+      <div class="wsmall">Private by design — your workspace is yours alone.</div>
+    </div>
+    <div class="wcard">
+      <div class="wtabs">
+        <button class="${wMode==='signin'?'on':''}" onclick="wTab('signin')">Sign in</button>
+        <button class="${wMode==='signup'?'on':''}" onclick="wTab('signup')">Create account</button>
+      </div>
+      <label class="f">Email</label>
+      <input type="email" id="w_email" placeholder="you@example.com" autocomplete="email">
+      <label class="f">Password</label>
+      <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 6 characters':'Your password'}"
+        autocomplete="${wMode==='signup'?'new-password':'current-password'}"
+        onkeydown="if(event.key==='Enter')wSubmit()">
+      <div class="werr" id="w_err"></div>
+      <button class="btn wsubmit" onclick="wSubmit()">${wMode==='signin'?'Sign in':'Create my account'}</button>
+      <div class="wdivide">or</div>
+      <button class="btn ghost wdemo" onclick="enterDemo()">👀 Explore the demo first</button>
+      <div class="wfoot">Demo runs entirely in your browser with sample data.<br>No account, nothing uploaded.</div>
+    </div>
+  </div>`;
+  document.getElementById("w_email").focus();
+}
+function hideWelcome(){ const w=document.getElementById("welcome"); w.hidden=true; w.innerHTML=""; }
+function wTab(m){ wMode=m; showWelcome(); }
+function wSubmit(){
+  const email=document.getElementById("w_email").value.trim();
+  const pw=document.getElementById("w_pw").value;
+  const err=document.getElementById("w_err");
+  if(!email || !pw){ err.textContent="Email and password, please."; return; }
+  err.textContent="";
+  const done = () => load().then(()=>{ render(); toast(wMode==='signin'?"Welcome back ✔":"Account created ✔"); });
+  if(wMode==="signin"){
+    store.signIn(email,pw).then(done).catch(e=>err.textContent=e.message);
+  }else{
+    store.signUp(email,pw).then(r=>{
+      if(r==="active") done();
+      else{ err.textContent=""; document.querySelector(".wnote")?.remove();
+        err.insertAdjacentHTML("afterend",
+          `<div class="wnote">✉️ Check your inbox — click the confirmation link, then sign in here.</div>`); }
+    }).catch(e=>err.textContent=e.message);
+  }
+}
+function enterDemo(){
+  localStorage.setItem(DEMO_KEY,"1");
+  load().then(()=>{ render(); toast("Demo mode — sample data, stored only on this device"); });
+}
+function exitDemo(){
+  localStorage.removeItem(DEMO_KEY);
+  load().then(render);
+}
+
+/* =============== first-brand onboarding (signed in, empty account) =============== */
+function renderOnboarding(m){
+  m.innerHTML = `
+  <div class="obwrap">
+    <div class="card">
+      <div class="obi">🏔</div>
+      <h2>Welcome to FablePeak${store.user? ", "+esc(store.user.email.split("@")[0]) : ""}!</h2>
+      <p>A <strong>brand</strong> is a workspace for one business or client — its posts,
+         inbox, links and analytics live inside it. Name your first one to get started.</p>
+      <div class="obrow">
+        <input type="text" id="ob_name" placeholder="e.g. My Studio" maxlength="40"
+          onkeydown="if(event.key==='Enter')createFirstBrand()">
+        <button class="btn" onclick="createFirstBrand()">Create brand</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById("ob_name").focus();
+}
+function createFirstBrand(){
+  const name=document.getElementById("ob_name").value.trim();
+  if(!name) return toast("Give your brand a name");
+  const b=defaultBrand(name);
+  b.smartlink.links=[{id:uid(),title:"Our website",url:"https://",clicks:0}];
+  db.brands.push(b); db.activeBrand=b.id; save(); render();
+  toast("Brand created — connect your profiles next 🔌");
+  go("connections");
 }
 
 /* =============== PLANNER =============== */
@@ -904,12 +1058,15 @@ function renderSettings(m){
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Cloud sync &amp; team accounts</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
-        Mode: <strong>${store.name==="cloud" ? "☁️ Cloud" : "💻 Local (this browser only)"}</strong>
+        Mode: <strong>${store.name!=="cloud" ? "💻 Local (this browser only)"
+          : store.user ? "☁️ Cloud · synced" : "👀 Demo (sample data, this device only)"}</strong>
         ${store.user ? " · signed in as "+esc(store.user.email) : ""}</p>
       ${store.name==="cloud" ? (store.user
         ? `<button class="btn ghost" onclick="cloudSignOut()">Sign out</button>`
-        : `<button class="btn" onclick="cloudSignIn()">Sign in</button>
-           <button class="btn ghost" onclick="cloudSignUp()">Create account</button>`) : `
+        : `<p style="color:var(--muted);font-size:13px;margin-bottom:10px">You're exploring with
+             sample data. Create a free account to get a real workspace that syncs across
+             your devices.</p>
+           <button class="btn" onclick="exitDemo()">Sign in / Create account</button>`) : `
         <p style="color:var(--muted);font-size:13px">Multi-user sync is scaffolded but not yet
         implemented. A developer can wire it up by following <code>BACKEND_SPEC.md</code> in the
         repo — the app already routes all data through a swappable storage adapter.</p>`}
@@ -966,22 +1123,9 @@ function resetData(){
   if(!confirm("Replace ALL current data with fresh demo data?"))return;
   db=seedDemo(); save(); render(); toast("Demo data restored");
 }
-function cloudSignIn(){
-  const email=prompt("Email:"); if(!email)return;
-  const pw=prompt("Password:"); if(!pw)return;
-  store.signIn(email,pw).then(()=>{ load().then(render); toast("Signed in"); })
-    .catch(e=>toast("Sign-in failed: "+e.message));
-}
 function cloudSignOut(){
-  store.signOut().then(()=>{ toast("Signed out — local mode"); location.reload(); });
-}
-function cloudSignUp(){
-  const email=prompt("Email for your new account:"); if(!email)return;
-  const pw=prompt("Choose a password (min 6 characters):"); if(!pw)return;
-  store.signUp(email,pw).then(r=>{
-    if(r==="active"){ load().then(render); toast("Account created — you're in ✔"); }
-    else toast("Almost there — click the confirmation link we emailed you, then sign in.");
-  }).catch(e=>toast("Sign-up failed: "+e.message));
+  localStorage.removeItem(LS_KEY);              // cloud cache off this device
+  store.signOut().then(()=>location.reload());
 }
 
 /* =============== boot =============== */
