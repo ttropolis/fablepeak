@@ -289,6 +289,7 @@ const LocalAdapter = {
   async load(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){ return null; } },
   async persist(data){ localStorage.setItem(LS_KEY, JSON.stringify(data)); },
   async signIn(){ throw new Error("Local mode has no accounts"); },
+  async signUp(){ throw new Error("Local mode has no accounts"); },
   async signOut(){},
   onRemoteChange(cb){ /* no-op: nothing else writes local data */ },
 };
@@ -403,6 +404,12 @@ const RemoteAdapter = {
     const { data, error } = await this._sb.auth.signInWithPassword({ email, password });
     if(error) throw new Error(error.message);
     this.user = { id: data.user.id, email: data.user.email };
+  },
+  async signUp(email, password){
+    const { data, error } = await this._sb.auth.signUp({ email, password });
+    if(error) throw new Error(error.message);
+    if(data.session){ this.user = { id: data.user.id, email: data.user.email }; return "active"; }
+    return "confirm-email";                     // confirmation link sent
   },
   async signOut(){
     await this._sb.auth.signOut();
@@ -901,7 +908,8 @@ function renderSettings(m){
         ${store.user ? " · signed in as "+esc(store.user.email) : ""}</p>
       ${store.name==="cloud" ? (store.user
         ? `<button class="btn ghost" onclick="cloudSignOut()">Sign out</button>`
-        : `<button class="btn" onclick="cloudSignIn()">Sign in</button>`) : `
+        : `<button class="btn" onclick="cloudSignIn()">Sign in</button>
+           <button class="btn ghost" onclick="cloudSignUp()">Create account</button>`) : `
         <p style="color:var(--muted);font-size:13px">Multi-user sync is scaffolded but not yet
         implemented. A developer can wire it up by following <code>BACKEND_SPEC.md</code> in the
         repo — the app already routes all data through a swappable storage adapter.</p>`}
@@ -966,6 +974,14 @@ function cloudSignIn(){
 }
 function cloudSignOut(){
   store.signOut().then(()=>{ toast("Signed out — local mode"); location.reload(); });
+}
+function cloudSignUp(){
+  const email=prompt("Email for your new account:"); if(!email)return;
+  const pw=prompt("Choose a password (min 6 characters):"); if(!pw)return;
+  store.signUp(email,pw).then(r=>{
+    if(r==="active"){ load().then(render); toast("Account created — you're in ✔"); }
+    else toast("Almost there — click the confirmation link we emailed you, then sign in.");
+  }).catch(e=>toast("Sign-up failed: "+e.message));
 }
 
 /* =============== boot =============== */
