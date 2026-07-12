@@ -19,6 +19,10 @@ plus the backend it talks to.** Do not restructure the UI.
   `LocalAdapter` (already implemented). Never break offline/local.
 - Social "connections" stay simulated — real platform OAuth is explicitly
   out of scope for this phase.
+- **Zero recurring cost (hard constraint):** this phase must run at $0/mo.
+  Everything fits Supabase free tier + GitHub Pages. Do not introduce any
+  paid service or any additional vendor. The only recurring project cost
+  stays the yearly domain renewal (already owned).
 
 ## 2. What's already in place (index.html)
 
@@ -136,7 +140,36 @@ the server, then keep localStorage as cache. Reuse existing client ids.
    teammates via `brand_members` (a small "share brand" UI is a
    nice-to-have, not required — dashboard inserts are acceptable at n=3).
 
-## 7. Acceptance criteria
+## 7. Stack decisions (reviewed & locked)
+
+An external architecture report proposed Supabase + Next.js/Vercel +
+Upstash QStash + Cloudflare R2. Reviewed 2026-07-12; decisions:
+
+- **Supabase only — one vendor.** Auth, Postgres, RLS, realtime, storage,
+  Edge Functions, pg_cron all come with the free tier. Rejected: Next.js
+  API routes (forces a build step + rehosting a frontend that is
+  deliberately a static file on GitHub Pages) and QStash (a per-minute
+  `pg_cron` job polling `posts` for due items replaces the whole vendor
+  at this scale). R2 unnecessary until real media uploads exist.
+- **Server-side auto-publish (optional in this phase):** pg_cron job each
+  minute flips `posts` where `status='scheduled'` and datetime ≤ now() to
+  `published`, so posts "go out" even with every client closed. The client
+  ticker already does this while open.
+- **Real social posting is a later, separately-priced phase.** Two
+  corrections to the report: (1) Supabase social *login* does NOT provide
+  publishing-scoped tokens — each platform requires its own developer app,
+  publishing scopes, app review, and custom token storage/refresh
+  (Supabase does not persist provider tokens). (2) X's API is not free
+  (~$200/mo for meaningful posting). When that phase comes, default to a
+  posting aggregator (Ayrshare-class, ~$25–150/mo) instead of DIY OAuth
+  across platforms — it converts months of integration and review risk
+  into a subscription. Any recurring spend is the owner's explicit
+  decision, never assumed.
+- **Free-tier pause caveat:** Supabase free projects pause after ~7 days
+  with zero activity. 3 active users normally prevents this; add a weekly
+  keepalive ping via GitHub Actions cron (also free) as insurance.
+
+## 8. Acceptance criteria
 
 - [ ] `backend-config.js` absent → app identical to today (local mode).
 - [ ] 3 users sign in; each sees only brands they're members of.
