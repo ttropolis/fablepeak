@@ -44,8 +44,18 @@ Skip it unless you specifically want X, and know it's billed per action.
   Verified: the scheduler calls the publisher and gets HTTP 200.
 - FablePeak reaches the functions from fablepeak.com (CORS locked to it).
 
-**The only thing left is step-by-step below: register a developer app per
-platform and paste its two credentials.** Nothing else is missing.
+**YouTube is fully configured and verified** (2026-07-26):
+Google Cloud project `fablepeak`, YouTube Data API v3 + YouTube Analytics API
+enabled, OAuth consent screen in Testing with `tcltv987@gmail.com` as test
+user, Web OAuth client `FablePeak web` pointing at the callback below, and
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` stored in Supabase.
+Verified: `oauth-start` reports `{"platforms":["youtube"]}`, and Google's
+consent screen loads for our client and redirect URI with no error.
+
+To connect it: sign in to fablepeak.com → Connections → Connect on YouTube.
+
+Remaining platforms follow the step-by-step below — each needs a developer
+app registered and two credentials pasted.
 
 ## Before you start
 
