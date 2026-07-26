@@ -475,6 +475,24 @@ const RemoteAdapter = {
     if(error) return [];
     return data || [];
   },
+  /** Guarantee the brand row exists server-side before anything references it.
+      Local-only brands (created before sign-in, or after a failed save) would
+      otherwise make the server reject the connection with "no access". */
+  async ensureBrandSynced(b){
+    if(!this.user) throw new Error("Sign in first");
+    const { error } = await this._sb.from("brands").upsert({
+      id: b.id, name: b.name, seed: b.seed ?? 0,
+      connections: b.connections || {}, smartlink: b.smartlink || {},
+      client_id: this._clientId,
+    }, { onConflict: "id" });
+    if(error) throw new Error("Could not save this brand to the cloud: " + error.message);
+    // confirm the membership row the DB trigger should have created
+    const { data: mem } = await this._sb.from("brand_members")
+      .select("brand_id").eq("brand_id", b.id).maybeSingle();
+    if(!mem) throw new Error(
+      "This brand isn't linked to your account yet. Sign out and back in, then retry.");
+  },
+
   /** opens the platform's consent screen; resolves when the popup reports back */
   async startOAuth(platform, brandId){
     const jwt = await this._jwt();
@@ -581,9 +599,10 @@ function save(){                               // sync signature, debounced asyn
   clearTimeout(_persistT);
   _persistT = setTimeout(() => {
     store.persist(db).catch(e => {
+      console.error("FablePeak save failed:", e);   // silent cloud failures caused a real bug
       toast(store.name==="local"
         ? "⚠️ Could not save — storage full. Export a backup and delete old posts."
-        : "⚠️ Cloud save failed — changes kept locally, will retry on next edit.");
+        : "⚠️ Cloud save failed: " + String(e.message || e).slice(0, 90));
     });
   }, 200);
 }
@@ -1242,7 +1261,8 @@ async function refreshConnections(brandId){
 }
 async function connectReal(platform){
   try{
-    toast("Opening " + netOf(platform).name + "…");
+    toast("Preparing " + netOf(platform).name + "…");
+    await store.ensureBrandSynced(brand());   // brand must exist server-side first
     await store.startOAuth(platform, brand().id);
     connCache.loaded = false;
     await refreshConnections(brand().id);
