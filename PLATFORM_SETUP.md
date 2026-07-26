@@ -34,6 +34,19 @@ Skip it unless you specifically want X, and know it's billed per action.
 
 ---
 
+## Already done for you (verified live)
+
+- Database tables, row-level security, and the token-free account view.
+- All four Edge Functions deployed and responding: `oauth-start`,
+  `oauth-callback`, `publish`, `ingest-metrics`.
+- `CRON_SECRET` and `APP_ORIGIN` server secrets set.
+- Scheduled jobs live: publish-due every minute, metrics daily at 03:17.
+  Verified: the scheduler calls the publisher and gets HTTP 200.
+- FablePeak reaches the functions from fablepeak.com (CORS locked to it).
+
+**The only thing left is step-by-step below: register a developer app per
+platform and paste its two credentials.** Nothing else is missing.
+
 ## Before you start
 
 Every platform needs the same redirect/callback URL. Paste this exactly:
@@ -194,28 +207,23 @@ publishes publicly, and is easy to delete afterwards.
 
 ---
 
-## Scheduled publishing
+## Scheduled publishing — already running
 
-Once connections work, posts publish automatically at their scheduled time.
-Enable it by scheduling the publisher (Supabase SQL editor, once):
+Posts publish automatically at their scheduled time; no setup needed. Two
+`pg_cron` jobs are live:
+
+| Job | Schedule | What it does |
+|---|---|---|
+| `fablepeak-publish-due` | every minute | publishes posts whose time has arrived |
+| `fablepeak-metrics` | 03:17 daily | pulls real follower/impression numbers |
+
+Check they're healthy any time (SQL editor):
 
 ```sql
-select cron.schedule('fablepeak-publish-due', '* * * * *', $$
-  select net.http_post(
-    url := 'https://lghsvxwuaebvotutyjtt.supabase.co/functions/v1/publish',
-    headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','<YOUR CRON_SECRET>'),
-    body := jsonb_build_object('due', true)
-  ) $$);
-
-select cron.schedule('fablepeak-metrics', '17 3 * * *', $$
-  select net.http_post(
-    url := 'https://lghsvxwuaebvotutyjtt.supabase.co/functions/v1/ingest-metrics',
-    headers := jsonb_build_object('Content-Type','application/json','x-cron-secret','<YOUR CRON_SECRET>'),
-    body := '{}'::jsonb
-  ) $$);
+select id, status_code, left(content,120) as response, created
+from net._http_response order by created desc limit 5;
 ```
 
-(Requires the `pg_net` extension — enable it under Database → Extensions.)
-
-Once `ingest-metrics` has run at least once, the Analytics page starts showing
-real platform numbers instead of the simulated ones.
+A healthy publisher returns `200` with `{"published":0,"out":[]}` when nothing
+is due. Once `ingest-metrics` has run with a connected account, the Analytics
+page switches from simulated numbers to real ones.
