@@ -424,8 +424,12 @@ const RemoteAdapter = {
     });
     const gone = (rows, old) => old.filter(o => !rows.some(r=>r.id===o.id)).map(o=>o.id);
     const fail = r => { if(r && r.error) throw new Error(r.error.message); };
+    // brands first (posts/inbox reference them), via the RPC so ownership is created too
     const cb = changed(cur.brands, prev.brands, FIELDS.brands);
-    if(cb.length) fail(await this._sb.from("brands").upsert(cb));   // brands first (FK + membership trigger)
+    for(const row of cb){
+      const b = data.brands.find(x => x.id === row.id);
+      if(b) await this._saveBrand(b);
+    }
     const ops = [];
     const cp = changed(cur.posts, prev.posts, FIELDS.posts);  if(cp.length) ops.push(this._sb.from("posts").upsert(cp));
     const ct = changed(cur.inbox, prev.inbox, FIELDS.inbox);  if(ct.length) ops.push(this._sb.from("inbox_threads").upsert(ct));
@@ -478,15 +482,21 @@ const RemoteAdapter = {
   /** Guarantee the brand row exists server-side before anything references it.
       Local-only brands (created before sign-in, or after a failed save) would
       otherwise make the server reject the connection with "no access". */
+  /** Create/update a brand via the save_brand RPC.
+      A plain upsert cannot work here: RLS needs you to own the brand, but
+      ownership only exists once the row is created. save_brand does both
+      atomically, server-side. */
+  async _saveBrand(b){
+    const { error } = await this._sb.rpc("save_brand", {
+      p_id: b.id, p_name: b.name, p_seed: b.seed ?? 0,
+      p_connections: b.connections || {}, p_smartlink: b.smartlink || {},
+    });
+    if(error) throw new Error(error.message);
+  },
   async ensureBrandSynced(b){
-    if(!this.user) throw new Error("Sign in first");
-    const { error } = await this._sb.from("brands").upsert({
-      id: b.id, name: b.name, seed: b.seed ?? 0,
-      connections: b.connections || {}, smartlink: b.smartlink || {},
-      client_id: this._clientId,
-    }, { onConflict: "id" });
-    if(error) throw new Error("Could not save this brand to the cloud: " + error.message);
-    // confirm the membership row the DB trigger should have created
+    if(!this.user) throw new Error("Sign in first — your session may have expired.");
+    try{ await this._saveBrand(b); }
+    catch(e){ throw new Error("Could not save this brand to the cloud: " + e.message); }
     const { data: mem } = await this._sb.from("brand_members")
       .select("brand_id").eq("brand_id", b.id).maybeSingle();
     if(!mem) throw new Error(

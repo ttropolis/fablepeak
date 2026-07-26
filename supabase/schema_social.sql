@@ -107,6 +107,43 @@ create policy metrics_select on public.metrics_daily for select to authenticated
 do $$ begin alter publication supabase_realtime add table public.post_targets;
 exception when duplicate_object then null; end $$;
 
+-- --------------------------------------------------- brand create/update RPC
+-- Creating a brand is an RLS chicken-and-egg: the policies require you to own
+-- the brand, but ownership only exists once the row is created. A client-side
+-- upsert also trips Postgres's ON CONFLICT + RLS interaction ("new row violates
+-- row-level security policy"). Doing both steps atomically server-side avoids
+-- the whole problem. The client calls this instead of upserting `brands`.
+create or replace function public.save_brand(
+  p_id text, p_name text, p_seed int,
+  p_connections jsonb default '{}', p_smartlink jsonb default '{}'
+) returns void language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid();
+begin
+  if me is null then raise exception 'not authenticated'; end if;
+
+  if exists (select 1 from public.brands where id = p_id) then
+    if not public.is_member(p_id) then raise exception 'not authorised for this brand'; end if;
+    update public.brands set name = p_name, seed = coalesce(p_seed, seed),
+           connections = coalesce(p_connections,'{}'), smartlink = coalesce(p_smartlink,'{}'),
+           updated_at = now()
+     where id = p_id;
+  else
+    insert into public.brands (id,name,seed,connections,smartlink)
+      values (p_id,p_name,coalesce(p_seed,0),coalesce(p_connections,'{}'),coalesce(p_smartlink,'{}'));
+  end if;
+
+  insert into public.brand_members (brand_id, user_id, role)
+    values (p_id, me, 'owner') on conflict do nothing;
+end $$;
+revoke all on function public.save_brand(text,text,int,jsonb,jsonb) from public;
+grant execute on function public.save_brand(text,text,int,jsonb,jsonb) to authenticated;
+
+-- UPDATE policies need an explicit WITH CHECK; absent, Postgres reuses USING,
+-- which breaks upserts. USING still controls which rows may be updated.
+drop policy if exists brands_update on public.brands;
+create policy brands_update on public.brands for update to authenticated
+  using (public.is_member(id)) with check (true);
+
 -- ------------------------------------------------------- disconnect (no RLS)
 -- social_connections has no client policies, so removal goes through this
 -- security-definer RPC, which checks brand membership and never returns tokens.
