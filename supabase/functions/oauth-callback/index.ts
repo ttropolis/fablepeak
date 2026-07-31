@@ -4,25 +4,16 @@ import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
 import { sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
 
 const env = (k: string) => Deno.env.get(k);
-const esc = (s: string) => String(s).replace(/[<>&"]/g, (c) =>
-  ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]!));
 
-const page = (title: string, msg: string, ok: boolean) => new Response(
-  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1c3d5a;
-color:#fff;display:grid;place-items:center;height:100vh;margin:0;text-align:center;padding:24px}
-.c{max-width:440px}.i{font-size:44px;margin-bottom:12px}h1{font-size:20px;margin:0 0 8px}
-p{color:#b6cddd;font-size:14px;line-height:1.6;margin:0 0 18px}
-button{background:#22c1dc;border:0;color:#04303a;font-weight:600;padding:10px 18px;border-radius:8px;cursor:pointer}</style>
-<div class="c"><div class="i">${ok ? "✅" : "⚠️"}</div><h1>${esc(title)}</h1><p>${esc(msg)}</p>
-<button onclick="window.close()">Close</button></div>
-<script>
-  try { window.opener && window.opener.postMessage(
-    {source:"fablepeak-oauth", ok:${ok}}, "*"); } catch(e) {}
-  ${ok ? "setTimeout(function(){window.close();}, 1200);" : ""}
-</script>`,
-  { headers: { "Content-Type": "text/html; charset=utf-8" } });
+// Hosted Supabase Edge Functions rewrite text/html GET responses to text/plain.
+// Redirect to the app's static completion page so the browser can render it.
+const page = (title: string, msg: string, ok: boolean) => {
+  const target = new URL("/oauth-complete.html", env("APP_ORIGIN") ?? "https://fablepeak.com");
+  target.searchParams.set("ok", ok ? "1" : "0");
+  target.searchParams.set("title", title);
+  target.searchParams.set("message", msg);
+  return Response.redirect(target, 303);
+};
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
