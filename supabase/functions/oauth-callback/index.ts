@@ -2,6 +2,7 @@
 // account, stores the connection, and closes the popup.
 import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
 import { sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
+import { withSupabase } from "jsr:@supabase/server@^1";
 
 const env = (k: string) => Deno.env.get(k);
 
@@ -15,7 +16,7 @@ const page = (title: string, msg: string, ok: boolean) => {
   return Response.redirect(target, 303);
 };
 
-Deno.serve(async (req) => {
+const handleCallback = async (req: Request) => {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
@@ -67,4 +68,8 @@ Deno.serve(async (req) => {
   } catch (e) {
     return page("Connection failed", String((e as Error).message ?? e), false);
   }
-});
+};
+
+export default {
+  fetch: withSupabase({ auth: "none" }, handleCallback),
+};
