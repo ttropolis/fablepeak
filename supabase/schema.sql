@@ -98,12 +98,7 @@ do $$ begin
   alter publication supabase_realtime add table public.inbox_threads;
 exception when duplicate_object then null; end $$;
 
--- server-side auto-publish (BACKEND_SPEC §7): flip due scheduled posts every minute.
--- Post date/time are stored as the user's wall clock; team is in Australia,
--- so compare against Sydney time (change the zone here if the team moves).
-create extension if not exists pg_cron;
-select cron.schedule('fablepeak-auto-publish', '* * * * *',
-  $$ update public.posts set status='published', updated_at=now()
-     where status='scheduled'
-       and (date + coalesce(time,'10:00')::time) <= (now() at time zone 'Australia/Sydney') $$)
-where not exists (select 1 from cron.job where jobname='fablepeak-auto-publish');
+-- Real scheduled publishing is installed by
+-- migrations/20260731090000_reliable_scheduling.sql after schema_social.sql.
+-- Never mark a live post "published" from SQL alone: only the publish Edge
+-- Function may do that after at least one platform confirms delivery.

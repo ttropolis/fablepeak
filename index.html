@@ -78,6 +78,7 @@
   .post .nets{font-size:9px;opacity:.9}
   .post.draft{background:var(--chip-draft)}
   .post.scheduled{background:var(--chip-sched)}
+  .post.publishing{background:#2f91b5}
   .post.published{background:var(--chip-pub)}
   .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
@@ -222,7 +223,7 @@
     <select id="brandSel" onchange="switchBrand(this.value)"></select>
   </div>
   <nav id="nav"></nav>
-  <div class="sidefoot">FablePeak <span id="verSlot"></span> · data lives in your browser</div>
+  <div class="sidefoot">FablePeak <span id="verSlot"></span> · local-first</div>
 </aside>
 
 <main id="main"></main>
@@ -257,7 +258,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -271,6 +272,9 @@ let calCursor = new Date();      // month shown in planner
 let selectedMsg = null;
 let inboxFilter = "all";
 let analyticsNet = "all";
+let metricsCache = {
+  brandId: null, rows: [], loaded: false, loading: false, error: null,
+};
 
 function defaultBrand(name){
   const b = {
@@ -552,8 +556,9 @@ const RemoteAdapter = {
   async listMetrics(brandId, days=30){
     if(!this.user) return [];
     const from = new Date(Date.now() - days*864e5).toISOString().slice(0,10);
-    const { data } = await this._sb.from("metrics_daily")
+    const { data, error } = await this._sb.from("metrics_daily")
       .select("*").eq("brand_id", brandId).gte("date", from).order("date");
+    if(error) throw new Error(error.message);
     return data || [];
   },
 
@@ -600,7 +605,11 @@ async function load(){
     if(store.name === "local" || demoMode()){ db = seedDemo(); save(); }
     else db = { brands: [], activeBrand: null };   // signed in, fresh account → onboarding
   }
-  store.onRemoteChange(fresh => { db = fresh; render(); });
+  store.onRemoteChange(fresh => {
+    db = fresh;
+    if(["analytics","reports"].includes(view)) metricsCache.loaded = false;
+    render();
+  });
   // know which real accounts are connected before the composer is opened
   if(liveMode() && db.brands.length) refreshConnections(db.activeBrand || db.brands[0].id);
 }
@@ -626,8 +635,10 @@ function connectedNets(){
   return NETWORKS.filter(n=>brand().connections[n.id]);
 }
 
-/* auto-publish posts whose scheduled datetime passed */
+/* Simulated auto-publish is local/demo-only.
+   Signed-in cloud workspaces are claimed and published by the server. */
 function tickPublish(){
+  if(store.name === "cloud" && store.user) return;
   const now = new Date();
   let changed = false;
   db.brands.forEach(b=>b.posts.forEach(p=>{
@@ -662,6 +673,63 @@ function metricSeries(days, netId){
   return out;
 }
 
+/* Build chart-ready daily rows from metrics_daily. Follower counts carry
+   forward per platform; daily impressions/engagements/posts do not. */
+function realMetricSeries(days, netId){
+  if(!liveMode() || !metricsCache.loaded ||
+     metricsCache.brandId !== brand().id || metricsCache.error) return null;
+  const rows = metricsCache.rows.filter(r=>netId==="all" || r.platform===netId);
+  if(!rows.length) return null;
+
+  const platforms = netId==="all"
+    ? [...new Set(rows.map(r=>r.platform))]
+    : [netId];
+  const byDate = {};
+  rows.forEach(r=>{ (byDate[r.date]=byDate[r.date]||[]).push(r); });
+  const lastFollowers = {};
+  platforms.forEach(platform=>{
+    const first = rows
+      .filter(r=>r.platform===platform && r.followers!=null)
+      .sort((a,b)=>a.date.localeCompare(b.date))[0];
+    if(first) lastFollowers[platform] = Number(first.followers) || 0;
+  });
+  const out = [];
+  for(let i=days-1;i>=0;i--){
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const date = fmtDate(d);
+    const daily = byDate[date] || [];
+    daily.forEach(r=>{
+      if(r.followers != null) lastFollowers[r.platform] = Number(r.followers) || 0;
+    });
+    out.push({
+      date,
+      followers: platforms.reduce((sum,p)=>sum+(lastFollowers[p]||0),0),
+      impressions: daily.reduce((sum,r)=>sum+(Number(r.impressions)||0),0),
+      engagement: daily.reduce((sum,r)=>sum+(Number(r.engagements)||0),0),
+      posts: daily.reduce((sum,r)=>sum+(Number(r.posts)||0),0),
+    });
+  }
+  return out;
+}
+
+function ensureMetricsLoaded(brandId){
+  if(!liveMode()) return;
+  if(metricsCache.brandId===brandId && (metricsCache.loaded || metricsCache.loading)) return;
+  metricsCache = {brandId, rows:[], loaded:false, loading:true, error:null};
+  store.listMetrics(brandId, 30).then(rows=>{
+    if(metricsCache.brandId !== brandId) return;
+    metricsCache = {brandId, rows, loaded:true, loading:false, error:null};
+    if(["analytics","reports"].includes(view)) render();
+  }).catch(e=>{
+    if(metricsCache.brandId !== brandId) return;
+    metricsCache = {
+      brandId, rows:[], loaded:true, loading:false,
+      error: String(e.message || e),
+    };
+    if(["analytics","reports"].includes(view)) render();
+  });
+}
+
 /* =============== ui plumbing =============== */
 function toast(msg){
   const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
@@ -682,7 +750,12 @@ function renderNav(){
   sel.innerHTML = db.brands.map(b=>`<option value="${b.id}" ${b.id===db.activeBrand?'selected':''}>${esc(b.name)}</option>`).join("");
 }
 function go(v){ view=v; selectedMsg=null; render(); }
-function switchBrand(id){ db.activeBrand=id; save(); render(); }
+function switchBrand(id){
+  db.activeBrand=id;
+  analyticsNet="all";
+  save();
+  render();
+}
 function render(){
   if(!document.getElementById("welcome").hidden) return;   // auth gate is up
   tickPublish(); renderNav();
@@ -835,6 +908,7 @@ function renderPlanner(m){
     <div class="legend">
       <span><i style="background:var(--chip-draft)"></i>Draft</span>
       <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
+      ${liveMode()?`<span><i style="background:#2f91b5"></i>Publishing</span>`:""}
       <span><i style="background:var(--chip-pub)"></i>Published</span>
     </div>
   </div>`;
@@ -876,12 +950,14 @@ function openPostModal(id, dateStr){
       <div style="flex:1;min-width:110px"><label class="f">Status</label>
         <select class="inp" id="pm_status">
           ${["draft","scheduled","published"].map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
+          ${p?.status==="publishing" ? `<option selected disabled>publishing</option>` : ""}
         </select></div>
     </div>
     <div class="modalfoot">
       <div>${p?`<button class="btn dangerb mini" onclick="deletePost('${p.id}')">Delete</button>
                <button class="btn ghost mini" onclick="dupPost('${p.id}')">Duplicate</button>
-               ${liveMode()?`<button class="btn mini" onclick="publishNow('${p.id}')">🚀 Publish now</button>`:""}`:""}</div>
+               ${liveMode() && !["publishing","published"].includes(p.status)
+                 ? `<button class="btn mini" onclick="publishNow('${p.id}')">🚀 Publish now</button>` : ""}`:""}</div>
       <div class="right">
         <button class="btn ghost" onclick="closeModal()">Cancel</button>
         <button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>
@@ -971,22 +1047,34 @@ function bestTimesHeat(){
   return `<div class="heat">${cells}</div>`;
 }
 function renderAnalytics(m){
-  const s = metricSeries(30, analyticsNet);
+  const b=brand();
+  ensureMetricsLoaded(b.id);
+  const realSeries = realMetricSeries(30, analyticsNet);
+  const usingReal = !!realSeries;
+  const s = realSeries || metricSeries(30, analyticsNet);
   const last=s[s.length-1], prev=s[0];
   const fDelta=last.followers-prev.followers;
   const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
-  const b=brand();
-  const monthPosts=b.posts.filter(p=>p.status==="published").length;
+  const monthPosts=usingReal
+    ? s.reduce((a,x)=>a+(x.posts||0),0)
+    : b.posts.filter(p=>p.status==="published" &&
+        (analyticsNet==="all" || p.networks.includes(analyticsNet))).length;
   const engRate=((totEng/Math.max(totImp,1))*100).toFixed(1);
   m.innerHTML=`
   <h1>Analytics</h1>
   <div class="sub">Last 30 days</div>
-  <div class="card" style="border-left:4px solid var(--chip-draft);margin-bottom:14px">
-    <strong>⚠️ These numbers are simulated.</strong>
+  <div class="card" style="border-left:4px solid ${usingReal?"var(--chip-pub)":"var(--chip-draft)"};margin-bottom:14px">
+    <strong>${usingReal
+      ? "● Real platform metrics"
+      : metricsCache.loading && liveMode()
+        ? "Loading real platform metrics…"
+        : "⚠️ These numbers are simulated."}</strong>
     <div style="color:var(--muted);font-size:13px;margin-top:6px">
-      Real analytics start filling in once you connect an account on the Connections page —
-      the server pulls each platform's own numbers daily. Until then this shows generated
-      sample data so you can see the layout.</div>
+      ${usingReal
+        ? "Pulled from connected platforms by the daily metrics job."
+        : metricsCache.error && liveMode()
+          ? `Real metrics could not be loaded (${esc(metricsCache.error)}). Showing generated sample data.`
+          : "Real analytics start filling in after a connected platform completes its first daily metrics run. Until then, generated sample data demonstrates the layout."}</div>
   </div>
   <div class="tabbar noprint">
     <button class="${analyticsNet==="all"?"active":""}" onclick="analyticsNet='all';render()">All networks</button>
@@ -1005,7 +1093,7 @@ function renderAnalytics(m){
     <div class="card chartbox"><h4>Daily engagement</h4>${barChart(s,"engagement","#7ee081")}</div>
   </div>
   <div class="card" style="margin-top:14px">
-    <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Best times to post (audience activity)</h4>
+    <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">${usingReal?"Estimated ":""}Best times to post (audience activity)</h4>
     ${bestTimesHeat()}
   </div>`;
 }
@@ -1119,28 +1207,37 @@ function slClick(id){ const l=brand().smartlink.links.find(x=>x.id===id); l.clic
 
 /* =============== REPORTS =============== */
 function renderReports(m){
-  const s=metricSeries(30,"all");
   const b=brand();
+  ensureMetricsLoaded(b.id);
+  const realSeries=realMetricSeries(30,"all");
+  const usingReal=!!realSeries;
+  const s=realSeries||metricSeries(30,"all");
   const pub=b.posts.filter(p=>p.status==="published");
-  const perNet=NETWORKS.map(n=>{
+  const reportNetworks=usingReal
+    ? NETWORKS.filter(n=>metricsCache.rows.some(r=>r.platform===n.id))
+    : NETWORKS;
+  const perNet=reportNetworks.map(n=>{
     const posts=pub.filter(p=>p.networks.includes(n.id));
-    if(!posts.length && !b.connections[n.id]) return null;
-    const ser=metricSeries(30,n.id);
+    if(!usingReal && !posts.length && !connectedNets().some(c=>c.id===n.id)) return null;
+    const ser=usingReal ? realMetricSeries(30,n.id) : metricSeries(30,n.id);
+    if(!ser) return null;
     return {n, posts:posts.length,
       followers:ser[ser.length-1].followers,
       eng:ser.reduce((a,x)=>a+x.engagement,0),
-      imp:ser.reduce((a,x)=>a+x.impressions,0)};
+      imp:ser.reduce((a,x)=>a+x.impressions,0),
+      measuredPosts:ser.reduce((a,x)=>a+(x.posts||0),0)};
   }).filter(Boolean);
   const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
+  const totalPosts=usingReal?s.reduce((a,x)=>a+(x.posts||0),0):pub.length;
   m.innerHTML=`
   <h1>Report — ${esc(b.name)}</h1>
-  <div class="sub">Last 30 days · generated ${new Date().toLocaleDateString()}
+  <div class="sub">Last 30 days · ${usingReal?"real platform metrics":"simulated metrics"} · generated ${new Date().toLocaleDateString()}
     <button class="btn mini noprint" style="margin-left:10px" onclick="window.print()">🖨 Print / Save as PDF</button></div>
   <div class="kpis">
     <div class="card kpi"><div class="n">${s[s.length-1].followers.toLocaleString()}</div><div class="l">Total followers</div></div>
     <div class="card kpi"><div class="n">${totImp.toLocaleString()}</div><div class="l">Impressions</div></div>
     <div class="card kpi"><div class="n">${totEng.toLocaleString()}</div><div class="l">Engagements</div></div>
-    <div class="card kpi"><div class="n">${pub.length}</div><div class="l">Posts published</div></div>
+    <div class="card kpi"><div class="n">${totalPosts}</div><div class="l">Posts published</div></div>
   </div>
   <div class="card">
     <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Performance by network</h4>
@@ -1149,7 +1246,7 @@ function renderReports(m){
       ${perNet.map(r=>`<tr>
         <td><span style="color:${r.n.color};font-weight:700">${r.n.short}</span> ${r.n.name}</td>
         <td>${r.followers.toLocaleString()}</td><td>${r.imp.toLocaleString()}</td>
-        <td>${r.eng.toLocaleString()}</td><td>${r.posts}</td></tr>`).join("")}
+        <td>${r.eng.toLocaleString()}</td><td>${usingReal?r.measuredPosts:r.posts}</td></tr>`).join("")}
     </table>
   </div>
   <div class="card" style="margin-top:14px">
@@ -1301,7 +1398,7 @@ function disconnectNet(id){ delete brand().connections[id]; save(); render(); to
 function renderSettings(m){
   m.innerHTML=`
   <h1>Settings</h1>
-  <div class="sub">Manage brands and your data. Everything is stored in this browser (localStorage).</div>
+  <div class="sub">Manage brands, cloud sync, and backups.</div>
   <div class="row">
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Brands</h4>
@@ -1327,9 +1424,8 @@ function renderSettings(m){
              sample data. Create a free account to get a real workspace that syncs across
              your devices.</p>
            <button class="btn" onclick="exitDemo()">Sign in / Create account</button>`) : `
-        <p style="color:var(--muted);font-size:13px">Multi-user sync is scaffolded but not yet
-        implemented. A developer can wire it up by following <code>BACKEND_SPEC.md</code> in the
-        repo — the app already routes all data through a swappable storage adapter.</p>`}
+        <p style="color:var(--muted);font-size:13px">This deployment has no
+        <code>backend-config.js</code>, so it intentionally runs without accounts or cloud sync.</p>`}
     </div>
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Your data</h4>
@@ -1346,8 +1442,12 @@ function renderSettings(m){
     <h4 style="margin-bottom:8px">How to manage FablePeak yourself</h4>
     <ol style="margin-left:18px;color:var(--muted);font-size:13px;line-height:1.9">
       <li><strong>Open:</strong> visit <code>fablepeak.com</code>, install it from your phone browser (<em>Add to Home Screen</em>), or double-click <code>index.html</code> offline.</li>
-      <li><strong>Data:</strong> saved automatically in this browser. Use <em>Export backup</em> regularly — each device keeps its own data.</li>
-      <li><strong>Move devices:</strong> export here, import there. That's the whole sync story.</li>
+      <li><strong>Data:</strong> ${store.user
+        ? "synced to your cloud workspace and cached locally for offline access."
+        : "saved in this browser. Use <em>Export backup</em> regularly."}</li>
+      <li><strong>Move devices:</strong> ${store.user
+        ? "sign in with the same account to load brands you can access."
+        : "export here and import on the other device."}</li>
       <li><strong>Customize:</strong> plain HTML/CSS/JS — colors in the <code>:root</code> CSS block, platforms in the <code>NETWORKS</code> array. Push to GitHub to redeploy.</li>
     </ol>
   </div>`;

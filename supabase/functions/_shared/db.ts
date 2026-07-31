@@ -59,6 +59,15 @@ export async function sbDelete(table: string, filter: string) {
   return req(`${table}?${filter}`, { method: "DELETE", headers: headers({ Prefer: "return=minimal" }) });
 }
 
+/** Call a Postgres RPC through PostgREST using the service role. */
+export async function sbRpc(name: string, args: Record<string, unknown> = {}) {
+  return req(`rpc/${name}`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(args),
+  });
+}
+
 /** COUNT only — uses PostgREST's exact count header. */
 export async function sbCount(table: string, query: string): Promise<number> {
   const r = await fetch(`${SB_URL}/rest/v1/${table}?${query}&select=id`, {

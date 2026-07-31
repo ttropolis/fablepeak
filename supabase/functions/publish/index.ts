@@ -3,9 +3,10 @@
 //   POST {due:true}  — publish everything scheduled and due (called by pg_cron)
 // Refreshes expired OAuth tokens automatically.
 import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
-import { getUser, isMember, sbSelect, sbOne, sbUpdate, sbUpsert } from "../_shared/db.ts";
+import { getUser, isMember, sbOne, sbRpc, sbUpdate, sbUpsert } from "../_shared/db.ts";
 
 const env = (k: string) => Deno.env.get(k);
+const APP_TIMEZONE = env("APP_TIMEZONE") ?? "Australia/Perth";
 const CORS = {
   "Access-Control-Allow-Origin": env("APP_ORIGIN") ?? "*",
   "Access-Control-Allow-Headers": "authorization, content-type, apikey",
@@ -85,7 +86,9 @@ async function publishPost(post: any) {
 
   const anyOk = results.some((r) => r.status === "published");
   await sbUpdate("posts", `id=eq.${encodeURIComponent(post.id)}`, {
-    status: anyOk ? "published" : "draft", updated_at: new Date().toISOString(),
+    status: anyOk ? "published" : "draft",
+    publish_claimed_at: null,
+    updated_at: new Date().toISOString(),
   });
 
   return results;
@@ -102,13 +105,16 @@ Deno.serve(async (req) => {
       if (req.headers.get("x-cron-secret") !== env("CRON_SECRET")) {
         return json({ error: "forbidden" }, 403);
       }
-      const due = await sbSelect("posts", "select=*&status=eq.scheduled&limit=25");
-      const now = Date.now();
-      const ready = due.filter((p: any) =>
-        new Date(`${p.date}T${p.time ?? "10:00"}:00`).getTime() <= now);
+      // Postgres compares the post's wall-clock date/time in APP_TIMEZONE and
+      // atomically changes it to "publishing". Concurrent cron runs therefore
+      // cannot deliver the same scheduled post twice.
+      const ready = await sbRpc("claim_due_posts", {
+        p_timezone: APP_TIMEZONE,
+        p_limit: 25,
+      }) as any[];
       const out = [];
       for (const p of ready) out.push({ post: p.id, results: await publishPost(p) });
-      return json({ published: out.length, out });
+      return json({ published: out.length, timezone: APP_TIMEZONE, out });
     }
 
     // app path: authenticated user publishes one of their posts now
@@ -123,7 +129,14 @@ Deno.serve(async (req) => {
       return json({ error: "No access to this post" }, 403);
     }
 
-    return json({ results: await publishPost(post) });
+    const claimed = await sbRpc("claim_post_for_publish", {
+      p_post_id: post.id,
+    }) as any[];
+    if (!claimed.length) {
+      return json({ error: "This post is already publishing or published" }, 409);
+    }
+
+    return json({ results: await publishPost(claimed[0]) });
   } catch (e) {
     return json({ error: String((e as Error).message ?? e) }, 500);
   }

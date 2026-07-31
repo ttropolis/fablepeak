@@ -195,10 +195,28 @@ Billing is per action — see the warning at the top.
 ```
 CRON_SECRET=<any long random string>     # protects the scheduled publish/metrics jobs
 APP_ORIGIN=https://fablepeak.com         # locks CORS to your own site
+APP_TIMEZONE=Australia/Perth             # IANA timezone for scheduled post times
 ```
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by Supabase
 automatically — don't add them by hand.
+
+### Reproducing the scheduled jobs
+
+The Edge Function secret and database scheduler cannot read each other's
+secret stores. Add these three entries in **Supabase Vault**:
+
+```sql
+select vault.create_secret('https://lghsvxwuaebvotutyjtt.supabase.co', 'project_url');
+select vault.create_secret('<the public anon key>', 'anon_key');
+select vault.create_secret('<the same value as CRON_SECRET>', 'cron_secret');
+```
+
+Then apply
+`supabase/migrations/20260731090000_reliable_scheduling.sql`. It removes the
+legacy job that only changed a database status, installs atomic post-claiming,
+and recreates the publishing and metrics jobs without embedding credentials in
+the job definitions.
 
 ---
 
@@ -225,7 +243,7 @@ Posts publish automatically at their scheduled time; no setup needed. Two
 | Job | Schedule | What it does |
 |---|---|---|
 | `fablepeak-publish-due` | every minute | publishes posts whose time has arrived |
-| `fablepeak-metrics` | 03:17 daily | pulls real follower/impression numbers |
+| `fablepeak-metrics` | 03:17 Perth daily | pulls real follower/impression numbers |
 
 Check they're healthy any time (SQL editor):
 
@@ -234,6 +252,8 @@ select id, status_code, left(content,120) as response, created
 from net._http_response order by created desc limit 5;
 ```
 
-A healthy publisher returns `200` with `{"published":0,"out":[]}` when nothing
-is due. Once `ingest-metrics` has run with a connected account, the Analytics
-page switches from simulated numbers to real ones.
+A healthy publisher returns `200` with
+`{"published":0,"timezone":"Australia/Perth","out":[]}` when nothing is due.
+`ingest-metrics` stores real daily measurements. Analytics and Reports
+automatically use those rows when available and retain a labelled simulated
+fallback before the first successful metrics run.

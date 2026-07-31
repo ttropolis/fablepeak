@@ -46,7 +46,7 @@ plus the backend it talks to.** Do not restructure the UI.
   brands: [{
     id, name, seed,                       // seed: number, drives demo metrics
     connections: {instagram: "@handle", ...},   // subset of 8 network ids
-    posts:  [{id, date:"YYYY-MM-DD", time:"HH:MM", text, networks:[...], status:"draft|scheduled|published"}],
+    posts:  [{id, date:"YYYY-MM-DD", time:"HH:MM", text, networks:[...], status:"draft|scheduled|publishing|published"}],
     inbox:  [{id, net, from, resolved, unread, msgs:[{who:"them|me", text}]}],
     smartlink: {title, bio, avatar, color, links:[{id, title, url, clicks}]}
   }],
@@ -70,7 +70,7 @@ create table posts (
   brand_id text not null references brands(id) on delete cascade,
   date date not null, time text not null,
   text text not null, networks jsonb not null,
-  status text not null check (status in ('draft','scheduled','published')),
+  status text not null check (status in ('draft','scheduled','publishing','published')),
   updated_at timestamptz not null default now()
 );
 create table inbox_threads (
@@ -151,10 +151,12 @@ Upstash QStash + Cloudflare R2. Reviewed 2026-07-12; decisions:
   deliberately a static file on GitHub Pages) and QStash (a per-minute
   `pg_cron` job polling `posts` for due items replaces the whole vendor
   at this scale). R2 unnecessary until real media uploads exist.
-- **Server-side auto-publish (optional in this phase):** pg_cron job each
-  minute flips `posts` where `status='scheduled'` and datetime ≤ now() to
-  `published`, so posts "go out" even with every client closed. The client
-  ticker already does this while open.
+- **Server-side auto-publish:** a pg_cron job calls the `publish` Edge Function
+  each minute. PostgreSQL atomically claims due `scheduled` posts as
+  `publishing`, using the configured IANA timezone, before the function calls
+  platform APIs. Only a confirmed platform delivery may change the post to
+  `published`. The client ticker is simulation-only and must never advance a
+  signed-in cloud post.
 - **Real social posting is a later, separately-priced phase.** Two
   corrections to the report: (1) Supabase social *login* does NOT provide
   publishing-scoped tokens — each platform requires its own developer app,
