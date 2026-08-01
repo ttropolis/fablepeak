@@ -49,6 +49,37 @@ test("scheduler migration is atomic, timezone-aware, and removes the legacy job"
   );
 });
 
+test("connected-account view can read protected rows without exposing tokens", async () => {
+  const schema = await read("supabase/schema_social.sql");
+  const view = schema.match(
+    /create or replace view public\.social_accounts_public([\s\S]*?)grant select on public\.social_accounts_public/,
+  );
+  assert.ok(view, "social_accounts_public view should be defined");
+  assert.doesNotMatch(
+    view[1],
+    /security_invoker\s*=\s*on/i,
+    "an invoker view cannot read the token table because client RLS intentionally has no policies",
+  );
+  assert.match(view[1], /security_invoker\s*=\s*off/i);
+  assert.match(view[1], /where public\.is_member\(c\.brand_id\)/i);
+  assert.doesNotMatch(view[1], /access_token|refresh_token/i);
+});
+
+test("account refresh rerenders every view that consumes connection state", async () => {
+  const html = await read("index.html");
+  const refresh = html.match(
+    /async function refreshConnections\(brandId\)\{([\s\S]*?)\n\}/,
+  );
+  assert.ok(refresh, "refreshConnections should exist");
+  for (const view of ["connections", "planner", "analytics", "reports"]) {
+    assert.match(
+      refresh[1],
+      new RegExp(`(?:^|["'])${view}(?:["']|$)`),
+      `${view} should rerender after connected accounts load`,
+    );
+  }
+});
+
 test("real metrics aggregate daily values and carry follower totals forward", async () => {
   const html = await read("index.html");
   const fn = html.match(

@@ -1364,7 +1364,7 @@ async function refreshConnections(brandId){
     store.availablePlatforms(), store.listAccounts(brandId),
   ]);
   connCache = { brandId, available, accounts, loaded:true };
-  if(view === "connections") render();
+  if(["connections","planner","analytics","reports"].includes(view)) render();
 }
 async function connectReal(platform){
   try{

@@ -37,9 +37,11 @@ create table if not exists public.social_connections (
 alter table public.social_connections enable row level security;
 -- deliberately NO policies: clients get zero rows; Edge Functions use service_role.
 
--- token-free projection the browser is allowed to read
+-- Token-free projection the browser is allowed to read. This view must run as
+-- its privileged owner because social_connections intentionally has no client
+-- RLS policies. The membership predicate is the row-level authorization gate.
 create or replace view public.social_accounts_public
-with (security_invoker = on) as
+with (security_invoker = off, security_barrier = true) as
 select c.id, c.brand_id, c.platform, c.external_id, c.display_name,
        c.avatar_url, c.status, c.last_error, c.connected_at,
        (c.token_expires_at is not null and c.token_expires_at < now()) as needs_reauth
