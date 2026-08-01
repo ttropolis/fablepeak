@@ -62,7 +62,13 @@ test("connected-account view can read protected rows without exposing tokens", a
   );
   assert.match(view[1], /security_invoker\s*=\s*off/i);
   assert.match(view[1], /where public\.is_member\(c\.brand_id\)/i);
-  assert.doesNotMatch(view[1], /access_token|refresh_token/i);
+  assert.doesNotMatch(view[1], /\baccess_token\b\s*(?:,|\n|as)/i);
+  assert.doesNotMatch(view[1], /\brefresh_token\b\s*(?:,|\n|as)/i);
+  assert.match(
+    view[1],
+    /token_expires_at[\s\S]*?<\s*now\(\)[\s\S]*?refresh_token\s+is\s+null/i,
+    "an expired access token remains usable when the server has a refresh token",
+  );
 });
 
 test("account refresh rerenders every view that consumes connection state", async () => {
