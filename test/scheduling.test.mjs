@@ -80,6 +80,23 @@ test("account refresh rerenders every view that consumes connection state", asyn
   }
 });
 
+test("cloud data rejects a stale preferred brand before loading accounts", async () => {
+  const html = await read("index.html");
+  const method = html.match(
+    /_rowsToDb\(brands, posts, inbox\)\{([\s\S]*?)\n  \},\n  _dbToRows/,
+  );
+  assert.ok(method, "RemoteAdapter._rowsToDb should exist");
+  const context = {
+    localStorage: { getItem: () => "deleted-brand" },
+  };
+  vm.runInNewContext(
+    `result = ({ _rowsToDb(brands, posts, inbox) {${method[1]}\n} })` +
+      `._rowsToDb([{id:"brand-1",name:"SCH",seed:1}], [], []);`,
+    context,
+  );
+  assert.equal(context.result.activeBrand, "brand-1");
+});
+
 test("real metrics aggregate daily values and carry follower totals forward", async () => {
   const html = await read("index.html");
   const fn = html.match(

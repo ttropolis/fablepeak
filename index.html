@@ -355,7 +355,7 @@ const RemoteAdapter = {
   },
 
   _rowsToDb(brands, posts, inbox){
-    return { brands: brands.map(b => ({
+    const mappedBrands = brands.map(b => ({
         id: b.id, name: b.name, seed: b.seed,
         connections: b.connections || {}, smartlink: b.smartlink || {},
         posts: posts.filter(p => p.brand_id===b.id).map(p => ({
@@ -364,8 +364,13 @@ const RemoteAdapter = {
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
           unread: t.unread, msgs: t.msgs || [] })),
-      })),
-      activeBrand: localStorage.getItem("fablepeak_pref_activeBrand") || "" };
+      }));
+    const preferredBrand = localStorage.getItem("fablepeak_pref_activeBrand") || "";
+    return {
+      brands: mappedBrands,
+      activeBrand: mappedBrands.some(b => b.id===preferredBrand)
+        ? preferredBrand : (mappedBrands[0]?.id || ""),
+    };
   },
   _dbToRows(data){
     const brands=[], posts=[], inbox=[];
