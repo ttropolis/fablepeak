@@ -16,12 +16,12 @@ Inspired by [Metricool](https://metricool.com).
 
 | View | What it does |
 |------|--------------|
-| **Planner** | Monthly content calendar. Compose posts per network with date/time and status (draft / scheduled / publishing / published). Drag between days. Cloud schedules publish server-side; local/demo schedules simulate publishing in the browser. |
+| **Planner** | Monthly content calendar. Compose posts per network, upload media (50 MB) or use a direct URL, and choose date/time/status. Cloud schedules publish server-side; local/demo schedules simulate publishing in the browser. |
 | **Analytics** | Real follower totals and day-over-day impression/engagement changes when platform data exists, with a clearly-labelled simulated fallback for new workspaces. |
 | **Inbox** | Unified messages across networks. Reply, resolve, filter. |
 | **SmartLinks** | Link-in-bio page builder with live phone preview and click tracking. |
 | **Reports** | 30-day per-network report + post log. Print / save as PDF. |
-| **Connections** | Real OAuth connections in cloud mode for configured platforms; simulated profiles in local/demo mode. |
+| **Connections** | Customer-owned OAuth connections in cloud mode, including direct Instagram Login and explicit Facebook Page selection; simulated profiles in local/demo mode. |
 | **Settings** | Multiple brands, JSON export/import backups, demo reset. |
 
 ## Managing it yourself
@@ -68,8 +68,9 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
 ## Current limits
 
 - The current production deployment has YouTube configured and verified.
-  Facebook, Instagram, LinkedIn, and X adapters are available but each still
-  needs its own developer credentials and platform approval/setup.
+  Facebook and direct Instagram adapters are implemented; production secrets,
+  platform review, and external-account validation are still required before
+  general customer access. LinkedIn and X also need provider setup and review.
 - TikTok integration is intentionally deferred for this release. Its disabled
   connection card remains as a future placeholder.
 - YouTube publishing requires a public, direct HTTPS video-file URL. A

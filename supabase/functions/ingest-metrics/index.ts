@@ -1,62 +1,27 @@
 // Pulls real metrics from every connected account into metrics_daily.
 // Invoked daily by pg_cron. Never called directly by the browser — the app
 // reads the metrics_daily table (RLS-protected) instead.
-import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
+import { ADAPTERS } from "../_shared/platforms.ts";
 import { sbSelect, sbUpdate, sbUpsert, sbCount } from "../_shared/db.ts";
+import { freshConnectionToken } from "../_shared/token-manager.ts";
 
 const env = (k: string) => Deno.env.get(k);
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
-
-async function freshToken(conn: any): Promise<string> {
-  const exp = conn.token_expires_at ? new Date(conn.token_expires_at).getTime() : null;
-  if (!exp || exp - Date.now() > 120_000) return conn.access_token;
-  if (!conn.refresh_token) {
-    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-      status: "expired",
-      last_error: "Access expired and no refresh token — reconnect this account.",
-      updated_at: new Date().toISOString(),
-    });
-    throw new Error("Access expired — reconnect this account.");
-  }
-  const a = ADAPTERS[conn.platform];
-  let t: Awaited<ReturnType<typeof exchangeToken>>;
-  try {
-    t = await exchangeToken(a,
-      { grant_type: "refresh_token", refresh_token: conn.refresh_token },
-      env(a.clientIdEnv)!, env(a.clientSecretEnv)!);
-  } catch (e) {
-    const detail = String((e as Error).message ?? e).slice(0, 300);
-    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-      status: "expired",
-      last_error: `Could not refresh access — reconnect this account. ${detail}`,
-      updated_at: new Date().toISOString(),
-    });
-    throw new Error("Could not refresh access — reconnect this account.");
-  }
-  await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-    access_token: t.access_token,
-    refresh_token: t.refresh_token ?? conn.refresh_token,
-    token_expires_at: t.expires_in
-      ? new Date(Date.now() + t.expires_in * 1000).toISOString() : null,
-    status: "active", last_error: null, updated_at: new Date().toISOString(),
-  });
-  return t.access_token;
-}
 
 Deno.serve(async (req) => {
   if (req.headers.get("x-cron-secret") !== env("CRON_SECRET")) {
     return json({ error: "forbidden" }, 403);
   }
   const today = new Date().toISOString().slice(0, 10);
-  const conns = await sbSelect("social_connections", "select=*&status=eq.active");
+  const conns = await sbSelect("social_connections", "select=*&status=eq.active&is_default=eq.true");
   const out: any[] = [];
 
   for (const conn of conns) {
     const adapter = ADAPTERS[conn.platform];
     if (!adapter?.metrics) continue;
     try {
-      const token = await freshToken(conn);
+      const token = await freshConnectionToken(conn, env);
       const m = await adapter.metrics({ accessToken: token, connection: conn });
       if (!m) continue;
 

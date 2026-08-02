@@ -1,7 +1,7 @@
 // Begins an OAuth connection. Called by the browser with the user's Supabase
 // JWT; returns the platform authorize URL to open. No secrets leave the server.
 import { ADAPTERS, configuredPlatforms } from "../_shared/platforms.ts";
-import { getUser, isMember, sbInsert } from "../_shared/db.ts";
+import { getUser, isMember, sbDelete, sbInsert } from "../_shared/db.ts";
 
 const env = (k: string) => Deno.env.get(k);
 const CORS = {
@@ -41,15 +41,23 @@ Deno.serve(async (req) => {
     if (!adapter) return json({ error: `Unknown platform: ${platform}` }, 400);
 
     const clientId = env(adapter.clientIdEnv);
-    if (!clientId || !env(adapter.clientSecretEnv)) {
+    const missingSecrets = [adapter.clientIdEnv, adapter.clientSecretEnv,
+      "SOCIAL_TOKEN_ENCRYPTION_KEY",
+      adapter.authorizeConfigEnv].filter((key): key is string => Boolean(key && !env(key)));
+    if (!clientId || missingSecrets.length) {
       return json({ error:
-        `${adapter.label} is not configured yet. Add ${adapter.clientIdEnv} and ` +
-        `${adapter.clientSecretEnv} to the Edge Function secrets.` }, 400);
+        `${adapter.label} is not configured yet. Add ${missingSecrets.join(", ")} ` +
+        `to the Edge Function secrets.` }, 400);
     }
 
     if (!await isMember(brand_id, user.id)) {
       return json({ error: "You don't have access to that brand" }, 403);
     }
+
+    // OAuth state is single-use and short-lived. Opportunistic cleanup keeps
+    // abandoned popup attempts from accumulating indefinitely.
+    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+    await sbDelete("oauth_states", `created_at=lt.${encodeURIComponent(staleBefore)}`);
 
     const state = b64url(crypto.getRandomValues(new Uint8Array(24)));
     let verifier: string | undefined, challenge: string | undefined;
@@ -65,10 +73,13 @@ Deno.serve(async (req) => {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: adapter.scopes.join(adapter.id === "tiktok" ? "," : " "),
       state,
       ...(adapter.authorizeExtra ?? {}),
     });
+    const configId = adapter.authorizeConfigEnv ? env(adapter.authorizeConfigEnv) : undefined;
+    if (configId) p.set("config_id", configId);
+    else p.set("scope", adapter.scopes.join(adapter.scopeSeparator ??
+      (adapter.id === "tiktok" ? "," : " ")));
     if (challenge) { p.set("code_challenge", challenge); p.set("code_challenge_method", "S256"); }
     if (adapter.id === "tiktok") { p.delete("client_id"); p.set("client_key", clientId); }
 

@@ -1,7 +1,8 @@
 -- FablePeak — REAL social platform integration (phase 2)
 -- Run in Supabase SQL editor AFTER schema.sql.
 --
--- Security model: `social_connections` holds OAuth access/refresh tokens.
+-- Security model: `social_connections` holds application-encrypted OAuth
+-- access/refresh tokens (legacy rows may remain plaintext until refreshed).
 -- It has RLS enabled and *no* policies, so the anon/authenticated client
 -- keys can never read it. Only Edge Functions (service_role, which bypasses
 -- RLS) touch tokens. The browser reads the token-free `social_accounts_public`
@@ -27,9 +28,11 @@ create table if not exists public.social_connections (
   token_expires_at timestamptz,
   scopes text,
   meta jsonb not null default '{}',     -- platform extras (page tokens, ig business id…)
+  is_default boolean not null default false, -- selected publishing account for this platform
   status text not null default 'active' check (status in ('active','expired','revoked','error')),
   last_error text,
   connected_at timestamptz not null default now(),
+  last_verified_at timestamptz,
   updated_at timestamptz not null default now(),
   unique (brand_id, platform, external_id)
 );
@@ -43,7 +46,7 @@ alter table public.social_connections enable row level security;
 create or replace view public.social_accounts_public
 with (security_invoker = off, security_barrier = true) as
 select c.id, c.brand_id, c.platform, c.external_id, c.display_name,
-       c.avatar_url, c.status, c.last_error, c.connected_at,
+       c.avatar_url, c.status, c.last_error, c.connected_at, c.last_verified_at, c.is_default,
        (c.token_expires_at is not null and c.token_expires_at < now()
         and c.refresh_token is null) as needs_reauth
 from public.social_connections c
@@ -153,19 +156,45 @@ create policy brands_update on public.brands for update to authenticated
 -- security-definer RPC, which checks brand membership and never returns tokens.
 create or replace function public.disconnect_account(account_id uuid)
 returns boolean language plpgsql security definer set search_path = public as $$
-declare b text;
+declare b text; p text; was_default boolean;
 begin
-  select brand_id into b from public.social_connections where id = account_id;
+  select brand_id, platform, is_default into b, p, was_default
+    from public.social_connections where id = account_id;
   if b is null then return false; end if;
   if not public.is_member(b) then raise exception 'not authorised'; end if;
   delete from public.social_connections where id = account_id;
+  if was_default then
+    update public.social_connections set is_default = true
+     where id = (select id from public.social_connections
+                  where brand_id = b and platform = p and status = 'active'
+                  order by connected_at limit 1);
+  end if;
   return true;
 end $$;
 revoke all on function public.disconnect_account(uuid) from public;
 grant execute on function public.disconnect_account(uuid) to authenticated;
 
+-- Select which authorized account receives posts for a platform. Keeping this
+-- server-side makes the switch atomic and enforces workspace membership.
+create or replace function public.select_social_account(account_id uuid)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare b text; p text;
+begin
+  select brand_id, platform into b, p from public.social_connections where id = account_id;
+  if b is null then return false; end if;
+  if not public.is_member(b) then raise exception 'not authorised'; end if;
+  update public.social_connections set is_default = false
+    where brand_id = b and platform = p and is_default;
+  update public.social_connections set is_default = true where id = account_id;
+  return true;
+end $$;
+revoke all on function public.select_social_account(uuid) from public;
+grant execute on function public.select_social_account(uuid) to authenticated;
+
 -- ------------------------------------------------------------------- indexes
 create index if not exists idx_targets_pending on public.post_targets (status)
   where status in ('pending','publishing');
 create index if not exists idx_conn_brand on public.social_connections (brand_id);
+create unique index if not exists idx_conn_one_default
+  on public.social_connections (brand_id, platform) where is_default;
 create index if not exists idx_metrics_brand_date on public.metrics_daily (brand_id, date desc);

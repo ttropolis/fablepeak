@@ -1,7 +1,9 @@
 {
   "name": "fablepeak",
   "private": true,
+  "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "smoke:production": "node scripts/production-smoke.mjs"
   }
 }

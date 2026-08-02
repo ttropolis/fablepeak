@@ -1,7 +1,8 @@
 // OAuth redirect target. Exchanges the code for tokens, identifies the remote
 // account, stores the connection, and closes the popup.
-import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
+import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
 import { sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
+import { encryptToken } from "../_shared/token-crypto.ts";
 import { withSupabase } from "jsr:@supabase/server@^1";
 
 const env = (k: string) => Deno.env.get(k);
@@ -29,42 +30,60 @@ const handleCallback = async (req: Request) => {
     const st = await sbOne("oauth_states", `select=*&state=eq.${encodeURIComponent(state)}`);
     if (!st) return page("Connection failed", "This link expired. Try connecting again.", false);
     await sbDelete("oauth_states", `state=eq.${encodeURIComponent(state)}`);
+    const stateCreatedAt = new Date(st.created_at).getTime();
+    if (!Number.isFinite(stateCreatedAt) || Date.now() - stateCreatedAt > 10 * 60_000) {
+      return page("Connection failed", "This link expired. Try connecting again.", false);
+    }
 
     const adapter = ADAPTERS[st.platform];
     const clientId = env(adapter.clientIdEnv)!, clientSecret = env(adapter.clientSecretEnv)!;
     const redirectUri = `${env("SUPABASE_URL")}/functions/v1/oauth-callback`;
 
-    const params: Record<string, string> = {
-      grant_type: "authorization_code", code, redirect_uri: redirectUri,
-    };
-    if (st.code_verifier) params.code_verifier = st.code_verifier;
-    if (adapter.id === "tiktok") params.client_key = clientId;
-
-    const tokens = await exchangeToken(adapter, params, clientId, clientSecret);
-    const identity = await adapter.identify(tokens);
+    const tokens = await exchangeAuthorizationCode(adapter, {
+      code,
+      redirectUri,
+      codeVerifier: st.code_verifier ?? undefined,
+      clientId,
+      clientSecret,
+    });
+    const identities = adapter.identifyAll
+      ? await adapter.identifyAll(tokens)
+      : [await adapter.identify(tokens)];
+    if (!identities.length) throw new Error(`No ${adapter.label} account was authorized.`);
 
     const expiresAt = tokens.expires_in
       ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null;
 
-    await sbUpsert("social_connections", {
-      brand_id: st.brand_id,
-      user_id: st.user_id,
-      platform: st.platform,
-      external_id: identity.external_id,
-      display_name: identity.display_name,
-      avatar_url: identity.avatar_url ?? null,
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token ?? null,
-      token_expires_at: expiresAt,
-      scopes: tokens.scope ?? adapter.scopes.join(" "),
-      meta: identity.meta ?? {},
-      status: "active",
-      last_error: null,
-      updated_at: new Date().toISOString(),
-    }, "brand_id,platform,external_id");
+    const currentDefault = await sbOne("social_connections",
+      `select=external_id&brand_id=eq.${encodeURIComponent(st.brand_id)}` +
+      `&platform=eq.${encodeURIComponent(st.platform)}&is_default=eq.true`);
+    const now = new Date().toISOString();
+    const rows = await Promise.all(identities.map(async (identity, index) => ({
+        brand_id: st.brand_id,
+        user_id: st.user_id,
+        platform: st.platform,
+        external_id: identity.external_id,
+        display_name: identity.display_name,
+        avatar_url: identity.avatar_url ?? null,
+        access_token: await encryptToken(identity.access_token ?? tokens.access_token),
+        refresh_token: await encryptToken(tokens.refresh_token),
+        token_expires_at: expiresAt,
+        scopes: tokens.scope ?? adapter.scopes.join(" "),
+        meta: identity.meta ?? {},
+        is_default: currentDefault
+          ? currentDefault.external_id === identity.external_id
+          : index === 0,
+        status: "active",
+        last_error: null,
+        last_verified_at: now,
+        updated_at: now,
+      })));
+    await sbUpsert("social_connections", rows, "brand_id,platform,external_id");
 
     return page(`${adapter.label} connected`,
-      `Connected as ${identity.display_name}. You can close this window.`, true);
+      identities.length === 1
+        ? `Connected as ${identities[0].display_name}. You can close this window.`
+        : `Connected ${identities.length} Pages. Choose which one to publish from in FablePeak.`, true);
   } catch (e) {
     return page("Connection failed", String((e as Error).message ?? e), false);
   }
