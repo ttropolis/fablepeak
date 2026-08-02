@@ -65,6 +65,7 @@ export interface PlatformAdapter {
     refreshToken?: string;
     clientId: string;
     clientSecret: string;
+    connection?: { external_id: string; meta?: Record<string, unknown> };
   }): Promise<TokenSet>;
   /** fetch who we just connected as */
   identify(tokens: TokenSet): Promise<Identity>;
@@ -287,6 +288,28 @@ const facebook: PlatformAdapter = {
     }, clientId, clientSecret);
     return {
       access_token: long.access_token,
+      // Facebook does not issue an OAuth refresh_token. Retain the long-lived
+      // user token separately so Page tokens can be reacquired at rollover.
+      refresh_token: long.access_token,
+      expires_in: long.expires_in,
+      scope: facebook.scopes.join(" "),
+    };
+  },
+
+  async refreshAccess({ refreshToken, clientId, clientSecret, connection }) {
+    if (!refreshToken) throw new Error("Facebook did not retain a user token.");
+    if (!connection?.external_id) throw new Error("Facebook Page identity is missing.");
+    const long = await exchangeToken(facebook, {
+      grant_type: "fb_exchange_token", fb_exchange_token: refreshToken,
+    }, clientId, clientSecret);
+    const page = (await metaPages(long.access_token))
+      .find((candidate: any) => String(candidate.id) === String(connection.external_id));
+    if (!page?.access_token) {
+      throw new Error("This Facebook Page is no longer available to the authorizing user.");
+    }
+    return {
+      access_token: page.access_token,
+      refresh_token: long.access_token,
       expires_in: long.expires_in,
       scope: facebook.scopes.join(" "),
     };
@@ -636,6 +659,7 @@ export async function refreshPlatformToken(
     refreshToken?: string;
     clientId: string;
     clientSecret: string;
+    connection?: { external_id: string; meta?: Record<string, unknown> };
   },
 ): Promise<TokenSet> {
   if (a.refreshAccess) return a.refreshAccess(input);

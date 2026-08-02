@@ -30,21 +30,35 @@ test("privacy and deletion notices describe provider-token handling", async () =
 
 test("self-service deletion removes credentials and preserves shared workspaces", async () => {
   const source = await read("supabase/functions/delete-account/index.ts");
+  const migration = await read(
+    "supabase/migrations/20260802150000_account_deletion.sql",
+  );
   const html = await read("index.html");
   const deletion = await read("data-deletion.html");
   assert.match(source, /getUser\(jwt\)/);
   assert.match(source, /body\.confirm !== "DELETE"/);
-  assert.match(source, /sbDelete\("social_connections", `user_id=eq\./);
-  assert.match(source, /others\.some\(\(member\) => member\.role === "owner"\)/);
-  assert.match(source, /\{ role: "owner" \}/);
-  assert.match(source, /await deleteWorkspaceMedia\(membership\.brand_id, serviceKey\)/);
+  assert.match(source, /grant_type=password/);
+  assert.match(source, /password: body\.password/);
+  assert.match(source, /sbRpc\("prepare_account_deletion"/);
+  assert.match(migration, /create table if not exists public\.account_deletion_jobs/);
+  assert.match(migration, /delete from public\.social_connections where user_id = target_user/);
+  assert.match(migration, /update public\.brand_members set role = 'owner'/);
+  assert.match(migration, /security definer/);
+  assert.match(source, /for \(const brandId of brandIds\) await deleteWorkspaceMedia/);
   assert.match(source, /storage\/v1\/object\/list\/social-media/);
+  assert.match(source, /offset \+= 1000/);
+  assert.match(source, /paths\.slice\(start, start \+ 1000\)/);
   assert.match(source, /auth\/v1\/admin\/users\/\$\{user\.id\}/);
   assert.match(html, /async function deleteCloudAccount/);
   assert.match(html, /Type DELETE to continue/);
-  assert.match(html, /signInWithPassword/);
-  assert.match(html, /Password confirmation failed/);
+  assert.match(html, /JSON\.stringify\(\{confirm:"DELETE",password\}\)/);
   assert.match(deletion, /Under <strong>Delete account<\/strong>/);
+});
+
+test("production auth redirects point at the deployed application", async () => {
+  const config = await read("supabase/config.toml");
+  assert.match(config, /site_url = "https:\/\/fablepeak\.com"/);
+  assert.match(config, /additional_redirect_urls = \["https:\/\/fablepeak\.com"/);
 });
 
 test("production checklist matches implemented Meta and Google scopes", async () => {

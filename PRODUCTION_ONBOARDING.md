@@ -115,7 +115,7 @@ the FablePeak owners/developers:
 | Facebook selection | Multiple authorized Pages appear; chosen Page receives the post |
 | YouTube | Correct channel identity appears; upload reaches that channel |
 | Connection truth | Wrong/revoked token becomes Error/Needs reconnecting, never Connected |
-| Token lifecycle | Expiring token refreshes; refresh failure gives a reconnect action |
+| Token lifecycle | Refreshable tokens renew automatically; providers without refresh support give a reconnect action before publishing stops |
 | Tenant isolation | Customer A cannot list, select, disconnect, publish to, or read Customer B assets |
 | Disconnect | Stored provider credential is removed and scheduled delivery stops |
 | Scheduling | Claimed post publishes once; per-platform result and remote link/error are retained |

@@ -21,6 +21,10 @@ test("Facebook Pages use Facebook Login for Business configuration", async () =>
   assert.doesNotMatch(facebook[1], /business_management/);
   assert.match(facebook[1], /grant_type: "fb_exchange_token"/);
   assert.match(facebook[1], /fb_exchange_token: short\.access_token/);
+  assert.match(facebook[1], /refresh_token: long\.access_token/);
+  assert.match(facebook[1], /async refreshAccess/);
+  assert.match(facebook[1], /await metaPages\(long\.access_token\)/);
+  assert.match(facebook[1], /connection\.external_id/);
 
   assert.match(oauthStart, /if \(configId\) p\.set\("config_id", configId\)/);
   assert.match(oauthStart, /else p\.set\("scope", adapter\.scopes\.join/);
@@ -126,6 +130,7 @@ test("OAuth state is single-use and expires after ten minutes", async () => {
   assert.match(start, /sbDelete\("oauth_states", `created_at=lt\./);
   assert.match(callback, /sbDelete\("oauth_states", `state=eq\./);
   assert.match(callback, /Date\.now\(\) - stateCreatedAt > 10 \* 60_000/);
+  assert.match(callback, /isMember\(st\.brand_id, st\.user_id\)/);
 });
 
 test("Facebook exposes every authorized Page for explicit selection", async () => {
@@ -153,10 +158,26 @@ test("selected social account is tenant-checked and used for publishing", async 
   assert.match(migration, /create or replace function public\.select_social_account/);
   assert.match(migration, /if not public\.is_member\(b\)/);
   assert.match(migration, /where is_default/);
-  assert.match(publish, /order=is_default\.desc,connected_at\.asc/);
+  assert.match(publish, /is_default=eq\.true/);
+  assert.match(publish, /if \(conn\.status !== "active"\)/);
+  assert.match(publish, /never bypass an expired\/error selected account/);
   assert.match(metrics, /is_default=eq\.true/);
   assert.match(html, /Use for publishing/);
   assert.match(html, /store\.selectAccount\(id\)/);
+  assert.doesNotMatch(html, /selectReal\('\$\{a\.id\}','\$\{esc\(a\.display_name/);
+  assert.doesNotMatch(html, /disconnectReal\('\$\{a\.id\}','\$\{esc\(a\.display_name/);
+});
+
+test("public account view migrations only append columns", async () => {
+  const selection = await read(
+    "supabase/migrations/20260802120000_social_account_selection.sql",
+  );
+  const health = await read(
+    "supabase/migrations/20260802130000_connection_health.sql",
+  );
+  assert.ok(selection.indexOf("as needs_reauth") < selection.indexOf("c.is_default"));
+  assert.ok(health.indexOf("as needs_reauth") < health.indexOf("c.is_default"));
+  assert.ok(health.indexOf("c.is_default") < health.indexOf("c.last_verified_at"));
 });
 
 test("connection health verifies the exact provider identity behind tenant auth", async () => {

@@ -33,12 +33,24 @@ async function publishPost(post: any) {
       continue;
     }
 
-    const conn = await sbOne("social_connections",
+    let conn = await sbOne("social_connections",
       `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
-      `&platform=eq.${platform}&status=eq.active&order=is_default.desc,connected_at.asc`);
+      `&platform=eq.${platform}&is_default=eq.true`);
+    // Legacy rows created before explicit account selection may not have a
+    // default yet. Only that migration case may fall back to the oldest active
+    // connection; never bypass an expired/error selected account.
+    if (!conn) conn = await sbOne("social_connections",
+      `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
+      `&platform=eq.${platform}&status=eq.active&order=connected_at.asc`);
     if (!conn) {
       await mark({ status: "skipped", error: "No connected account for this platform" });
       results.push({ platform, status: "skipped", error: "No connected account for this platform" });
+      continue;
+    }
+    if (conn.status !== "active") {
+      const error = "The selected account needs attention — verify or reconnect it before publishing.";
+      await mark({ status: "skipped", connection_id: conn.id, error });
+      results.push({ platform, status: "skipped", error });
       continue;
     }
 

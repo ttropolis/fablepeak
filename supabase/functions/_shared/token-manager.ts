@@ -8,6 +8,8 @@ import { decryptToken, encryptToken } from "./token-crypto.ts";
 type Connection = {
   id: string;
   platform: string;
+  external_id: string;
+  meta?: Record<string, unknown> | null;
   access_token?: string | null;
   refresh_token?: string | null;
   token_expires_at?: string | null;
@@ -47,6 +49,7 @@ export async function freshConnectionToken(
       refreshToken: refreshToken ?? undefined,
       clientId,
       clientSecret,
+      connection: { external_id: conn.external_id, meta: conn.meta ?? undefined },
     });
     if (!tokens.access_token) throw new Error("Provider returned no access token.");
 

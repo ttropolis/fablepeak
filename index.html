@@ -583,17 +583,13 @@ const RemoteAdapter = {
     return out.results || [];
   },
   async deleteAccount(password){
-    const { error:reauthError }=await this._sb.auth.signInWithPassword({
-      email:this.user?.email, password,
-    });
-    if(reauthError) throw new Error("Password confirmation failed.");
     const jwt=await this._jwt();
     if(!jwt) throw new Error("Sign in first");
     const r=await fetch(`${this._fnBase}/delete-account`,{
       method:"POST",
       headers:{Authorization:`Bearer ${jwt}`,apikey:window.FABLEPEAK_BACKEND.anonKey,
                "Content-Type":"application/json"},
-      body:JSON.stringify({confirm:"DELETE"}),
+      body:JSON.stringify({confirm:"DELETE",password}),
     });
     const out=await r.json();
     if(!r.ok) throw new Error(out.error||"Could not delete account");
@@ -1534,7 +1530,7 @@ function renderConnections(m){
         <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
           <div style="min-width:0">
             <strong>${n.name}</strong>
-            <div class="st ${accounts.length?"on":""}">
+            <div class="st ${accounts.some(a=>a.status==="active")?"on":""}">
               ${accounts.length
                 ? esc((accounts.find(a=>a.is_default) || accounts[0]).display_name || "Connected")
                 : ready ? "Not connected" : "Not set up on the server"}</div>
@@ -1544,20 +1540,24 @@ function renderConnections(m){
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px">
             ${a.avatar_url ? `<img src="${esc(a.avatar_url)}" alt="" style="width:25px;height:25px;border-radius:50%;object-fit:cover">` : ""}
             <strong style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name || "Connected account")}</strong>
-            ${a.is_default
+            ${a.is_default && a.status==="active"
               ? `<span style="color:var(--chip-pub);font-size:11px">✓ Publishing account</span>`
-              : `<button class="btn ghost mini" onclick="selectReal('${a.id}','${esc(a.display_name||"")}')">Use for publishing</button>`}
+              : a.status==="active"
+                ? `<button class="btn ghost mini" onclick="selectReal('${a.id}')">Use for publishing</button>`
+                : ""}
             ${a.last_verified_at && a.status==="active"
               ? `<span style="color:var(--muted);font-size:10px" title="${esc(a.last_verified_at)}">Verified</span>` : ""}
-            ${a.needs_reauth || a.status!=="active"
-              ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>` : ""}
-            <button class="btn ghost mini" onclick="disconnectReal('${a.id}','${esc(a.display_name||"")}')">Disconnect</button>
+            ${a.needs_reauth || ["expired","revoked"].includes(a.status)
+              ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>`
+              : a.status==="error"
+                ? `<span style="color:var(--danger);font-size:12px">⚠️ Connection check failed</span>` : ""}
+            <button class="btn ghost mini" onclick="disconnectReal('${a.id}')">Disconnect</button>
           </div>
           ${a.last_error ? `<div style="color:var(--danger);font-size:11px">${esc(a.last_error)}</div>` : ""}`).join("")}
         ${ready && !accounts.length
           ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
           : ready && accounts.length
-            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${n.id==="facebook"?"Refresh Pages":"Connect another"}</button>`
+            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":"Connect another"}</button>`
           : `<button class="btn ghost mini" disabled title="This connection is temporarily unavailable">Connect</button>`}
       </div>`;
     }).join("")}
@@ -1592,7 +1592,8 @@ async function connectReal(platform){
     toast(got ? netOf(platform).name + " connected ✔" : "Connection not completed");
   }catch(e){ toast(e.message); }
 }
-async function disconnectReal(id, name){
+async function disconnectReal(id){
+  const name=connCache.accounts.find(a=>a.id===id)?.display_name;
   if(!confirm(`Disconnect ${name || "this account"}? Scheduled posts will stop publishing to it.`)) return;
   try{
     await store.disconnectAccount(id);
@@ -1601,7 +1602,8 @@ async function disconnectReal(id, name){
     toast("Disconnected");
   }catch(e){ toast(e.message); }
 }
-async function selectReal(id, name){
+async function selectReal(id){
+  const name=connCache.accounts.find(a=>a.id===id)?.display_name;
   try{
     await store.selectAccount(id);
     connCache.loaded = false;

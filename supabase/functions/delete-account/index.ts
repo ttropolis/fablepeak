@@ -1,7 +1,7 @@
 // Authenticated FablePeak account deletion. Provider credentials connected by
 // this user are removed, sole-owner workspaces are deleted, and shared
 // workspaces retain continuity by promoting another member before auth removal.
-import { getUser, sbDelete, sbSelect, sbUpdate } from "../_shared/db.ts";
+import { getUser, sbDelete, sbRpc } from "../_shared/db.ts";
 
 const env = (key: string) => Deno.env.get(key);
 const CORS = {
@@ -25,42 +25,22 @@ Deno.serve(async (req) => {
     const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY")!;
     const body = await req.json().catch(() => ({}));
     if (body.confirm !== "DELETE") return json({ error: "Confirmation is required" }, 400);
-
-    const owned = await sbSelect("brand_members",
-      `select=brand_id&user_id=eq.${encodeURIComponent(user.id)}&role=eq.owner`);
-    const userConnections = await sbSelect("social_connections",
-      `select=id,brand_id,platform,is_default&user_id=eq.${encodeURIComponent(user.id)}`);
-
-    await sbDelete("oauth_states", `user_id=eq.${encodeURIComponent(user.id)}`);
-    await sbDelete("social_connections", `user_id=eq.${encodeURIComponent(user.id)}`);
-
-    // If one of the removed credentials was selected, select a surviving
-    // account for the same workspace/platform so scheduled posts remain sane.
-    for (const removed of userConnections.filter((connection) => connection.is_default)) {
-      const surviving = await sbSelect("social_connections",
-        `select=id&brand_id=eq.${encodeURIComponent(removed.brand_id)}` +
-        `&platform=eq.${encodeURIComponent(removed.platform)}` +
-        `&status=eq.active&order=connected_at.asc&limit=1`);
-      if (surviving[0]) await sbUpdate("social_connections",
-        `id=eq.${encodeURIComponent(surviving[0].id)}`, { is_default: true });
+    if (!user.email || typeof body.password !== "string" || !body.password) {
+      return json({ error: "Password confirmation is required" }, 400);
     }
+    const reauthenticated = await fetch(
+      `${env("SUPABASE_URL")}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: { apikey: serviceKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, password: body.password }),
+      });
+    if (!reauthenticated.ok) return json({ error: "Password confirmation failed" }, 401);
 
-    for (const membership of owned) {
-      const others = await sbSelect("brand_members",
-        `select=user_id,role&brand_id=eq.${encodeURIComponent(membership.brand_id)}` +
-        `&user_id=neq.${encodeURIComponent(user.id)}&order=user_id.asc`);
-      if (!others.length) {
-        await deleteWorkspaceMedia(membership.brand_id, serviceKey);
-        await sbDelete("brands", `id=eq.${encodeURIComponent(membership.brand_id)}`);
-      } else if (!others.some((member) => member.role === "owner")) {
-        await sbUpdate("brand_members",
-          `brand_id=eq.${encodeURIComponent(membership.brand_id)}` +
-          `&user_id=eq.${encodeURIComponent(others[0].user_id)}`,
-          { role: "owner" });
-      }
-    }
-
-    await sbDelete("brand_members", `user_id=eq.${encodeURIComponent(user.id)}`);
+    // This RPC performs credential removal, ownership transfer and membership
+    // cleanup in one transaction. Its job row makes Storage cleanup resumable.
+    const brandIds = await sbRpc("prepare_account_deletion", { target_user: user.id }) as string[];
+    for (const brandId of brandIds) await deleteWorkspaceMedia(brandId, serviceKey);
+    await sbDelete("account_deletion_jobs", `user_id=eq.${encodeURIComponent(user.id)}`);
 
     const deleted = await fetch(`${env("SUPABASE_URL")}/auth/v1/admin/users/${user.id}`, {
       method: "DELETE",
@@ -80,15 +60,23 @@ async function deleteWorkspaceMedia(brandId: string, serviceKey: string) {
     Authorization: `Bearer ${serviceKey}`,
     "Content-Type": "application/json",
   };
-  const listed = await fetch(`${env("SUPABASE_URL")}/storage/v1/object/list/social-media`, {
-    method: "POST", headers,
-    body: JSON.stringify({ prefix: `${brandId}/`, limit: 1000, offset: 0 }),
-  });
-  if (!listed.ok) throw new Error(`Could not list workspace media (${listed.status}).`);
-  const paths = (await listed.json()).map((object: { name: string }) => `${brandId}/${object.name}`);
-  if (!paths.length) return;
-  const removed = await fetch(`${env("SUPABASE_URL")}/storage/v1/object/social-media`, {
-    method: "DELETE", headers, body: JSON.stringify({ prefixes: paths }),
-  });
-  if (!removed.ok) throw new Error(`Could not delete workspace media (${removed.status}).`);
+  const paths: string[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const listed = await fetch(`${env("SUPABASE_URL")}/storage/v1/object/list/social-media`, {
+      method: "POST", headers,
+      body: JSON.stringify({ prefix: `${brandId}/`, limit: 1000, offset }),
+    });
+    if (!listed.ok) throw new Error(`Could not list workspace media (${listed.status}).`);
+    const batch = (await listed.json()).map(
+      (object: { name: string }) => `${brandId}/${object.name}`);
+    paths.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  for (let start = 0; start < paths.length; start += 1000) {
+    const removed = await fetch(`${env("SUPABASE_URL")}/storage/v1/object/social-media`, {
+      method: "DELETE", headers,
+      body: JSON.stringify({ prefixes: paths.slice(start, start + 1000) }),
+    });
+    if (!removed.ok) throw new Error(`Could not delete workspace media (${removed.status}).`);
+  }
 }

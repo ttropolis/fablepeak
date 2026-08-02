@@ -21,7 +21,8 @@ async function check(name, action) {
 await check("FablePeak v1.2.0 is live", async () => {
   const response = await fetch("https://fablepeak.com/", { redirect: "follow" });
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /const APP_VERSION = "1\.2\.0"/);
+  const deployedVersion = (await response.text()).match(/const APP_VERSION = "([^"]+)"/)?.[1];
+  assert.equal(deployedVersion, "1.2.0", `expected v1.2.0, found ${deployedVersion ?? "no version"}`);
 });
 
 for (const page of ["privacy.html", "terms.html", "data-deletion.html"]) {

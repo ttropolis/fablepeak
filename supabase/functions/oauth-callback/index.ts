@@ -1,7 +1,7 @@
 // OAuth redirect target. Exchanges the code for tokens, identifies the remote
 // account, stores the connection, and closes the popup.
 import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
-import { sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
+import { isMember, sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
 import { withSupabase } from "jsr:@supabase/server@^1";
 
@@ -33,6 +33,10 @@ const handleCallback = async (req: Request) => {
     const stateCreatedAt = new Date(st.created_at).getTime();
     if (!Number.isFinite(stateCreatedAt) || Date.now() - stateCreatedAt > 10 * 60_000) {
       return page("Connection failed", "This link expired. Try connecting again.", false);
+    }
+    if (!await isMember(st.brand_id, st.user_id)) {
+      return page("Connection failed",
+        "You no longer have access to this workspace. Ask an owner to invite you again.", false);
     }
 
     const adapter = ADAPTERS[st.platform];
