@@ -18,6 +18,8 @@ export interface Identity {
   external_id: string;
   display_name: string;
   avatar_url?: string;
+  /** asset-scoped token when it differs from the OAuth user token */
+  access_token?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -37,15 +39,44 @@ export interface PlatformAdapter {
   authorizeUrl: string;
   tokenUrl: string;
   scopes: string[];
+  /** separator required by the provider's authorize endpoint */
+  scopeSeparator?: " " | ",";
   usesPKCE: boolean;
   /** extra params appended to the authorize URL */
   authorizeExtra?: Record<string, string>;
+  /** optional provider-side login configuration bundled with the OAuth request */
+  authorizeConfigEnv?: string;
   /** token exchange needs client_secret in body (vs. basic auth) */
   tokenAuth: "body" | "basic";
   clientIdEnv: string;
   clientSecretEnv: string;
+  /** provider-specific authorization-code exchange (for example Instagram's
+   * required short-lived -> long-lived token exchange) */
+  exchangeCode?(input: {
+    code: string;
+    redirectUri: string;
+    codeVerifier?: string;
+    clientId: string;
+    clientSecret: string;
+  }): Promise<TokenSet>;
+  /** provider-specific renewal when OAuth refresh_token is not supported */
+  refreshAccess?(input: {
+    accessToken: string;
+    refreshToken?: string;
+    clientId: string;
+    clientSecret: string;
+    connection?: { external_id: string; meta?: Record<string, unknown> };
+  }): Promise<TokenSet>;
   /** fetch who we just connected as */
   identify(tokens: TokenSet): Promise<Identity>;
+  /** providers that authorize several assets at once can return all of them */
+  identifyAll?(tokens: TokenSet): Promise<Identity[]>;
+  /** verify one stored asset still belongs to the supplied token */
+  verify?(accessToken: string, connection: {
+    external_id: string;
+    display_name?: string;
+    meta?: Record<string, unknown>;
+  }): Promise<Identity>;
   /** publish a post; throws with a readable message on failure */
   publish(input: PublishInput): Promise<PublishResult>;
   /** best-effort daily metrics; return null when unsupported */
@@ -99,6 +130,11 @@ async function fetchPublicMedia(value: string, platform: string): Promise<Respon
     url = publicMediaUrl(new URL(location, url).toString(), platform);
   }
   throw new Error(`${platform} media URL redirected too many times.`);
+}
+
+function mediaKind(value: string): "image" | "video" {
+  const path = new URL(value).pathname.toLowerCase();
+  return /\.(mp4|mov|m4v|webm)$/.test(path) ? "video" : "image";
 }
 
 /* ------------------------------------------------------------------ YouTube */
@@ -236,37 +272,91 @@ const facebook: PlatformAdapter = {
   label: "Facebook Page",
   authorizeUrl: metaAuthorize,
   tokenUrl: metaToken,
-  scopes: ["pages_show_list", "pages_manage_posts", "pages_read_engagement", "business_management"],
+  scopes: ["pages_show_list", "pages_manage_posts", "pages_read_engagement"],
   usesPKCE: false,
   tokenAuth: "body",
   clientIdEnv: "META_APP_ID",
   clientSecretEnv: "META_APP_SECRET",
+  authorizeConfigEnv: "META_CONFIG_ID",
 
-  async identify(t) {
-    const pages = await metaPages(t.access_token);
-    const p = pages[0];
-    if (!p) throw new Error(
-      "No Facebook Page found. The account must administer a Page, and the Page must be " +
-      "selected during the permission step.");
+  async exchangeCode({ code, redirectUri, clientId, clientSecret }) {
+    const short = await exchangeToken(facebook, {
+      grant_type: "authorization_code", code, redirect_uri: redirectUri,
+    }, clientId, clientSecret);
+    const long = await exchangeToken(facebook, {
+      grant_type: "fb_exchange_token", fb_exchange_token: short.access_token,
+    }, clientId, clientSecret);
     return {
-      external_id: p.id,
-      display_name: p.name,
-      avatar_url: p.picture?.data?.url,
-      meta: { page_access_token: p.access_token },
+      access_token: long.access_token,
+      // Facebook does not issue an OAuth refresh_token. Retain the long-lived
+      // user token separately so Page tokens can be reacquired at rollover.
+      refresh_token: long.access_token,
+      expires_in: long.expires_in,
+      scope: facebook.scopes.join(" "),
     };
   },
 
-  async publish({ text, mediaUrl, connection }) {
-    const pageToken = connection.meta?.page_access_token;
-    if (!pageToken) throw new Error("Missing Page access token — reconnect the Page.");
+  async refreshAccess({ refreshToken, clientId, clientSecret, connection }) {
+    if (!refreshToken) throw new Error("Facebook did not retain a user token.");
+    if (!connection?.external_id) throw new Error("Facebook Page identity is missing.");
+    const long = await exchangeToken(facebook, {
+      grant_type: "fb_exchange_token", fb_exchange_token: refreshToken,
+    }, clientId, clientSecret);
+    const page = (await metaPages(long.access_token))
+      .find((candidate: any) => String(candidate.id) === String(connection.external_id));
+    if (!page?.access_token) {
+      throw new Error("This Facebook Page is no longer available to the authorizing user.");
+    }
+    return {
+      access_token: page.access_token,
+      refresh_token: long.access_token,
+      expires_in: long.expires_in,
+      scope: facebook.scopes.join(" "),
+    };
+  },
+
+  async identify(t) {
+    return (await facebook.identifyAll!(t))[0];
+  },
+
+  async identifyAll(t) {
+    const pages = await metaPages(t.access_token);
+    if (!pages.length) throw new Error(
+      "No Facebook Page found. The account must administer a Page, and the Page must be " +
+      "selected during the permission step.");
+    return pages.map((p: any) => ({
+      external_id: p.id,
+      display_name: p.name,
+      avatar_url: p.picture?.data?.url,
+      access_token: p.access_token,
+      meta: {},
+    }));
+  },
+
+  async verify(accessToken, connection) {
+    const p = await j(await fetch(
+      `https://graph.facebook.com/${META_VERSION}/${encodeURIComponent(connection.external_id)}` +
+      `?fields=id,name,picture{url}&access_token=${encodeURIComponent(accessToken)}`),
+      "facebook connection check");
+    return {
+      external_id: String(p.id),
+      display_name: p.name ?? connection.display_name ?? "Facebook Page",
+      avatar_url: p.picture?.data?.url,
+    };
+  },
+
+  async publish({ text, mediaUrl, accessToken, connection }) {
     const id = connection.external_id;
     const safeMediaUrl = mediaUrl ? publicMediaUrl(mediaUrl, "Facebook") : null;
+    const video = safeMediaUrl && mediaKind(safeMediaUrl) === "video";
     const url = safeMediaUrl
-      ? `https://graph.facebook.com/${META_VERSION}/${id}/photos`
+      ? `https://graph.facebook.com/${META_VERSION}/${id}/${video ? "videos" : "photos"}`
       : `https://graph.facebook.com/${META_VERSION}/${id}/feed`;
     const body: Record<string, string> = safeMediaUrl
-      ? { url: safeMediaUrl, caption: text, access_token: pageToken }
-      : { message: text, access_token: pageToken };
+      ? video
+        ? { file_url: safeMediaUrl, description: text, access_token: accessToken }
+        : { url: safeMediaUrl, caption: text, access_token: accessToken }
+      : { message: text, access_token: accessToken };
     const d = await j(await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -276,12 +366,10 @@ const facebook: PlatformAdapter = {
     return { remote_id: rid, remote_url: `https://facebook.com/${rid}` };
   },
 
-  async metrics({ connection }) {
-    const pageToken = connection.meta?.page_access_token;
-    if (!pageToken) return null;
+  async metrics({ accessToken, connection }) {
     const d = await j(await fetch(
       `https://graph.facebook.com/${META_VERSION}/${connection.external_id}` +
-      `?fields=followers_count,fan_count&access_token=${encodeURIComponent(pageToken)}`),
+      `?fields=followers_count,fan_count&access_token=${encodeURIComponent(accessToken)}`),
       "facebook metrics");
     return { followers: d.followers_count ?? d.fan_count ?? 0 };
   },
@@ -290,65 +378,139 @@ const facebook: PlatformAdapter = {
 const instagram: PlatformAdapter = {
   id: "instagram",
   label: "Instagram",
-  authorizeUrl: metaAuthorize,
-  tokenUrl: metaToken,
-  scopes: [
-    "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
-    "pages_show_list", "pages_read_engagement", "business_management",
-  ],
+  // Business Login for Instagram is deliberately separate from Facebook
+  // Login for Business. Customers authorize their professional Instagram
+  // profile directly and do not need to link it to a Facebook Page.
+  authorizeUrl: "https://www.instagram.com/oauth/authorize",
+  tokenUrl: "https://api.instagram.com/oauth/access_token",
+  scopes: ["instagram_business_basic", "instagram_business_content_publish"],
+  scopeSeparator: ",",
   usesPKCE: false,
+  authorizeExtra: { enable_fb_login: "0", force_authentication: "1" },
   tokenAuth: "body",
-  clientIdEnv: "META_APP_ID",
-  clientSecretEnv: "META_APP_SECRET",
+  clientIdEnv: "INSTAGRAM_APP_ID",
+  clientSecretEnv: "INSTAGRAM_APP_SECRET",
   requiresMedia: true,          // IG has no text-only post type
 
-  async identify(t) {
-    const pages = await metaPages(t.access_token);
-    const withIg = pages.find((p: any) => p.instagram_business_account);
-    if (!withIg) throw new Error(
-      "No Instagram Business/Creator account found. Convert the Instagram account to " +
-      "Business or Creator and link it to a Facebook Page, then reconnect.");
-    const ig = withIg.instagram_business_account;
+  async exchangeCode({ code, redirectUri, clientId, clientSecret }) {
+    const shortForm = new FormData();
+    for (const [key, value] of Object.entries({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+      code,
+    })) shortForm.set(key, value);
+    const short = await j(await fetch(instagram.tokenUrl, {
+      method: "POST", body: shortForm,
+    }), "instagram authorization code");
+
+    // Instagram first returns a short-lived token. Exchange it immediately;
+    // only the renewable ~60-day token is persisted. Meta now requires POST
+    // for this exchange.
+    const long = await j(await fetch("https://graph.instagram.com/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "ig_exchange_token",
+        client_secret: clientSecret,
+        access_token: short.access_token,
+      }),
+    }), "instagram long-lived token");
     return {
-      external_id: ig.id,
+      access_token: long.access_token,
+      // Instagram renews using the current access token rather than issuing a
+      // separate refresh token. Keeping this populated tells the connection
+      // status projection that the server can renew it without user action.
+      refresh_token: long.access_token,
+      expires_in: long.expires_in,
+      scope: instagram.scopes.join(" "),
+    };
+  },
+
+  async refreshAccess({ accessToken }) {
+    const d = await j(await fetch("https://graph.instagram.com/refresh_access_token?" +
+      new URLSearchParams({
+        grant_type: "ig_refresh_token", access_token: accessToken,
+      })), "instagram token refresh");
+    return {
+      access_token: d.access_token,
+      refresh_token: d.access_token,
+      expires_in: d.expires_in,
+      scope: instagram.scopes.join(" "),
+    };
+  },
+
+  async identify(t) {
+    const ig = await j(await fetch(
+      `https://graph.instagram.com/${META_VERSION}/me` +
+      `?fields=id,user_id,username,name,profile_picture_url` +
+      `&access_token=${encodeURIComponent(t.access_token)}`), "instagram identify");
+    if (!ig.id && !ig.user_id) throw new Error(
+      "No Instagram professional account found. Switch the profile to Business or Creator, then retry.");
+    return {
+      external_id: String(ig.user_id ?? ig.id),
       display_name: "@" + (ig.username ?? "instagram"),
       avatar_url: ig.profile_picture_url,
-      meta: { page_id: withIg.id, page_access_token: withIg.access_token },
+      meta: { account_name: ig.name ?? null, login_type: "instagram" },
     };
   },
 
   // IG publishing is two-step: create a media container, then publish it.
-  async publish({ text, mediaUrl, connection }) {
+  async publish({ text, mediaUrl, accessToken, connection }) {
     if (!mediaUrl) throw new Error("Instagram requires an image or video URL — it has no text-only post.");
     const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
-    const token = connection.meta?.page_access_token;
-    if (!token) throw new Error("Missing Instagram access token — reconnect the account.");
     const igId = connection.external_id;
+    const video = mediaKind(safeMediaUrl) === "video";
+    const createParams: Record<string, string> = video
+      ? { media_type: "REELS", video_url: safeMediaUrl, caption: text, access_token: accessToken }
+      : { image_url: safeMediaUrl, caption: text, access_token: accessToken };
     const container = await j(await fetch(
-      `https://graph.facebook.com/${META_VERSION}/${igId}/media`, {
+      `https://graph.instagram.com/${META_VERSION}/${igId}/media`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ image_url: safeMediaUrl, caption: text, access_token: token }),
+        body: new URLSearchParams(createParams),
       }), "instagram container");
+    if (video) await waitForInstagramContainer(container.id, accessToken);
     const published = await j(await fetch(
-      `https://graph.facebook.com/${META_VERSION}/${igId}/media_publish`, {
+      `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ creation_id: container.id, access_token: token }),
+        body: new URLSearchParams({ creation_id: container.id, access_token: accessToken }),
       }), "instagram publish");
-    return { remote_id: published.id, remote_url: `https://www.instagram.com/p/${published.id}` };
+    let permalink: string | undefined;
+    try {
+      const link = await fetch(
+        `https://graph.instagram.com/${META_VERSION}/${published.id}` +
+        `?fields=permalink&access_token=${encodeURIComponent(accessToken)}`);
+      if (link.ok) permalink = (await link.json()).permalink;
+    } catch { /* publishing succeeded; a missing convenience link must not retry it */ }
+    return { remote_id: published.id, remote_url: permalink };
   },
 
-  async metrics({ connection }) {
-    const token = connection.meta?.page_access_token;
-    if (!token) return null;
+  async metrics({ accessToken, connection }) {
     const d = await j(await fetch(
-      `https://graph.facebook.com/${META_VERSION}/${connection.external_id}` +
-      `?fields=followers_count,media_count&access_token=${encodeURIComponent(token)}`),
+      `https://graph.instagram.com/${META_VERSION}/${connection.external_id}` +
+      `?fields=followers_count,media_count&access_token=${encodeURIComponent(accessToken)}`),
       "instagram metrics");
     return { followers: d.followers_count ?? 0 };
   },
 };
+
+async function waitForInstagramContainer(containerId: string, accessToken: string) {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const status = await j(await fetch(
+      `https://graph.instagram.com/${META_VERSION}/${containerId}` +
+      `?fields=status_code,status&access_token=${encodeURIComponent(accessToken)}`),
+      "instagram media processing");
+    if (status.status_code === "FINISHED") return;
+    if (["ERROR", "EXPIRED"].includes(status.status_code)) {
+      throw new Error(`Instagram could not process this video: ${status.status ?? status.status_code}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error("Instagram is still processing this video. Try publishing again shortly.");
+}
 
 /* ----------------------------------------------------------------- LinkedIn */
 const linkedin: PlatformAdapter = {
@@ -437,8 +599,10 @@ export const ADAPTERS: Record<string, PlatformAdapter> = {
 
 /** Which platforms have credentials configured in this deployment. */
 export function configuredPlatforms(env: (k: string) => string | undefined) {
+  if (!env("SOCIAL_TOKEN_ENCRYPTION_KEY")) return [];
   return Object.values(ADAPTERS)
-    .filter((a) => env(a.clientIdEnv) && env(a.clientSecretEnv))
+    .filter((a) => env(a.clientIdEnv) && env(a.clientSecretEnv) &&
+      (!a.authorizeConfigEnv || env(a.authorizeConfigEnv)))
     .map((a) => a.id);
 }
 
@@ -462,4 +626,45 @@ export async function exchangeToken(
   const txt = await r.text();
   if (!r.ok) throw new Error(`token exchange (${a.id}): ${r.status} ${txt.slice(0, 400)}`);
   return JSON.parse(txt);
+}
+
+/** Exchange a provider callback code while hiding provider-specific token
+ * choreography from the callback function. */
+export async function exchangeAuthorizationCode(
+  a: PlatformAdapter,
+  input: {
+    code: string;
+    redirectUri: string;
+    codeVerifier?: string;
+    clientId: string;
+    clientSecret: string;
+  },
+): Promise<TokenSet> {
+  if (a.exchangeCode) return a.exchangeCode(input);
+  const params: Record<string, string> = {
+    grant_type: "authorization_code",
+    code: input.code,
+    redirect_uri: input.redirectUri,
+  };
+  if (input.codeVerifier) params.code_verifier = input.codeVerifier;
+  if (a.id === "tiktok") params.client_key = input.clientId;
+  return exchangeToken(a, params, input.clientId, input.clientSecret);
+}
+
+/** Renew a connection through the provider's native mechanism. */
+export async function refreshPlatformToken(
+  a: PlatformAdapter,
+  input: {
+    accessToken: string;
+    refreshToken?: string;
+    clientId: string;
+    clientSecret: string;
+    connection?: { external_id: string; meta?: Record<string, unknown> };
+  },
+): Promise<TokenSet> {
+  if (a.refreshAccess) return a.refreshAccess(input);
+  if (!input.refreshToken) throw new Error("Provider did not issue a refresh token.");
+  return exchangeToken(a, {
+    grant_type: "refresh_token", refresh_token: input.refreshToken,
+  }, input.clientId, input.clientSecret);
 }

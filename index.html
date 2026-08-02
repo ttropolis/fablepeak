@@ -258,7 +258,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.2.0";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -352,6 +352,10 @@ const RemoteAdapter = {
       (sessionStorage.setItem("fp_client", uid()), sessionStorage.getItem("fp_client"));
     const { data:{ session } } = await this._sb.auth.getSession();
     if(session) this.user = { id: session.user.id, email: session.user.email };
+    this._sb.auth.onAuthStateChange((event, session) => {
+      if(session?.user) this.user = { id:session.user.id, email:session.user.email };
+      if(event === "PASSWORD_RECOVERY") queueMicrotask(showPasswordReset);
+    });
   },
 
   _rowsToDb(brands, posts, inbox){
@@ -464,6 +468,28 @@ const RemoteAdapter = {
     await this._sb.auth.signOut();
     this.user = null;
   },
+  async sendPasswordReset(email){
+    const { error } = await this._sb.auth.resetPasswordForEmail(email, {
+      redirectTo: location.origin + "/",
+    });
+    if(error) throw new Error(error.message);
+  },
+  async updatePassword(password){
+    const { error } = await this._sb.auth.updateUser({ password });
+    if(error) throw new Error(error.message);
+  },
+  async uploadMedia(file, brandId){
+    if(!this.user) throw new Error("Sign in before uploading media.");
+    const ext=(file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,8) || "bin";
+    const path=`${brandId}/${crypto.randomUUID()}.${ext}`;
+    const { data, error } = await this._sb.storage.from("social-media").upload(path, file, {
+      cacheControl:"31536000", contentType:file.type, upsert:false,
+    });
+    if(error) throw new Error(error.message);
+    const { data:publicData } = this._sb.storage.from("social-media").getPublicUrl(data.path);
+    if(!publicData?.publicUrl) throw new Error("Upload completed but no media URL was returned.");
+    return publicData.publicUrl;
+  },
 
   /* ---------- real platform connections (Edge Functions) ---------- */
   get _fnBase(){ return window.FABLEPEAK_BACKEND.url + "/functions/v1"; },
@@ -537,6 +563,36 @@ const RemoteAdapter = {
   async disconnectAccount(id){
     const { error } = await this._sb.rpc("disconnect_account", { account_id: id });
     if(error) throw new Error(error.message);
+  },
+  async selectAccount(id){
+    const { data, error } = await this._sb.rpc("select_social_account", { account_id: id });
+    if(error) throw new Error(error.message);
+    if(!data) throw new Error("That account is no longer available. Refresh and try again.");
+  },
+  async verifyAccounts(brandId){
+    const jwt = await this._jwt();
+    if(!jwt) throw new Error("Sign in first");
+    const r = await fetch(`${this._fnBase}/connection-health`, {
+      method:"POST",
+      headers:{ Authorization:`Bearer ${jwt}`, apikey:window.FABLEPEAK_BACKEND.anonKey,
+                "Content-Type":"application/json" },
+      body:JSON.stringify({ brand_id:brandId }),
+    });
+    const out = await r.json();
+    if(!r.ok) throw new Error(out.error || "Could not verify connections");
+    return out.results || [];
+  },
+  async deleteAccount(password){
+    const jwt=await this._jwt();
+    if(!jwt) throw new Error("Sign in first");
+    const r=await fetch(`${this._fnBase}/delete-account`,{
+      method:"POST",
+      headers:{Authorization:`Bearer ${jwt}`,apikey:window.FABLEPEAK_BACKEND.anonKey,
+               "Content-Type":"application/json"},
+      body:JSON.stringify({confirm:"DELETE",password}),
+    });
+    const out=await r.json();
+    if(!r.ok) throw new Error(out.error||"Could not delete account");
   },
   /** publish a post to its platforms right now */
   async publishNow(postId){
@@ -826,14 +882,16 @@ function showWelcome(){
       <label class="f">Email</label>
       <input type="email" id="w_email" placeholder="you@example.com" autocomplete="email">
       <label class="f">Password</label>
-      <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 6 characters':'Your password'}"
+      <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 8 characters':'Your password'}"
         autocomplete="${wMode==='signup'?'new-password':'current-password'}"
         onkeydown="if(event.key==='Enter')wSubmit()">
       <div class="werr" id="w_err"></div>
       <button class="btn wsubmit" onclick="wSubmit()">${wMode==='signin'?'Sign in':'Create my account'}</button>
+      ${wMode==='signin' ? `<button class="btn ghost wdemo" style="margin-top:8px" onclick="requestPasswordReset()">Forgot password?</button>` : ""}
       <div class="wdivide">or</div>
       <button class="btn ghost wdemo" onclick="enterDemo()">👀 Explore the demo first</button>
-      <div class="wfoot">Demo runs entirely in your browser with sample data.<br>No account, nothing uploaded.</div>
+      <div class="wfoot">Demo runs entirely in your browser with sample data.<br>No account, nothing uploaded.<br>
+        <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/data-deletion.html">Data deletion</a></div>
     </div>
   </div>`;
   document.getElementById("w_email").focus();
@@ -845,6 +903,7 @@ function wSubmit(){
   const pw=document.getElementById("w_pw").value;
   const err=document.getElementById("w_err");
   if(!email || !pw){ err.textContent="Email and password, please."; return; }
+  if(wMode==="signup" && pw.length<8){ err.textContent="Use at least 8 characters."; return; }
   err.textContent="";
   const done = () => load().then(()=>{ render(); toast(wMode==='signin'?"Welcome back ✔":"Account created ✔"); });
   if(wMode==="signin"){
@@ -857,6 +916,41 @@ function wSubmit(){
           `<div class="wnote">✉️ Check your inbox — click the confirmation link, then sign in here.</div>`); }
     }).catch(e=>err.textContent=e.message);
   }
+}
+async function requestPasswordReset(){
+  const email=document.getElementById("w_email").value.trim();
+  const err=document.getElementById("w_err");
+  if(!email){ err.textContent="Enter your email address first."; return; }
+  try{
+    await store.sendPasswordReset(email);
+    err.textContent="";
+    err.insertAdjacentHTML("afterend", `<div class="wnote">✉️ Password reset link sent. Check your inbox.</div>`);
+  }catch(e){ err.textContent=e.message; }
+}
+function showPasswordReset(){
+  const w=document.getElementById("welcome");
+  w.hidden=false;
+  w.innerHTML=`<div class="wwrap"><div class="wcard" style="max-width:440px;margin:auto">
+    <div class="wlogo">⛰️ Fable<span>Peak</span></div>
+    <h2 style="margin:20px 0 6px">Choose a new password</h2>
+    <p class="wsmall">Use at least 8 characters.</p>
+    <label class="f">New password</label>
+    <input type="password" id="reset_pw" autocomplete="new-password" placeholder="Min 8 characters"
+      onkeydown="if(event.key==='Enter')completePasswordReset()">
+    <div class="werr" id="reset_err"></div>
+    <button class="btn wsubmit" onclick="completePasswordReset()">Update password</button>
+  </div></div>`;
+  document.getElementById("reset_pw").focus();
+}
+async function completePasswordReset(){
+  const password=document.getElementById("reset_pw").value;
+  const err=document.getElementById("reset_err");
+  if(password.length<8){ err.textContent="Use at least 8 characters."; return; }
+  try{
+    await store.updatePassword(password);
+    await store.signOut();
+    location.href=location.origin+"/";
+  }catch(e){ err.textContent=e.message; }
 }
 function enterDemo(){
   localStorage.setItem(DEMO_KEY,"1");
@@ -971,8 +1065,15 @@ function openPostModal(id, dateStr){
       : p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
-    <label class="f">Image / video URL <span style="text-transform:none;font-weight:400">— required by Instagram, TikTok and YouTube</span></label>
+    <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, TikTok and YouTube</span></label>
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""}>
+    ${liveMode() && !locked ? `<div style="display:flex;gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap">
+      <label class="btn ghost mini" style="cursor:pointer">Upload media
+        <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm"
+          style="display:none" onchange="uploadPostMedia(this)">
+      </label>
+      <span id="pm_upload_status" style="font-size:11px;color:var(--muted)">Up to 50 MB, or paste a direct HTTPS URL.</span>
+    </div>` : ""}
     <label class="f">Networks</label>
     <div class="netpick" id="pm_nets">
       ${NETWORKS.map(n=>{
@@ -1011,6 +1112,19 @@ function readPostForm(){
   const status=document.getElementById("pm_status").value;
   const media_url=document.getElementById("pm_media").value.trim();
   return {text,nets,date,time,status,media_url};
+}
+async function uploadPostMedia(input){
+  const file=input.files?.[0], status=document.getElementById("pm_upload_status");
+  if(!file) return;
+  if(!/^(image|video)\//.test(file.type)){ status.textContent="Choose an image or video file."; input.value=""; return; }
+  if(file.size>50*1024*1024){ status.textContent="This file is over 50 MB. Use a direct hosted URL instead."; input.value=""; return; }
+  input.disabled=true; status.textContent="Uploading…";
+  try{
+    const url=await store.uploadMedia(file, brand().id);
+    document.getElementById("pm_media").value=url;
+    status.textContent="Upload complete ✔";
+  }catch(e){ status.textContent="Upload failed: "+String(e.message||e).slice(0,100); }
+  finally{ input.disabled=false; input.value=""; }
 }
 function validatePostForm({text,nets,date,time,media_url}){
   if(!text) return toast("Write some content first");
@@ -1346,11 +1460,12 @@ const liveMode = () => store.name === "cloud" && !!store.user;
 const PLATFORM_NOTES = {
   youtube:   "Uploads a video (needs a video URL). New API projects publish as private until Google audits them.",
   x:         "⚠️ X has no free tier — posting is billed per post (~US$0.015, more with links).",
-  instagram: "Needs a Business/Creator account. Every post requires an image or video — no text-only posts.",
+  instagram: "Connect a Business or Creator profile directly. No Facebook Page is required. Every post needs media.",
   facebook:  "Posts to a Page you administer. Text or image.",
   linkedin:  "Posts to your personal profile. Company Pages need LinkedIn's partner review.",
   tiktok:    "Deferred for this release. No TikTok credentials are configured.",
 };
+const LAUNCH_PLATFORMS = ["instagram", "facebook", "youtube"];
 
 let connCache = { brandId:null, available:[], accounts:[], loaded:false };
 
@@ -1403,47 +1518,66 @@ function renderConnections(m){
     Posts you schedule will publish to whatever is connected here.</div>
   ${anyConfigured ? "" : `
     <div class="card" style="border-left:4px solid var(--chip-draft);margin-bottom:14px">
-      <strong>No platforms are set up on the server yet.</strong>
+      <strong>Social connections are temporarily unavailable.</strong>
       <div style="color:var(--muted);font-size:13px;margin-top:6px">
-        Each platform needs a developer app registered once, and its credentials added to the
-        Supabase Edge Function secrets. See <code>PLATFORM_SETUP.md</code> in the repo — it's a
-        one-time step per platform.</div>
+        Please try again later. You do not need to create developer credentials or configure anything yourself.</div>
     </div>`}
   <div class="conngrid">
-    ${NETWORKS.filter(n => PLATFORM_NOTES[n.id]).map(n => {
+    ${NETWORKS.filter(n => LAUNCH_PLATFORMS.includes(n.id)).map(n => {
       const accounts = byPlatform[n.id] || [];
       const ready = connCache.available.includes(n.id);
       return `<div class="card conn">
         <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
           <div style="min-width:0">
             <strong>${n.name}</strong>
-            <div class="st ${accounts.length?"on":""}">
+            <div class="st ${accounts.some(a=>a.status==="active")?"on":""}">
               ${accounts.length
-                ? accounts.map(a => esc(a.display_name || "Connected")).join(", ")
+                ? esc((accounts.find(a=>a.is_default) || accounts[0]).display_name || "Connected")
                 : ready ? "Not connected" : "Not set up on the server"}</div>
           </div></div>
         <div style="color:var(--muted);font-size:11.5px;line-height:1.5">${PLATFORM_NOTES[n.id]}</div>
         ${accounts.map(a => `
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            ${a.needs_reauth || a.status!=="active"
-              ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>` : ""}
-            <button class="btn ghost mini" onclick="disconnectReal('${a.id}','${esc(a.display_name||"")}')">Disconnect</button>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px">
+            ${a.avatar_url ? `<img src="${esc(a.avatar_url)}" alt="" style="width:25px;height:25px;border-radius:50%;object-fit:cover">` : ""}
+            <strong style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name || "Connected account")}</strong>
+            ${a.is_default && a.status==="active"
+              ? `<span style="color:var(--chip-pub);font-size:11px">✓ Publishing account</span>`
+              : a.status==="active"
+                ? `<button class="btn ghost mini" onclick="selectReal('${a.id}')">Use for publishing</button>`
+                : ""}
+            ${a.last_verified_at && a.status==="active"
+              ? `<span style="color:var(--muted);font-size:10px" title="${esc(a.last_verified_at)}">Verified</span>` : ""}
+            ${a.needs_reauth || ["expired","revoked"].includes(a.status)
+              ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>`
+              : a.status==="error"
+                ? `<span style="color:var(--danger);font-size:12px">⚠️ Connection check failed</span>` : ""}
+            <button class="btn ghost mini" onclick="disconnectReal('${a.id}')">Disconnect</button>
           </div>
           ${a.last_error ? `<div style="color:var(--danger);font-size:11px">${esc(a.last_error)}</div>` : ""}`).join("")}
         ${ready && !accounts.length
           ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
           : ready && accounts.length
-            ? `<div style="color:var(--muted);font-size:11px">Disconnect the current account before replacing it.</div>`
-          : `<button class="btn ghost mini" disabled title="Add this platform's credentials on the server first">Connect</button>`}
+            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":"Connect another"}</button>`
+          : `<button class="btn ghost mini" disabled title="This connection is temporarily unavailable">Connect</button>`}
       </div>`;
     }).join("")}
-  </div>`;
+  </div>
+  <div style="color:var(--muted);font-size:12px;margin-top:12px">More networks will appear here as their production integrations are approved.</div>`;
 }
 
 async function refreshConnections(brandId){
-  const [available, accounts] = await Promise.all([
+  let [available, accounts] = await Promise.all([
     store.availablePlatforms(), store.listAccounts(brandId),
   ]);
+  const staleBefore = Date.now() - 15*60*1000;
+  const needsCheck = accounts.some(a => !a.last_verified_at ||
+    new Date(a.last_verified_at).getTime() < staleBefore);
+  if(needsCheck){
+    try{
+      await store.verifyAccounts(brandId);
+      accounts = await store.listAccounts(brandId);
+    }catch(e){ /* retain the last known token-free status; UI shows retry state */ }
+  }
   connCache = { brandId, available, accounts, loaded:true };
   if(["connections","planner","analytics","reports"].includes(view)) render();
 }
@@ -1458,13 +1592,23 @@ async function connectReal(platform){
     toast(got ? netOf(platform).name + " connected ✔" : "Connection not completed");
   }catch(e){ toast(e.message); }
 }
-async function disconnectReal(id, name){
+async function disconnectReal(id){
+  const name=connCache.accounts.find(a=>a.id===id)?.display_name;
   if(!confirm(`Disconnect ${name || "this account"}? Scheduled posts will stop publishing to it.`)) return;
   try{
     await store.disconnectAccount(id);
     connCache.loaded = false;
     await refreshConnections(brand().id);
     toast("Disconnected");
+  }catch(e){ toast(e.message); }
+}
+async function selectReal(id){
+  const name=connCache.accounts.find(a=>a.id===id)?.display_name;
+  try{
+    await store.selectAccount(id);
+    connCache.loaded = false;
+    await refreshConnections(brand().id);
+    toast((name || "Account") + " selected for publishing ✔");
   }catch(e){ toast(e.message); }
 }
 /* simulated connections (demo / local mode only) */
@@ -1531,7 +1675,12 @@ function renderSettings(m){
         : "export here and import on the other device."}</li>
       <li><strong>Customize:</strong> plain HTML/CSS/JS — colors in the <code>:root</code> CSS block, platforms in the <code>NETWORKS</code> array. Push to GitHub to redeploy.</li>
     </ol>
-  </div>`;
+  </div>
+  ${store.user?`<div class="card" style="margin-top:14px;border-color:#e7b6b6">
+    <h4 style="margin-bottom:8px;color:var(--danger)">Delete account</h4>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Permanently remove your FablePeak account, your provider credentials, and workspaces owned only by you. Shared workspaces remain available to their other members.</p>
+    <button class="btn dangerb" onclick="deleteCloudAccount()">Delete my account</button>
+  </div>`:""}`;
 }
 function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
 function addBrand(){
@@ -1567,6 +1716,19 @@ function resetData(){
 function cloudSignOut(){
   localStorage.removeItem(LS_KEY);              // cloud cache off this device
   store.signOut().then(()=>location.reload());
+}
+async function deleteCloudAccount(){
+  const answer=prompt('This permanently deletes your account. Type DELETE to continue.');
+  if(answer!=="DELETE") return;
+  const password=prompt("Enter your FablePeak password to confirm deletion.");
+  if(!password) return;
+  try{
+    toast("Deleting account…");
+    await store.deleteAccount(password);
+    localStorage.removeItem(LS_KEY);
+    localStorage.removeItem("fablepeak_pref_activeBrand");
+    location.reload();
+  }catch(e){ toast("Account deletion failed: "+String(e.message||e).slice(0,100)); }
 }
 
 /* =============== boot =============== */

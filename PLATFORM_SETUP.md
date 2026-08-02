@@ -15,7 +15,7 @@ docs win.
 | Platform | Post for free? | Testable **without** app review? | Reality check |
 |---|---|---|---|
 | **Facebook Page** | ✅ Yes | ✅ **Yes, fully** — your own Page | Easiest. Start here. |
-| **Instagram** | ✅ Yes | ✅ **Yes, fully** — your own account | Needs Business/Creator account. Every post needs an image. |
+| **Instagram** | ✅ Yes | ✅ **Yes, fully** — your own account | Direct Instagram Login; needs Business/Creator. No Facebook Page required. |
 | **YouTube** | ✅ Yes | ✅ Yes, with caveats | Uploads stay **private** until Google audits the project. Test tokens expire every 7 days. |
 | **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). |
 | **TikTok** | Deferred | — | Intentionally left unconfigured for the current release. |
@@ -75,41 +75,64 @@ https://lghsvxwuaebvotutyjtt.supabase.co/functions/v1/oauth-callback
 Secrets go in **Supabase dashboard → Edge Functions → Secrets** (never in the
 repo — the browser never sees them).
 
+All providers also require one FablePeak-owned encryption key. Generate 32
+random bytes, encode them as base64/base64url, and store the result as:
+
+```
+SOCIAL_TOKEN_ENCRYPTION_KEY=<base64url-encoded 32-byte random key>
+```
+
+Back this value up in the project's password manager. Rotating or losing it
+without a migration makes encrypted connections unreadable. Existing legacy
+plaintext tokens remain readable and are encrypted on reconnect or refresh.
+
 ---
 
-## 1. Facebook Page + Instagram (one Meta app covers both)
+## 1. Facebook Page + Instagram
 
-Both use the same Meta app, so this is one setup for two platforms.
+FablePeak owns one Meta developer app, but the customer connections are
+separate: Facebook Pages use Facebook Login for Business and Instagram uses
+Business Login for Instagram directly.
 
-**You need:** a Facebook Page you administer. For Instagram, an Instagram
-account set to **Business** or **Creator** and linked to that Page.
+**Test assets:** a Facebook Page you administer and an Instagram account set to
+**Business** or **Creator**. The Instagram profile does not need a linked Page.
 
 1. Go to <https://developers.facebook.com/apps> → **Create app** → type
    **Business**.
-2. In the app, add the **Facebook Login** product. Under its Settings, add the
-   callback URL above to **Valid OAuth Redirect URIs**.
-3. Leave the app in **Development mode** (top toggle). This is the important
+2. Add **Facebook Login for Business**. Create a configuration that permits Page
+   discovery and publishing, then add the callback URL to its valid OAuth redirects.
+3. Add **Instagram** using **Instagram API with Instagram Login**. Add the same
+   callback URL to its valid OAuth redirects and request only
+   `instagram_business_basic` and `instagram_business_content_publish`.
+4. Leave the app in **Development mode** while testing. This is the important
    part: in Development mode the app can post to any Page/Instagram account
    whose owner has a **role** on the app — no App Review, no business
    verification, works indefinitely.
-4. **App roles → Add people** → add yourself (and your other two users) as
+5. **App roles → Add people** → add internal testers as
    Administrator, Developer, or Instagram Tester. Each person accepts the
    invite (Instagram invites are accepted in Instagram → Settings → Website
    permissions).
-5. Copy **App ID** and **App Secret** from Settings → Basic.
+6. Copy the Facebook App ID/secret, Facebook Login configuration ID, and the
+   Instagram App ID/secret shown by the Instagram product.
 
 Add to Supabase Edge Function secrets:
 ```
 META_APP_ID=<your app id>
 META_APP_SECRET=<your app secret>
+META_CONFIG_ID=<facebook login for business configuration id>
+INSTAGRAM_APP_ID=<instagram product app id>
+INSTAGRAM_APP_SECRET=<instagram product app secret>
 ```
 
 **Gotchas**
 - Instagram cannot post text-only — every Instagram post needs an image or
   video URL. FablePeak enforces this in the composer.
+- Customers sign into their own Instagram profile directly. They do not use a
+  FablePeak/Shiloh Creek account and do not need a Facebook Page.
 - The image/video must be at a **public URL** (Instagram fetches it itself).
-- Going beyond accounts with an app role — i.e. letting strangers connect —
-  needs App Review + business verification. Not needed for your 3 users.
+- General customer onboarding requires Meta App Review, Advanced Access for
+  the requested permissions, any verification Meta requests, and Live mode.
+  Development mode is only for app-role/test accounts.
 
 ---
 
@@ -207,6 +230,7 @@ Billing is per action — see the warning at the top.
 
 ```
 CRON_SECRET=<any long random string>     # protects the scheduled publish/metrics jobs
+SOCIAL_TOKEN_ENCRYPTION_KEY=<32 random bytes encoded as base64url>
 APP_ORIGIN=https://fablepeak.com         # locks CORS to your own site
 APP_TIMEZONE=Australia/Perth             # IANA timezone for scheduled post times
 ```

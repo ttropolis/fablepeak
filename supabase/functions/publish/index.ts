@@ -2,8 +2,9 @@
 //   POST {post_id}   — publish one post now (called from the app)
 //   POST {due:true}  — publish everything scheduled and due (called by pg_cron)
 // Refreshes expired OAuth tokens automatically.
-import { ADAPTERS, exchangeToken } from "../_shared/platforms.ts";
+import { ADAPTERS } from "../_shared/platforms.ts";
 import { getUser, isMember, sbOne, sbRpc, sbUpdate, sbUpsert } from "../_shared/db.ts";
+import { freshConnectionToken } from "../_shared/token-manager.ts";
 
 const env = (k: string) => Deno.env.get(k);
 const APP_TIMEZONE = env("APP_TIMEZONE") ?? "Australia/Perth";
@@ -14,42 +15,6 @@ const CORS = {
 };
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, "Content-Type": "application/json" } });
-
-/** Returns a valid access token, refreshing it first if it has expired. */
-async function freshToken(conn: any): Promise<string> {
-  const exp = conn.token_expires_at ? new Date(conn.token_expires_at).getTime() : null;
-  if (!exp || exp - Date.now() > 120_000) return conn.access_token;
-  if (!conn.refresh_token) {
-    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-      status: "expired",
-      last_error: "Access expired and no refresh token — reconnect this account.",
-    });
-    throw new Error("Access expired — reconnect this account.");
-  }
-  const a = ADAPTERS[conn.platform];
-  let tokens: Awaited<ReturnType<typeof exchangeToken>>;
-  try {
-    tokens = await exchangeToken(a,
-      { grant_type: "refresh_token", refresh_token: conn.refresh_token },
-      env(a.clientIdEnv)!, env(a.clientSecretEnv)!);
-  } catch (e) {
-    const detail = String((e as Error).message ?? e).slice(0, 300);
-    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-      status: "expired",
-      last_error: `Could not refresh access — reconnect this account. ${detail}`,
-      updated_at: new Date().toISOString(),
-    });
-    throw new Error("Could not refresh access — reconnect this account.");
-  }
-  await sbUpdate("social_connections", `id=eq.${conn.id}`, {
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token ?? conn.refresh_token,
-    token_expires_at: tokens.expires_in
-      ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null,
-    status: "active", last_error: null, updated_at: new Date().toISOString(),
-  });
-  return tokens.access_token;
-}
 
 async function publishPost(post: any) {
   const networks: string[] = Array.isArray(post.networks) ? post.networks : [];
@@ -68,18 +33,30 @@ async function publishPost(post: any) {
       continue;
     }
 
-    const conn = await sbOne("social_connections",
+    let conn = await sbOne("social_connections",
       `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
-      `&platform=eq.${platform}&status=eq.active`);
+      `&platform=eq.${platform}&is_default=eq.true`);
+    // Legacy rows created before explicit account selection may not have a
+    // default yet. Only that migration case may fall back to the oldest active
+    // connection; never bypass an expired/error selected account.
+    if (!conn) conn = await sbOne("social_connections",
+      `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
+      `&platform=eq.${platform}&status=eq.active&order=connected_at.asc`);
     if (!conn) {
       await mark({ status: "skipped", error: "No connected account for this platform" });
       results.push({ platform, status: "skipped", error: "No connected account for this platform" });
       continue;
     }
+    if (conn.status !== "active") {
+      const error = "The selected account needs attention — verify or reconnect it before publishing.";
+      await mark({ status: "skipped", connection_id: conn.id, error });
+      results.push({ platform, status: "skipped", error });
+      continue;
+    }
 
     await mark({ status: "publishing", connection_id: conn.id });
     try {
-      const token = await freshToken(conn);
+      const token = await freshConnectionToken(conn, env);
       const out = await adapter.publish({
         text: post.text, mediaUrl: post.media_url ?? null,
         accessToken: token, connection: conn,

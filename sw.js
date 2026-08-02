@@ -1,5 +1,9 @@
-const CACHE = "fablepeak-v1.1.1";
-const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+const CACHE = "fablepeak-v1.2.0";
+const ASSETS = [
+  "./", "./index.html", "./oauth-complete.html", "./privacy.html", "./terms.html",
+  "./data-deletion.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
+  "./apple-touch-icon.png",
+];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

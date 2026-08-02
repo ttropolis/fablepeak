@@ -254,14 +254,11 @@ test("cached cloud edits automatically retry when the browser reconnects", async
 });
 
 test("backend token-refresh failures require an explicit reconnect", async () => {
-  for (const file of ["supabase/functions/publish/index.ts", "supabase/functions/ingest-metrics/index.ts"]) {
-    const source = await read(file);
-    assert.match(source, /catch \(e\) \{[\s\S]*?status: "expired"/,
-      `${file} should expire a connection when refresh fails`);
-    assert.match(source, /Could not refresh access — reconnect this account/);
-    assert.match(source, /status: "active", last_error: null/,
-      `${file} should clear the reconnect error after a successful refresh`);
-  }
+  const source = await read("supabase/functions/_shared/token-manager.ts");
+  assert.match(source, /catch \(e\) \{[\s\S]*?await expire\(/);
+  assert.match(source, /Could not refresh access — reconnect this account/);
+  assert.match(source, /status: "active"/);
+  assert.match(source, /last_error: null/);
 });
 
 test("PWA cache version matches the visible app release", async () => {
