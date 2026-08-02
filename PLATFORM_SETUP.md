@@ -18,7 +18,7 @@ docs win.
 | **Instagram** | ✅ Yes | ✅ **Yes, fully** — your own account | Needs Business/Creator account. Every post needs an image. |
 | **YouTube** | ✅ Yes | ✅ Yes, with caveats | Uploads stay **private** until Google audits the project. Test tokens expire every 7 days. |
 | **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). |
-| **TikTok** | ✅ Yes | ⚠️ Partly | Until TikTok audits the app, posts are **private-only**, max 5 users/24h. |
+| **TikTok** | Deferred | — | Intentionally left unconfigured for the current release. |
 | **X / Twitter** | ❌ **No** | N/A — no review, but no free tier | **~US$0.015 per post, ~US$0.20 if it contains a link.** See below. |
 
 **Recommendation: set up Facebook + Instagram first.** They are the only two
@@ -132,7 +132,9 @@ GOOGLE_CLIENT_SECRET=<...>
 - While the consent screen is in **Testing**, refresh tokens expire after
   **7 days** — expect to reconnect weekly until you publish the consent screen.
 - YouTube publishing = uploading a video. There's no public API for text-only
-  community posts, so FablePeak requires a video URL for YouTube.
+  community posts, so FablePeak requires a public, direct HTTPS video-file
+  URL. A YouTube watch/share link is an HTML page, not a video source, and is
+  rejected before publishing.
 
 ---
 
@@ -158,7 +160,11 @@ none of that friction.
 
 ---
 
-## 4. TikTok (optional)
+## 4. TikTok (deferred)
+
+TikTok is intentionally not part of the current release. Leave
+`TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` unset; FablePeak will keep the
+connection disabled. The steps below are retained only for a future phase.
 
 1. <https://developers.tiktok.com> → create an app.
 2. Add the **Content Posting API** product, request `video.publish`.

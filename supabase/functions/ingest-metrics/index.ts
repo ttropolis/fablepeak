@@ -11,17 +11,35 @@ const json = (b: unknown, status = 200) =>
 async function freshToken(conn: any): Promise<string> {
   const exp = conn.token_expires_at ? new Date(conn.token_expires_at).getTime() : null;
   if (!exp || exp - Date.now() > 120_000) return conn.access_token;
-  if (!conn.refresh_token) throw new Error("expired, no refresh token");
+  if (!conn.refresh_token) {
+    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
+      status: "expired",
+      last_error: "Access expired and no refresh token — reconnect this account.",
+      updated_at: new Date().toISOString(),
+    });
+    throw new Error("Access expired — reconnect this account.");
+  }
   const a = ADAPTERS[conn.platform];
-  const t = await exchangeToken(a,
-    { grant_type: "refresh_token", refresh_token: conn.refresh_token },
-    env(a.clientIdEnv)!, env(a.clientSecretEnv)!);
+  let t: Awaited<ReturnType<typeof exchangeToken>>;
+  try {
+    t = await exchangeToken(a,
+      { grant_type: "refresh_token", refresh_token: conn.refresh_token },
+      env(a.clientIdEnv)!, env(a.clientSecretEnv)!);
+  } catch (e) {
+    const detail = String((e as Error).message ?? e).slice(0, 300);
+    await sbUpdate("social_connections", `id=eq.${conn.id}`, {
+      status: "expired",
+      last_error: `Could not refresh access — reconnect this account. ${detail}`,
+      updated_at: new Date().toISOString(),
+    });
+    throw new Error("Could not refresh access — reconnect this account.");
+  }
   await sbUpdate("social_connections", `id=eq.${conn.id}`, {
     access_token: t.access_token,
     refresh_token: t.refresh_token ?? conn.refresh_token,
     token_expires_at: t.expires_in
       ? new Date(Date.now() + t.expires_in * 1000).toISOString() : null,
-    updated_at: new Date().toISOString(),
+    status: "active", last_error: null, updated_at: new Date().toISOString(),
   });
   return t.access_token;
 }

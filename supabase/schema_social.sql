@@ -88,7 +88,8 @@ create policy targets_select on public.post_targets for select to authenticated
   using (public.is_member(brand_id));
 
 -- ------------------------------------------------------------------ metrics
--- real metrics pulled daily from platform APIs
+-- cumulative platform snapshots pulled daily; the frontend derives daily
+-- impression/engagement deltas and carries follower totals forward
 create table if not exists public.metrics_daily (
   brand_id text not null references public.brands(id) on delete cascade,
   platform text not null,

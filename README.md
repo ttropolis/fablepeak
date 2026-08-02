@@ -17,7 +17,7 @@ Inspired by [Metricool](https://metricool.com).
 | View | What it does |
 |------|--------------|
 | **Planner** | Monthly content calendar. Compose posts per network with date/time and status (draft / scheduled / publishing / published). Drag between days. Cloud schedules publish server-side; local/demo schedules simulate publishing in the browser. |
-| **Analytics** | Real daily follower/impression/engagement KPIs when platform data exists, with a clearly-labelled simulated fallback for new workspaces. |
+| **Analytics** | Real follower totals and day-over-day impression/engagement changes when platform data exists, with a clearly-labelled simulated fallback for new workspaces. |
 | **Inbox** | Unified messages across networks. Reply, resolve, filter. |
 | **SmartLinks** | Link-in-bio page builder with live phone preview and click tracking. |
 | **Reports** | 30-day per-network report + post log. Print / save as PDF. |
@@ -67,9 +67,14 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
 
 ## Current limits
 
-- The real OAuth/publishing backend supports YouTube, Facebook, Instagram,
-  LinkedIn, TikTok, and X, but each platform must be configured separately.
-  The current deployment has YouTube credentials configured.
+- The current production deployment has YouTube configured and verified.
+  Facebook, Instagram, LinkedIn, and X adapters are available but each still
+  needs its own developer credentials and platform approval/setup.
+- TikTok integration is intentionally deferred for this release. Its disabled
+  connection card remains as a future placeholder.
+- YouTube publishing requires a public, direct HTTPS video-file URL. A
+  `youtube.com/watch` or `youtu.be` page identifies an existing video but
+  cannot be used as an upload source.
 - Analytics and Reports use daily platform data once ingestion has produced
   rows. Until then they display a clearly-labelled simulated fallback.
 - Inbox conversations and replies are simulated; real messaging permissions

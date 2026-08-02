@@ -103,7 +103,7 @@ test("cloud data rejects a stale preferred brand before loading accounts", async
   assert.equal(context.result.activeBrand, "brand-1");
 });
 
-test("real metrics aggregate daily values and carry follower totals forward", async () => {
+test("real metrics derive daily deltas from cumulative platform snapshots", async () => {
   const html = await read("index.html");
   const fn = html.match(
     /(function realMetricSeries\(days, netId\)\{[\s\S]*?\n\})\n\nfunction ensureMetricsLoaded/,
@@ -128,10 +128,11 @@ test("real metrics aggregate daily values and carry follower totals forward", as
       loaded: true,
       error: null,
       rows: [
-        {date:date(2), platform:"youtube", followers:100, impressions:10, engagements:2, posts:1},
-        {date:date(1), platform:"youtube", followers:110, impressions:20, engagements:3, posts:1},
-        {date:date(1), platform:"instagram", followers:50, impressions:30, engagements:4, posts:2},
-        {date:date(0), platform:"instagram", followers:55, impressions:40, engagements:5, posts:1},
+        {date:date(3), platform:"youtube", followers:90, impressions:200, engagements:50, posts:0},
+        {date:date(2), platform:"youtube", followers:100, impressions:210, engagements:52, posts:1},
+        {date:date(1), platform:"youtube", followers:110, impressions:230, engagements:55, posts:1},
+        {date:date(1), platform:"instagram", followers:50, impressions:100, engagements:20, posts:2},
+        {date:date(0), platform:"instagram", followers:55, impressions:140, engagements:25, posts:1},
       ],
     },
   };
@@ -145,9 +146,129 @@ test("real metrics aggregate daily values and carry follower totals forward", as
       posts: row.posts,
     })),
     [
-      {followers:150, impressions:10, engagement:2, posts:1},
-      {followers:160, impressions:50, engagement:7, posts:3},
+      {followers:100, impressions:10, engagement:2, posts:1},
+      {followers:160, impressions:20, engagement:3, posts:3},
       {followers:165, impressions:40, engagement:5, posts:1},
     ],
   );
+});
+
+test("live published posts cannot be dragged back into the publishing queue", async () => {
+  const html = await read("index.html");
+  const fn = html.match(/(function dropPost\(ev,ds\)\{[\s\S]*?\n\})\nfunction openPostModal/);
+  assert.ok(fn, "dropPost should exist");
+
+  const post = {id:"post-1", date:"2026-08-01", status:"published"};
+  const context = {
+    liveMode: () => true,
+    brand: () => ({posts:[post]}),
+    save: () => { context.saved = true; },
+    render: () => {},
+    toast: message => { context.message = message; },
+    event: {
+      preventDefault(){},
+      currentTarget:{classList:{remove(){}}},
+      dataTransfer:{getData:()=>"post-1"},
+    },
+  };
+  vm.runInNewContext(`${fn[1]}; dropPost(event,"2026-08-10");`, context);
+
+  assert.equal(post.date, "2026-08-01");
+  assert.equal(post.status, "published");
+  assert.equal(context.saved, undefined);
+  assert.match(context.message, /can't be rescheduled/);
+});
+
+test("post validation rejects watch pages and insecure media sources", async () => {
+  const html = await read("index.html");
+  const fn = html.match(
+    /(function validatePostForm\(\{text,nets,date,time,media_url\}\)\{[\s\S]*?\n\})\nfunction savePost/,
+  );
+  assert.ok(fn, "validatePostForm should exist");
+  const context = {
+    URL,
+    toast: message => { context.message = message; },
+    netOf: id => ({name:id}),
+  };
+  vm.runInNewContext(fn[1], context);
+
+  const base = {text:"Episode", nets:["youtube"], date:"2026-08-02", time:"10:00"};
+  assert.equal(context.validatePostForm({...base, media_url:"https://youtube.com/watch?v=x"}), undefined);
+  assert.match(context.message, /direct video file URL/);
+  assert.equal(context.validatePostForm({...base, media_url:"http://cdn.example/video.mp4"}), undefined);
+  assert.match(context.message, /https:\/\//);
+  assert.equal(context.validatePostForm({...base, media_url:"https://cdn.example/video.mp4"}), true);
+});
+
+test("publish now persists the visible modal values before calling the backend", async () => {
+  const html = await read("index.html");
+  const fn = html.match(/(async function publishNow\(id\)\{[\s\S]*?\n\})\nfunction deletePost/);
+  assert.ok(fn, "publishNow should exist");
+  const post = {id:"post-1", text:"Old text", networks:["youtube"], status:"draft"};
+  const order = [];
+  const values = {
+    text:"Updated text", nets:["youtube"], date:"2026-08-03", time:"11:00",
+    status:"draft", media_url:"https://cdn.example/video.mp4",
+  };
+  const context = {
+    brand: () => ({posts:[post]}),
+    readPostForm: () => values,
+    validatePostForm: () => true,
+    confirm: () => true,
+    toast: () => {},
+    netOf: () => ({name:"YouTube"}),
+    persistNow: async () => { order.push("persist"); },
+    store: {publishNow: async () => {
+      order.push("publish");
+      assert.equal(post.text, "Updated text");
+      return [];
+    }},
+    save: () => { order.push("save"); },
+    closeModal: () => {},
+    render: () => {},
+    console,
+  };
+  await vm.runInNewContext(`${fn[1]}; publishNow("post-1");`, context);
+  assert.deepEqual(order, ["persist","publish","save"]);
+  assert.deepEqual(post.networks, ["youtube"]);
+  assert.equal("nets" in post, false);
+});
+
+test("cached cloud edits automatically retry when the browser reconnects", async () => {
+  const html = await read("index.html");
+  const listener = html.match(
+    /(window\.addEventListener\("online", async \(\) => \{[\s\S]*?\n\}\);)/,
+  );
+  assert.ok(listener, "online sync listener should exist");
+  const context = {
+    window: {addEventListener: (_name, callback) => { context.online = callback; }},
+    store: {name:"cloud", user:{id:"user-1"}},
+    db: {brands:[{id:"brand-1"}]},
+    persistNow: async () => { context.persisted = true; },
+    toast: message => { context.message = message; },
+  };
+  vm.runInNewContext(listener[1], context);
+  await context.online();
+  assert.equal(context.persisted, true);
+  assert.match(context.message, /changes synced/);
+});
+
+test("backend token-refresh failures require an explicit reconnect", async () => {
+  for (const file of ["supabase/functions/publish/index.ts", "supabase/functions/ingest-metrics/index.ts"]) {
+    const source = await read(file);
+    assert.match(source, /catch \(e\) \{[\s\S]*?status: "expired"/,
+      `${file} should expire a connection when refresh fails`);
+    assert.match(source, /Could not refresh access — reconnect this account/);
+    assert.match(source, /status: "active", last_error: null/,
+      `${file} should clear the reconnect error after a successful refresh`);
+  }
+});
+
+test("PWA cache version matches the visible app release", async () => {
+  const html = await read("index.html");
+  const worker = await read("sw.js");
+  const appVersion = html.match(/const APP_VERSION = "([^"]+)"/)?.[1];
+  const cacheVersion = worker.match(/const CACHE = "fablepeak-v([^"]+)"/)?.[1];
+  assert.ok(appVersion, "APP_VERSION should exist");
+  assert.equal(cacheVersion, appVersion);
 });

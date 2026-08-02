@@ -1,5 +1,9 @@
 # FablePeak shared-backend spec
 
+> Historical implementation brief. The shared backend is now live, and real
+> social OAuth/publishing was added in a later phase. Use `README.md` and
+> `PLATFORM_SETUP.md` for the current production state.
+
 Implementation brief for turning FablePeak (static single-file app at
 fablepeak.com, repo `ttropolis/fablepeak`) into a 3-user shared-data app.
 The frontend seam is already built — **you only implement `RemoteAdapter`

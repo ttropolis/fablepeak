@@ -62,6 +62,45 @@ const j = async (r: Response, ctx: string) => {
   try { return JSON.parse(body); } catch { return {}; }
 };
 
+/** Accept only public HTTPS media sources. The YouTube adapter fetches this
+ * URL server-side, so allowing loopback/private hosts would create an SSRF
+ * path through the publishing function. */
+function publicMediaUrl(value: string, platform: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error(`${platform} needs a valid media URL.`); }
+  if (url.protocol !== "https:") throw new Error(`${platform} media must use https://.`);
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const parts = host.split(".").map(Number);
+  const privateV4 = parts.length === 4 && parts.every(Number.isInteger) && (
+    parts[0] === 10 || parts[0] === 127 || parts[0] === 0 ||
+    (parts[0] === 169 && parts[1] === 254) ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
+  const privateV6 = host === "::1" || host.startsWith("fe8") ||
+    host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb") ||
+    host.startsWith("fc") || host.startsWith("fd");
+  if (!host || host === "localhost" || host.endsWith(".localhost") ||
+      host.endsWith(".local") || host.endsWith(".internal") || privateV4 || privateV6) {
+    throw new Error(`${platform} media must be hosted at a public URL.`);
+  }
+  return url.toString();
+}
+
+/** Follow redirects one at a time so every destination is validated before
+ * the Edge Function connects to it. */
+async function fetchPublicMedia(value: string, platform: string): Promise<Response> {
+  let url = publicMediaUrl(value, platform);
+  for (let redirects = 0; redirects <= 4; redirects++) {
+    const response = await fetch(url, { redirect: "manual" });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    if (!location) return response;
+    url = publicMediaUrl(new URL(location, url).toString(), platform);
+  }
+  throw new Error(`${platform} media URL redirected too many times.`);
+}
+
 /* ------------------------------------------------------------------ YouTube */
 const youtube: PlatformAdapter = {
   id: "youtube",
@@ -102,9 +141,13 @@ const youtube: PlatformAdapter = {
       throw new Error(
         "YouTube publishing requires a video file URL — the Community Posts API is not public.");
     }
-    const video = await fetch(mediaUrl);
+    const video = await fetchPublicMedia(mediaUrl, "YouTube");
     if (!video.ok) throw new Error(`Could not fetch media (${video.status})`);
-    const bytes = new Uint8Array(await video.arrayBuffer());
+    const contentType = video.headers.get("content-type")?.split(";", 1)[0].trim() ?? "";
+    if (!contentType.startsWith("video/")) {
+      throw new Error("YouTube needs a direct video file URL; the URL did not return video content.");
+    }
+    if (!video.body) throw new Error("The video source returned no content.");
     const meta = {
       snippet: { title: text.slice(0, 100) || "Untitled", description: text.slice(0, 5000) },
       status: { privacyStatus: "private", selfDeclaredMadeForKids: false },
@@ -114,12 +157,19 @@ const youtube: PlatformAdapter = {
       "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
       { method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json",
-                   "X-Upload-Content-Type": video.headers.get("content-type") ?? "video/*" },
+                   "X-Upload-Content-Type": contentType,
+                   ...(video.headers.get("content-length")
+                     ? { "X-Upload-Content-Length": video.headers.get("content-length")! } : {}) },
         body: JSON.stringify(meta) });
     if (!start.ok) throw new Error(`youtube upload start: ${start.status} ${await start.text()}`);
     const session = start.headers.get("location");
     if (!session) throw new Error("YouTube did not return an upload session URL");
-    const up = await j(await fetch(session, { method: "PUT", body: bytes }), "youtube upload");
+    const uploadHeaders: Record<string, string> = { "Content-Type": contentType };
+    const contentLength = video.headers.get("content-length");
+    if (contentLength) uploadHeaders["Content-Length"] = contentLength;
+    const up = await j(await fetch(session, {
+      method: "PUT", headers: uploadHeaders, body: video.body,
+    }), "youtube upload");
     return { remote_id: up.id, remote_url: `https://youtu.be/${up.id}` };
   },
 
@@ -210,11 +260,12 @@ const facebook: PlatformAdapter = {
     const pageToken = connection.meta?.page_access_token;
     if (!pageToken) throw new Error("Missing Page access token — reconnect the Page.");
     const id = connection.external_id;
-    const url = mediaUrl
+    const safeMediaUrl = mediaUrl ? publicMediaUrl(mediaUrl, "Facebook") : null;
+    const url = safeMediaUrl
       ? `https://graph.facebook.com/${META_VERSION}/${id}/photos`
       : `https://graph.facebook.com/${META_VERSION}/${id}/feed`;
-    const body: Record<string, string> = mediaUrl
-      ? { url: mediaUrl, caption: text, access_token: pageToken }
+    const body: Record<string, string> = safeMediaUrl
+      ? { url: safeMediaUrl, caption: text, access_token: pageToken }
       : { message: text, access_token: pageToken };
     const d = await j(await fetch(url, {
       method: "POST",
@@ -269,6 +320,7 @@ const instagram: PlatformAdapter = {
   // IG publishing is two-step: create a media container, then publish it.
   async publish({ text, mediaUrl, connection }) {
     if (!mediaUrl) throw new Error("Instagram requires an image or video URL — it has no text-only post.");
+    const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
     const token = connection.meta?.page_access_token;
     if (!token) throw new Error("Missing Instagram access token — reconnect the account.");
     const igId = connection.external_id;
@@ -276,7 +328,7 @@ const instagram: PlatformAdapter = {
       `https://graph.facebook.com/${META_VERSION}/${igId}/media`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ image_url: mediaUrl, caption: text, access_token: token }),
+        body: new URLSearchParams({ image_url: safeMediaUrl, caption: text, access_token: token }),
       }), "instagram container");
     const published = await j(await fetch(
       `https://graph.facebook.com/${META_VERSION}/${igId}/media_publish`, {
@@ -366,12 +418,13 @@ const tiktok: PlatformAdapter = {
 
   async publish({ text, mediaUrl, accessToken }) {
     if (!mediaUrl) throw new Error("TikTok requires a video URL.");
+    const safeMediaUrl = publicMediaUrl(mediaUrl, "TikTok");
     const d = await j(await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         post_info: { title: text.slice(0, 150), privacy_level: "SELF_ONLY" },
-        source_info: { source: "PULL_FROM_URL", video_url: mediaUrl },
+        source_info: { source: "PULL_FROM_URL", video_url: safeMediaUrl },
       }),
     }), "tiktok publish");
     return { remote_id: d.data?.publish_id ?? "unknown" };

@@ -258,7 +258,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -630,6 +630,10 @@ function save(){                               // sync signature, debounced asyn
     });
   }, 200);
 }
+async function persistNow(){
+  clearTimeout(_persistT); _persistT = null;
+  await store.persist(db);
+}
 function brand(){ return db.brands.find(b=>b.id===db.activeBrand) || db.brands[0]; }
 function netOf(id){ return NETWORKS.find(n=>n.id===id); }
 function connectedNets(){
@@ -678,8 +682,10 @@ function metricSeries(days, netId){
   return out;
 }
 
-/* Build chart-ready daily rows from metrics_daily. Follower counts carry
-   forward per platform; daily impressions/engagements/posts do not. */
+/* Build chart-ready daily rows from metrics_daily. Platform APIs expose
+   followers, impressions and engagements as cumulative snapshots, while
+   posts is already measured per day by ingest-metrics. Carry follower totals
+   forward and turn cumulative counters into non-negative daily deltas. */
 function realMetricSeries(days, netId){
   if(!liveMode() || !metricsCache.loaded ||
      metricsCache.brandId !== brand().id || metricsCache.error) return null;
@@ -689,28 +695,46 @@ function realMetricSeries(days, netId){
   const platforms = netId==="all"
     ? [...new Set(rows.map(r=>r.platform))]
     : [netId];
+  const sortedRows = [...rows].sort((a,b)=>a.date.localeCompare(b.date));
   const byDate = {};
-  rows.forEach(r=>{ (byDate[r.date]=byDate[r.date]||[]).push(r); });
+  sortedRows.forEach(r=>{ (byDate[r.date]=byDate[r.date]||[]).push(r); });
   const lastFollowers = {};
-  platforms.forEach(platform=>{
-    const first = rows
-      .filter(r=>r.platform===platform && r.followers!=null)
-      .sort((a,b)=>a.date.localeCompare(b.date))[0];
-    if(first) lastFollowers[platform] = Number(first.followers) || 0;
+  const lastCounters = {};
+  const start = new Date(); start.setDate(start.getDate()-(days-1));
+  const startDate = fmtDate(start);
+  // ensureMetricsLoaded fetches extra calendar days so the first visible day
+  // can be compared with a real baseline instead of counting a lifetime total.
+  sortedRows.filter(r=>r.date<startDate).forEach(r=>{
+    if(r.followers!=null) lastFollowers[r.platform] = Number(r.followers) || 0;
+    const state = lastCounters[r.platform] ||= {};
+    if(r.impressions!=null) state.impressions = Number(r.impressions) || 0;
+    if(r.engagements!=null) state.engagements = Number(r.engagements) || 0;
   });
   const out = [];
   for(let i=days-1;i>=0;i--){
     const d = new Date(); d.setDate(d.getDate()-i);
     const date = fmtDate(d);
     const daily = byDate[date] || [];
+    let impressions = 0, engagement = 0;
     daily.forEach(r=>{
       if(r.followers != null) lastFollowers[r.platform] = Number(r.followers) || 0;
+      const state = lastCounters[r.platform] ||= {};
+      [["impressions","impressions"],["engagements","engagement"]].forEach(([field,total])=>{
+        if(r[field]==null) return;
+        const current = Number(r[field]) || 0;
+        const previous = state[field];
+        // A lower value indicates a platform-side counter reset. In that
+        // case, the new counter value is the activity since the reset.
+        const delta = previous==null ? 0 : current>=previous ? current-previous : current;
+        if(total==="impressions") impressions += delta; else engagement += delta;
+        state[field] = current;
+      });
     });
     out.push({
       date,
       followers: platforms.reduce((sum,p)=>sum+(lastFollowers[p]||0),0),
-      impressions: daily.reduce((sum,r)=>sum+(Number(r.impressions)||0),0),
-      engagement: daily.reduce((sum,r)=>sum+(Number(r.engagements)||0),0),
+      impressions,
+      engagement,
       posts: daily.reduce((sum,r)=>sum+(Number(r.posts)||0),0),
     });
   }
@@ -721,7 +745,8 @@ function ensureMetricsLoaded(brandId){
   if(!liveMode()) return;
   if(metricsCache.brandId===brandId && (metricsCache.loaded || metricsCache.loading)) return;
   metricsCache = {brandId, rows:[], loaded:false, loading:true, error:null};
-  store.listMetrics(brandId, 30).then(rows=>{
+  // Two extra days keep a baseline available across UTC/local date boundaries.
+  store.listMetrics(brandId, 32).then(rows=>{
     if(metricsCache.brandId !== brandId) return;
     metricsCache = {brandId, rows, loaded:true, loading:false, error:null};
     if(["analytics","reports"].includes(view)) render();
@@ -899,7 +924,7 @@ function renderPlanner(m){
         const ds=fmtDate(d);
         const cls=["day", d.getMonth()!==mo?"other":"", ds===todayStr()?"today":""].join(" ");
         const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>
-          `<div class="post ${p.status}" draggable="true" title="${esc(p.text)}"
+          `<div class="post ${p.status}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${esc(p.text)}"
                 ondragstart="dragPost(event,'${p.id}')"
                 onclick="event.stopPropagation();openPostModal('${p.id}')">
              <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</div>`).join("");
@@ -924,19 +949,29 @@ function dropPost(ev,ds){
   ev.preventDefault(); ev.currentTarget.classList.remove("dragover");
   const id=ev.dataTransfer.getData("text/plain");
   const p=brand().posts.find(p=>p.id===id);
-  if(p){ p.date=ds; if(p.status==="published") p.status="scheduled"; save(); render(); toast("Post moved to "+ds); }
+  if(!p) return;
+  if(liveMode() && ["publishing","published"].includes(p.status))
+    return toast("Published posts can't be rescheduled — duplicate it as a draft instead");
+  p.date=ds; if(p.status==="published") p.status="scheduled";
+  save(); render(); toast("Post moved to "+ds);
 }
 function openPostModal(id, dateStr){
   const b=brand();
   const p = id? b.posts.find(x=>x.id===id) : null;
+  const locked = liveMode() && ["publishing","published"].includes(p?.status);
+  const statusOptions = liveMode()
+    ? locked ? [p.status] : ["draft","scheduled"]
+    : ["draft","scheduled","published"];
   const nets = p? p.networks : connectedNets().slice(0,1).map(n=>n.id);
   openModal(`
     <h3>${p? "Edit post":"New post"}</h3>
-    <div class="sub">${p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
+    <div class="sub">${locked
+      ? p.status==="publishing" ? "Publishing is in progress…" : "Published posts are read-only. Duplicate this post to reuse it."
+      : p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
     <label class="f">Content</label>
-    <textarea id="pm_text" placeholder="What do you want to say?">${esc(p?.text||"")}</textarea>
+    <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
     <label class="f">Image / video URL <span style="text-transform:none;font-weight:400">— required by Instagram, TikTok and YouTube</span></label>
-    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}">
+    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""}>
     <label class="f">Networks</label>
     <div class="netpick" id="pm_nets">
       ${NETWORKS.map(n=>{
@@ -944,53 +979,80 @@ function openPostModal(id, dateStr){
         const conn = liveMode() ? live : !!b.connections[n.id];
         const on=nets.includes(n.id);
         return `<label class="${on?'on':''}" style="${conn?'':'opacity:.4'}" title="${conn?'':'Not connected'}">
-          <input type="checkbox" value="${n.id}" ${on?'checked':''} ${conn?'':'disabled'}
+          <input type="checkbox" value="${n.id}" ${on?'checked':''} ${conn&&!locked?'':'disabled'}
             onchange="this.parentElement.classList.toggle('on',this.checked)">
           <span style="color:${n.color};font-weight:700">${n.short}</span> ${n.name}</label>`;
       }).join("")}
     </div>
     <div class="fieldrow">
-      <div style="flex:1;min-width:120px"><label class="f">Date</label><input type="date" id="pm_date" value="${p?.date||dateStr||todayStr()}"></div>
-      <div style="flex:1;min-width:110px"><label class="f">Time</label><input type="time" id="pm_time" value="${p?.time||"10:00"}"></div>
+      <div style="flex:1;min-width:120px"><label class="f">Date</label><input type="date" id="pm_date" value="${p?.date||dateStr||todayStr()}" ${locked?"disabled":""}></div>
+      <div style="flex:1;min-width:110px"><label class="f">Time</label><input type="time" id="pm_time" value="${p?.time||"10:00"}" ${locked?"disabled":""}></div>
       <div style="flex:1;min-width:110px"><label class="f">Status</label>
-        <select class="inp" id="pm_status">
-          ${["draft","scheduled","published"].map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
-          ${p?.status==="publishing" ? `<option selected disabled>publishing</option>` : ""}
+        <select class="inp" id="pm_status" ${locked?"disabled":""}>
+          ${statusOptions.map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
         </select></div>
     </div>
     <div class="modalfoot">
-      <div>${p?`<button class="btn dangerb mini" onclick="deletePost('${p.id}')">Delete</button>
-               <button class="btn ghost mini" onclick="dupPost('${p.id}')">Duplicate</button>
+      <div>${p?`${p.status!=="publishing"?`<button class="btn dangerb mini" onclick="deletePost('${p.id}')">Delete</button>`:""}
+               ${p.status!=="publishing"?`<button class="btn ghost mini" onclick="dupPost('${p.id}')">Duplicate</button>`:""}
                ${liveMode() && !["publishing","published"].includes(p.status)
                  ? `<button class="btn mini" onclick="publishNow('${p.id}')">🚀 Publish now</button>` : ""}`:""}</div>
       <div class="right">
-        <button class="btn ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>
+        <button class="btn ghost" onclick="closeModal()">${locked?"Close":"Cancel"}</button>
+        ${locked?"":`<button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>`}
       </div>
     </div>`);
 }
-function savePost(id){
+function readPostForm(){
   const text=document.getElementById("pm_text").value.trim();
   const nets=[...document.querySelectorAll("#pm_nets input:checked")].map(i=>i.value);
   const date=document.getElementById("pm_date").value, time=document.getElementById("pm_time").value;
   const status=document.getElementById("pm_status").value;
   const media_url=document.getElementById("pm_media").value.trim();
+  return {text,nets,date,time,status,media_url};
+}
+function validatePostForm({text,nets,date,time,media_url}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
+  if(!date || !time) return toast("Choose a date and time");
+  if(media_url){
+    try{ const u=new URL(media_url); if(u.protocol!=="https:") throw 0; }
+    catch(e){ return toast("Media must use a valid https:// URL"); }
+  }
   // platforms that physically cannot post without media
   const needsMedia = nets.filter(n => ["instagram","tiktok","youtube"].includes(n));
   if(needsMedia.length && !media_url)
     return toast(needsMedia.map(n=>netOf(n).name).join(" and ") + " need an image/video URL");
+  if(nets.includes("youtube") && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(new URL(media_url).hostname))
+    return toast("YouTube needs a direct video file URL, not a YouTube watch link");
+  return true;
+}
+function savePost(id){
+  const values=readPostForm();
+  if(!validatePostForm(values)) return;
+  const {nets,...postValues}=values;
   const b=brand();
-  if(id){ const p=b.posts.find(x=>x.id===id); Object.assign(p,{text,networks:nets,date,time,status,media_url}); }
-  else b.posts.push({id:uid(),text,networks:nets,date,time,status,media_url});
-  save(); closeModal(); render(); toast(id?"Post updated":"Post scheduled ✔");
+  if(id){
+    const p=b.posts.find(x=>x.id===id);
+    if(liveMode() && ["publishing","published"].includes(p.status))
+      return toast("Published posts are read-only — duplicate this post instead");
+    Object.assign(p,{...postValues,networks:nets});
+  } else {
+    b.posts.push({id:uid(),...postValues,networks:nets});
+  }
+  save(); closeModal(); render();
+  toast(id?"Post updated":values.status==="draft"?"Draft saved":"Post scheduled ✔");
 }
 async function publishNow(id){
   const p = brand().posts.find(x=>x.id===id);
-  if(!confirm(`Publish to ${p.networks.map(n=>netOf(n).name).join(", ")} right now? This posts to the real accounts.`)) return;
+  const values=readPostForm();
+  if(!validatePostForm(values)) return;
+  if(!confirm(`Publish to ${values.nets.map(n=>netOf(n).name).join(", ")} right now? This posts to the real accounts.`)) return;
   toast("Publishing…");
   try{
+    const {nets,...postValues}=values;
+    Object.assign(p,{...postValues,networks:nets});
+    await persistNow();
     const results = await store.publishNow(id);
     const ok = results.filter(r=>r.status==="published");
     const bad = results.filter(r=>r.status!=="published");
@@ -1002,7 +1064,16 @@ async function publishNow(id){
     if(bad.length) console.warn("FablePeak publish issues:", bad);
   }catch(e){ toast(e.message); }
 }
-function deletePost(id){ const b=brand(); b.posts=b.posts.filter(p=>p.id!==id); save(); closeModal(); render(); toast("Post deleted"); }
+function deletePost(id){
+  const b=brand(), p=b.posts.find(p=>p.id===id);
+  if(!p) return;
+  if(p.status==="publishing") return toast("Wait for publishing to finish before removing this post");
+  const warning = liveMode() && p.status==="published"
+    ? "Remove this post from FablePeak? The published post will remain on YouTube or the other social platform."
+    : "Delete this post?";
+  if(!confirm(warning)) return;
+  b.posts=b.posts.filter(p=>p.id!==id); save(); closeModal(); render(); toast("Post removed");
+}
 function dupPost(id){ const b=brand(); const p=b.posts.find(x=>x.id===id);
   b.posts.push({...p,id:uid(),status:"draft"}); save(); closeModal(); render(); toast("Duplicated as draft"); }
 
@@ -1275,7 +1346,7 @@ const PLATFORM_NOTES = {
   instagram: "Needs a Business/Creator account. Every post requires an image or video — no text-only posts.",
   facebook:  "Posts to a Page you administer. Text or image.",
   linkedin:  "Posts to your personal profile. Company Pages need LinkedIn's partner review.",
-  tiktok:    "Needs a video URL. Until TikTok audits the app, posts are visible only to you.",
+  tiktok:    "Deferred for this release. No TikTok credentials are configured.",
 };
 
 let connCache = { brandId:null, available:[], accounts:[], loaded:false };
@@ -1356,8 +1427,10 @@ function renderConnections(m){
             <button class="btn ghost mini" onclick="disconnectReal('${a.id}','${esc(a.display_name||"")}')">Disconnect</button>
           </div>
           ${a.last_error ? `<div style="color:var(--danger);font-size:11px">${esc(a.last_error)}</div>` : ""}`).join("")}
-        ${ready
-          ? `<button class="btn mini" onclick="connectReal('${n.id}')">${accounts.length?"Connect another":"Connect"}</button>`
+        ${ready && !accounts.length
+          ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
+          : ready && accounts.length
+            ? `<div style="color:var(--muted);font-size:11px">Disconnect the current account before replacing it.</div>`
           : `<button class="btn ghost mini" disabled title="Add this platform's credentials on the server first">Connect</button>`}
       </div>`;
     }).join("")}
@@ -1496,6 +1569,14 @@ function cloudSignOut(){
 /* =============== boot =============== */
 load().then(render);
 document.getElementById("verSlot").textContent = "v"+APP_VERSION;
+
+// Offline edits are cached immediately. Push the complete diff as soon as the
+// browser reconnects, even if the user does not make another edit afterward.
+window.addEventListener("online", async () => {
+  if(store.name!=="cloud" || !store.user || !db?.brands?.length) return;
+  try{ await persistNow(); toast("Back online — changes synced ✔"); }
+  catch(e){ toast("Back online, but sync still failed: "+String(e.message||e).slice(0,80)); }
+});
 
 /* flip scheduled→published on time, once a minute, without disturbing typing */
 setInterval(()=>{
