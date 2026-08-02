@@ -272,3 +272,10 @@ test("PWA cache version matches the visible app release", async () => {
   assert.ok(appVersion, "APP_VERSION should exist");
   assert.equal(cacheVersion, appVersion);
 });
+
+test("real follower growth starts at the first measured baseline", async () => {
+  const html = await read("index.html");
+  assert.match(html, /const followerSeries = usingReal \? s\.filter\(x=>x\.followersMeasured\) : s;/);
+  assert.match(html, /const firstFollowers = followerSeries\[0\]\?\.followers \?\? last\.followers;/);
+  assert.match(html, /const fDelta=last\.followers-firstFollowers;/);
+});

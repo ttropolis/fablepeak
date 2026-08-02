@@ -733,6 +733,7 @@ function realMetricSeries(days, netId){
     out.push({
       date,
       followers: platforms.reduce((sum,p)=>sum+(lastFollowers[p]||0),0),
+      followersMeasured: platforms.some(p=>lastFollowers[p]!=null),
       impressions,
       engagement,
       posts: daily.reduce((sum,r)=>sum+(Number(r.posts)||0),0),
@@ -1083,7 +1084,7 @@ function lineChart(series, key, color){
   const vals=series.map(s=>s[key]);
   const min=Math.min(...vals), max=Math.max(...vals), span=(max-min)||1;
   const pts=series.map((s,i)=>{
-    const x=P+i*(W-2*P)/(series.length-1);
+    const x=P+i*(W-2*P)/Math.max(series.length-1,1);
     const y=H-P-(s[key]-min)/span*(H-2*P);
     return [x,y];
   });
@@ -1128,8 +1129,10 @@ function renderAnalytics(m){
   const realSeries = realMetricSeries(30, analyticsNet);
   const usingReal = !!realSeries;
   const s = realSeries || metricSeries(30, analyticsNet);
-  const last=s[s.length-1], prev=s[0];
-  const fDelta=last.followers-prev.followers;
+  const last=s[s.length-1];
+  const followerSeries = usingReal ? s.filter(x=>x.followersMeasured) : s;
+  const firstFollowers = followerSeries[0]?.followers ?? last.followers;
+  const fDelta=last.followers-firstFollowers;
   const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
   const monthPosts=usingReal
     ? s.reduce((a,x)=>a+(x.posts||0),0)
@@ -1165,7 +1168,7 @@ function renderAnalytics(m){
     <div class="card kpi"><div class="n">${monthPosts}</div><div class="l">Posts published</div></div>
   </div>
   <div class="row">
-    <div class="card chartbox"><h4>Follower growth</h4>${lineChart(s,"followers","#22c1dc")}</div>
+    <div class="card chartbox"><h4>Follower growth</h4>${lineChart(followerSeries.length?followerSeries:s,"followers","#22c1dc")}</div>
     <div class="card chartbox"><h4>Daily engagement</h4>${barChart(s,"engagement","#7ee081")}</div>
   </div>
   <div class="card" style="margin-top:14px">
