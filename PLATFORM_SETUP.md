@@ -54,6 +54,13 @@ consent screen loads for our client and redirect URI with no error.
 
 To connect it: sign in to fablepeak.com → Connections → Connect on YouTube.
 
+**Current function deployment** (2026-08-02): `publish` and
+`ingest-metrics` were redeployed from immutable Git commit
+`cd09c1eae2dad8102b85be6a55b208d7547f5ccb`. The protected metrics smoke test
+returned HTTP 200 with one successful YouTube ingestion, and the next scheduled
+publisher heartbeat returned HTTP 200 with no due posts. A future CLI deploy
+from the repository can replace these pinned dashboard bundles normally.
+
 Remaining platforms follow the step-by-step below — each needs a developer
 app registered and two credentials pasted.
 
