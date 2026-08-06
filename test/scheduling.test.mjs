@@ -27,6 +27,14 @@ test("Edge Function claims posts before publishing", async () => {
   assert.match(source, /sbRpc\("claim_post_for_publish"/);
   assert.doesNotMatch(source, /new Date\(`\$\{p\.date\}/);
   assert.match(source, /APP_TIMEZONE.*Australia\/Perth/);
+  assert.match(source, /publishClaimedPost/);
+  assert.match(source, /status=eq\.publishing/);
+  assert.match(source, /status: "draft"/);
+  assert.match(source, /previous\?\.status === "published"/,
+    "a recovered claim must not repeat a delivery already recorded as successful");
+  assert.match(source, /previous\?\.status === "publishing"/,
+    "an uncertain provider result must require verification instead of an automatic retry");
+  assert.match(source, /Delivery was interrupted\. Verify the platform before retrying/);
 });
 
 test("scheduler migration is atomic, timezone-aware, and removes the legacy job", async () => {
@@ -47,6 +55,18 @@ test("scheduler migration is atomic, timezone-aware, and removes the legacy job"
     /update public\.posts set status='published'/,
     "base schema must not fake a successful platform delivery",
   );
+});
+
+test("stale publishing claims become visible and manually retryable", async () => {
+  const migration = await read(
+    "supabase/migrations/20260805090000_recover_stale_publish_claims.sql",
+  );
+  assert.match(migration, /publish_claimed_at < now\(\) - interval '15 minutes'/i);
+  assert.match(migration, /set status = 'failed'/i);
+  assert.match(migration, /set status = 'draft'/i);
+  assert.match(migration, /Delivery was interrupted/i);
+  assert.match(migration, /for update skip locked/i);
+  assert.match(migration, /grant execute[^;]+to service_role/i);
 });
 
 test("connected-account view can read protected rows without exposing tokens", async () => {
@@ -211,6 +231,7 @@ test("publish now persists the visible modal values before calling the backend",
     status:"draft", media_url:"https://cdn.example/video.mp4",
   };
   const context = {
+    mediaUploadActive: false,
     brand: () => ({posts:[post]}),
     readPostForm: () => values,
     validatePostForm: () => true,
@@ -268,6 +289,33 @@ test("PWA cache version matches the visible app release", async () => {
   const cacheVersion = worker.match(/const CACHE = "fablepeak-v([^"]+)"/)?.[1];
   assert.ok(appVersion, "APP_VERSION should exist");
   assert.equal(cacheVersion, appVersion);
+});
+
+test("PWA never caches authenticated API responses or serves app HTML for assets", async () => {
+  const worker = await read("sw.js");
+  assert.match(worker, /url\.origin === self\.location\.origin/);
+  assert.match(worker, /url\.origin === "https:\/\/esm\.sh"/);
+  assert.match(worker, /if \(!sameOrigin && !trustedModule\) return/);
+  assert.match(worker, /headers\.has\("authorization"\)/);
+  assert.match(worker, /e\.request\.mode === "navigate"/);
+  assert.doesNotMatch(worker, /ignoreSearch:\s*true/);
+  assert.match(worker, /status: 503/);
+});
+
+test("browser SDK is pinned and OAuth completion messages are source-checked", async () => {
+  const html = await read("index.html");
+  assert.match(html, /@supabase\/supabase-js@\d+\.\d+\.\d+/);
+  assert.doesNotMatch(html, /@supabase\/supabase-js@2["']/);
+  assert.match(html, /e\.origin !== location\.origin \|\| e\.source !== popup/);
+});
+
+test("cloud initialization is idempotent across auth and demo transitions", async () => {
+  const html = await read("index.html");
+  const init = html.match(/async init\(\)\{([\s\S]*?)\n  \},\n\n  _rowsToDb/);
+  assert.ok(init, "RemoteAdapter.init should exist");
+  assert.match(init[1], /if\(this\._sb\) return/);
+  assert.match(init[1], /catch\(e\)\{ this\._sb=null; throw e; \}/);
+  assert.match(init[1], /event === "SIGNED_OUT"/);
 });
 
 test("real follower growth starts at the first measured baseline", async () => {

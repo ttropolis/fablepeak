@@ -8,10 +8,14 @@ function b64url(bytes: Uint8Array): string {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromB64url(value: string): Uint8Array {
+function fromB64url(value: string): ArrayBuffer {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") +
     "=".repeat((4 - value.length % 4) % 4);
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  const decoded = atob(padded);
+  const buffer = new ArrayBuffer(decoded.length);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  return buffer;
 }
 
 async function key(rawKey: string): Promise<CryptoKey> {

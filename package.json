@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "npm test && npm run check:functions",
+    "check:functions": "npx --yes deno@2.9.4 check --frozen --node-modules-dir=auto supabase/functions/oauth-start/index.ts supabase/functions/oauth-callback/index.ts supabase/functions/connection-health/index.ts supabase/functions/publish/index.ts supabase/functions/ingest-metrics/index.ts supabase/functions/delete-account/index.ts",
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.mjs"
   }

@@ -4,9 +4,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const configSource = await readFile(new URL("../backend-config.js", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const supabaseUrl = configSource.match(/url:\s*["']([^"']+)["']/)?.[1];
 const anonKey = configSource.match(/anonKey:\s*["']([^"']+)["']/)?.[1];
+const expectedVersion = appSource.match(/const APP_VERSION = "([^"]+)"/)?.[1];
 assert.ok(supabaseUrl && anonKey, "backend-config.js must contain the public Supabase URL and anon key");
+assert.ok(expectedVersion, "index.html must declare APP_VERSION");
+
+const productionOrigin = "https://fablepeak.com";
+const fetchFresh = (path, init = {}) => fetch(`${productionOrigin}${path}`, {
+  ...init,
+  headers: { "Cache-Control": "no-cache", ...init.headers },
+});
 
 const checks = [];
 async function check(name, action) {
@@ -18,16 +27,53 @@ async function check(name, action) {
   }
 }
 
-await check("FablePeak v1.2.0 is live", async () => {
-  const response = await fetch("https://fablepeak.com/", { redirect: "follow" });
+await check(`FablePeak v${expectedVersion} is live`, async () => {
+  const response = await fetchFresh("/", { redirect: "follow" });
   assert.equal(response.status, 200);
   const deployedVersion = (await response.text()).match(/const APP_VERSION = "([^"]+)"/)?.[1];
-  assert.equal(deployedVersion, "1.2.0", `expected v1.2.0, found ${deployedVersion ?? "no version"}`);
+  assert.equal(deployedVersion, expectedVersion,
+    `expected v${expectedVersion}, found ${deployedVersion ?? "no version"}`);
+});
+
+await check("mobile PWA manifest and launch shortcuts are live", async () => {
+  const response = await fetchFresh("/manifest.json");
+  assert.equal(response.status, 200);
+  const manifest = await response.json();
+  assert.equal(manifest.start_url, "./");
+  assert.equal(manifest.scope, "./");
+  assert.equal(manifest.display, "standalone");
+  const iconSizes = new Set((manifest.icons ?? []).map((icon) => icon.sizes));
+  assert.ok(iconSizes.has("192x192"), "manifest is missing its 192px icon");
+  assert.ok(iconSizes.has("512x512"), "manifest is missing its 512px icon");
+  const shortcuts = new Set((manifest.shortcuts ?? []).map((shortcut) => shortcut.url));
+  for (const url of ["./?action=new-post", "./?action=planner", "./?action=connections"]) {
+    assert.ok(shortcuts.has(url), `manifest is missing shortcut ${url}`);
+  }
+});
+
+await check("mobile PWA icons are publicly downloadable", async () => {
+  for (const icon of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
+    const response = await fetchFresh(`/${icon}`);
+    assert.equal(response.status, 200, `${icon} returned ${response.status}`);
+    assert.match(response.headers.get("content-type") ?? "", /image\/png/, `${icon} is not served as PNG`);
+    assert.ok((await response.arrayBuffer()).byteLength > 500, `${icon} is unexpectedly small`);
+  }
+});
+
+await check("service worker matches the deployed app release", async () => {
+  const response = await fetchFresh("/sw.js");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /javascript/);
+  const worker = await response.text();
+  assert.ok(worker.includes(`fablepeak-v${expectedVersion}`),
+    `service worker does not use the v${expectedVersion} cache`);
+  assert.match(worker, /authorization/,
+    "service worker must continue excluding authenticated responses from its cache");
 });
 
 for (const page of ["privacy.html", "terms.html", "data-deletion.html"]) {
   await check(`${page} is public`, async () => {
-    const response = await fetch(`https://fablepeak.com/${page}`);
+    const response = await fetchFresh(`/${page}`);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /text\/html/);
   });

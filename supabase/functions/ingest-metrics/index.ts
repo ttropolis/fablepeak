@@ -10,6 +10,7 @@ const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
 Deno.serve(async (req) => {
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
   if (req.headers.get("x-cron-secret") !== env("CRON_SECRET")) {
     return json({ error: "forbidden" }, 403);
   }

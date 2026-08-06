@@ -12,6 +12,22 @@ Inspired by [Metricool](https://metricool.com).
 - **Phone (app):** open the site, then *Add to Home Screen* (Safari share menu on iPhone, "Install app" in Chrome on Android). Launches fullscreen, works offline.
 - **Local/offline:** double-click `index.html` — same app, no internet needed.
 
+## Mobile release
+
+FablePeak is mobile-first through its installable PWA, so Android and iOS users
+can plan content without moving files to a laptop. In **New post**, signed-in
+users can choose from Photos/Gallery, take a photo, or record a video. iPhone
+HEIC/HEIF photos are converted to JPEG in the browser before upload. Videos over
+6 MB use resumable 6 MB chunks so a brief mobile-network interruption does not
+restart the whole transfer. The current Supabase Free storage limit is 50 MB per
+file, so longer phone videos must be trimmed or recorded at a lower quality.
+
+The PWA is the deployable Android/iOS experience for this release. Publishing in
+the Apple App Store or Google Play would be a separate follow-up: wrap this web
+app with a native shell (for example, Capacitor), add store signing/assets and
+test native permissions/background behaviour. The web app remains the shared UI
+and backend rather than creating a second product.
+
 ## Features
 
 | View | What it does |
@@ -28,7 +44,9 @@ Inspired by [Metricool](https://metricool.com).
 
 - **Data** lives in your browser's localStorage, auto-saved on every change. Different browser/device = separate data.
 - **Backups:** Settings → *Export backup* (JSON file). *Import backup* restores. Export before clearing browser data.
-- **Deploy an update:** edit files, then `git add -A && git commit -m "..." && git push` — GitHub Pages redeploys fablepeak.com automatically in ~1 minute.
+- **Verify an update:** run `npm run check`. It runs browser/unit tests plus Deno type-checking for every Edge Function; CI also rebuilds the database from migrations.
+- **Deploy an update:** merge the reviewed change into `main` and push it. GitHub Pages redeploys fablepeak.com automatically; run `npm run smoke:production` once Pages has updated.
+- **Rebuild locally:** with the local Supabase database running, `supabase db reset --local --no-seed` replays the complete schema from the first migration onward; it does not require an existing production database or seed file.
 - **Start over:** Settings → *Reset to demo*.
 
 ## Hosting setup (already done)
@@ -82,3 +100,5 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   are a separate platform-review project.
 - Pinterest and Google Business are UI placeholders without publishing
   adapters.
+- Cloud media uploads are capped at 50 MB per file by the current Supabase Free
+  project configuration.

@@ -159,8 +159,10 @@ Upstash QStash + Cloudflare R2. Reviewed 2026-07-12; decisions:
   each minute. PostgreSQL atomically claims due `scheduled` posts as
   `publishing`, using the configured IANA timezone, before the function calls
   platform APIs. Only a confirmed platform delivery may change the post to
-  `published`. The client ticker is simulation-only and must never advance a
-  signed-in cloud post.
+  `published`. Interrupted claims return to `draft` after 15 minutes; confirmed
+  platform targets are never sent twice, while uncertain targets require a
+  human to verify the provider before retrying. The client ticker is
+  simulation-only and must never advance a signed-in cloud post.
 - **Real social posting is a later, separately-priced phase.** Two
   corrections to the report: (1) Supabase social *login* does NOT provide
   publishing-scoped tokens — each platform requires its own developer app,

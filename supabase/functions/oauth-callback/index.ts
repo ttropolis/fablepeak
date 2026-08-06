@@ -3,7 +3,7 @@
 import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
 import { isMember, sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
-import { withSupabase } from "jsr:@supabase/server@^1";
+import { withSupabase } from "jsr:@supabase/server@1.4.1";
 
 const env = (k: string) => Deno.env.get(k);
 

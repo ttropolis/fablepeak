@@ -15,6 +15,7 @@ const CORS = {
 };
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+const INTERRUPTED = "Delivery was interrupted. Verify the platform before retrying.";
 
 async function publishPost(post: any) {
   const networks: string[] = Array.isArray(post.networks) ? post.networks : [];
@@ -26,6 +27,23 @@ async function publishPost(post: any) {
       post_id: post.id, brand_id: post.brand_id, platform,
       updated_at: new Date().toISOString(), ...patch,
     }, "post_id,platform");
+
+    // A stale claim may be retried after an Edge Function interruption. Never
+    // send again to a platform whose successful delivery was already recorded.
+    const previous = await sbOne("post_targets",
+      `select=status,remote_id,remote_url,error&post_id=eq.${encodeURIComponent(post.id)}` +
+      `&platform=eq.${encodeURIComponent(platform)}`);
+    if (previous?.status === "published") {
+      results.push({ platform, status: "published", url: previous.remote_url, recovered: true });
+      continue;
+    }
+    // If execution stopped after the provider request but before its response
+    // was recorded, automatically retrying could create a duplicate post.
+    if (previous?.status === "publishing" || previous?.error === INTERRUPTED) {
+      await mark({ status: "failed", error: INTERRUPTED });
+      results.push({ platform, status: "failed", error: INTERRUPTED });
+      continue;
+    }
 
     if (!adapter || !env(adapter.clientIdEnv)) {
       await mark({ status: "skipped", error: "Platform not configured on the server" });
@@ -82,8 +100,36 @@ async function publishPost(post: any) {
   return results;
 }
 
+async function publishClaimedPost(post: any) {
+  try {
+    return await publishPost(post);
+  } catch (error) {
+    // Provider failures are handled per target in publishPost. Reaching here
+    // means infrastructure failed between claim and completion; release the
+    // claim so the post is visible and retryable instead of stuck forever.
+    try {
+      try {
+        await sbUpdate("post_targets",
+          `post_id=eq.${encodeURIComponent(post.id)}&status=eq.publishing`, {
+            status: "failed",
+            error: INTERRUPTED,
+            updated_at: new Date().toISOString(),
+          });
+      } catch { /* the database migration recovers this marker after 15 minutes */ }
+      await sbUpdate("posts",
+        `id=eq.${encodeURIComponent(post.id)}&status=eq.publishing`, {
+          status: "draft",
+          publish_claimed_at: null,
+          updated_at: new Date().toISOString(),
+        });
+    } catch { /* keep the original failure; stale-claim recovery is the backstop */ }
+    throw error;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -101,8 +147,16 @@ Deno.serve(async (req) => {
         p_limit: 25,
       }) as any[];
       const out = [];
-      for (const p of ready) out.push({ post: p.id, results: await publishPost(p) });
-      return json({ published: out.length, timezone: APP_TIMEZONE, out });
+      for (const p of ready) {
+        try {
+          out.push({ post: p.id, results: await publishClaimedPost(p) });
+        } catch (e) {
+          out.push({ post: p.id, error: String((e as Error).message ?? e).slice(0, 500) });
+        }
+      }
+      const published = out.filter((item) =>
+        item.results?.some((result: any) => result.status === "published")).length;
+      return json({ processed: out.length, published, timezone: APP_TIMEZONE, out });
     }
 
     // app path: authenticated user publishes one of their posts now
@@ -124,7 +178,7 @@ Deno.serve(async (req) => {
       return json({ error: "This post is already publishing or published" }, 409);
     }
 
-    return json({ results: await publishPost(claimed[0]) });
+    return json({ results: await publishClaimedPost(claimed[0]) });
   } catch (e) {
     return json({ error: String((e as Error).message ?? e) }, 500);
   }
