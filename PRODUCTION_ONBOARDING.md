@@ -7,8 +7,9 @@ and return to a verified connection. They never create developer credentials.
 
 ## 1. Deploy the implemented connection foundation
 
-- Apply all Supabase migrations, including account selection and connection
-  health and workspace-scoped media (`20260802120000` through `20260802140000`).
+- Apply all Supabase migrations, including account selection, connection
+  health, workspace-scoped media, deletion, and stale publish recovery
+  (`20260802120000` through `20260805090000`).
 - Add `SOCIAL_TOKEN_ENCRYPTION_KEY` and preserve it in the project password
   manager. New provider tokens are AES-GCM encrypted; legacy tokens migrate on
   refresh/reconnect.
@@ -24,7 +25,9 @@ and return to a verified connection. They never create developer credentials.
 Deployment order after an authorized owner links the CLI:
 
 ```sh
+npm run check
 supabase link --project-ref lghsvxwuaebvotutyjtt
+supabase db push --dry-run
 supabase db push
 supabase functions deploy oauth-start
 supabase functions deploy oauth-callback
@@ -32,6 +35,7 @@ supabase functions deploy connection-health
 supabase functions deploy publish
 supabase functions deploy ingest-metrics
 supabase functions deploy delete-account
+npm run smoke:production
 ```
 
 The repository’s `supabase/config.toml` keeps gateway JWT verification disabled
@@ -86,7 +90,10 @@ The implementation requests:
 
 - `youtube.upload` — upload the customer’s video.
 - `youtube.readonly` — identify the connected channel and read channel totals.
-- `yt-analytics.readonly` — show channel analytics to that customer.
+
+The app deliberately does not request `yt-analytics.readonly`: the current
+product does not call the YouTube Analytics API, and Google's verification
+rules require the narrowest scopes used by the live application.
 
 Google requires the narrowest scopes, verified domain ownership, matching app
 identity, working homepage/privacy-policy links, detailed scope justification,

@@ -29,6 +29,7 @@ Deno.serve(async (req) => {
   if (req.method === "GET" && url.searchParams.get("action") === "available") {
     return json({ platforms: configuredPlatforms(env) });
   }
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   try {
     const jwt = req.headers.get("Authorization")?.replace("Bearer ", "");

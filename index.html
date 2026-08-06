@@ -96,6 +96,16 @@
   .fieldrow{display:flex;gap:10px;flex-wrap:wrap}
   .modalfoot{display:flex;justify-content:space-between;margin-top:18px;gap:8px}
   .modalfoot .right{display:flex;gap:8px}
+  .upload-actions{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .filebtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);border:1px solid transparent;color:#04303a;font-weight:600;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;min-height:38px}
+  .filebtn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+  .filebtn input{display:none}
+  .mobile-only{display:none}
+  .media-preview{display:none;margin-top:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#eef2f6;max-height:240px}
+  .media-preview.on{display:flex;align-items:center;justify-content:center}
+  .media-preview img,.media-preview video{display:block;max-width:100%;max-height:240px;object-fit:contain}
+  .upload-status{font-size:12px;color:var(--muted);line-height:1.4;flex:1;min-width:180px}
+  .mobile-agenda{display:none}
 
   /* ---------- charts ---------- */
   .chartbox{flex:1;min-width:300px}
@@ -213,7 +223,25 @@
     .thread{min-height:320px}
     .phone{width:100%;max-width:320px;margin:0 auto}
     .slrow{flex-wrap:wrap}
-    button.btn,nav button,.tabbar button{min-height:38px}
+    button.btn,nav button,.tabbar button,.filebtn{min-height:44px}
+  }
+  @media (max-width:600px){
+    .calgrid,.legend{display:none}
+    .mobile-agenda{display:flex;flex-direction:column;gap:8px}
+    .agenda-post{width:100%;border:1px solid var(--line);background:#fff;border-radius:10px;padding:11px;text-align:left;color:var(--ink);display:grid;grid-template-columns:58px 1fr;gap:10px;min-height:58px}
+    .agenda-date{font-weight:700;color:var(--brand);font-size:12px}
+    .agenda-copy{min-width:0}
+    .agenda-copy strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+    .agenda-copy span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+    .mobile-only{display:inline-flex}
+    .overlay{align-items:flex-end;padding:0}
+    .modal{width:100%;max-height:calc(100dvh - env(safe-area-inset-top));border-radius:18px 18px 0 0;padding:20px 16px calc(18px + env(safe-area-inset-bottom));overscroll-behavior:contain}
+    .modalfoot{position:sticky;bottom:calc(-18px - env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line);margin:18px -16px calc(-18px - env(safe-area-inset-bottom));padding:12px 16px calc(12px + env(safe-area-inset-bottom));flex-direction:column-reverse}
+    .modalfoot>div,.modalfoot .right{display:flex;gap:8px;flex-wrap:wrap}
+    .modalfoot .right button{flex:1}
+    .upload-actions{align-items:stretch}
+    .filebtn{flex:1 1 135px}
+    .upload-status{flex-basis:100%}
   }
 </style>
 </head>
@@ -266,6 +294,19 @@ const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
 const fmtDate = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 const todayStr = () => fmtDate(new Date());
+const MEDIA_TYPES = {
+  jpg:"image/jpeg", jpeg:"image/jpeg", png:"image/png", webp:"image/webp", gif:"image/gif",
+  mp4:"video/mp4", mov:"video/quicktime", m4v:"video/mp4", webm:"video/webm",
+};
+function mediaContentType(file){
+  const supplied=(file?.type||"").toLowerCase().split(";",1)[0];
+  if(Object.values(MEDIA_TYPES).includes(supplied)) return supplied;
+  const ext=(file?.name||"").split(".").pop().toLowerCase();
+  return MEDIA_TYPES[ext] || "";
+}
+function fileSizeLabel(bytes){
+  return bytes<1024*1024 ? `${Math.max(1,Math.round(bytes/1024))} KB` : `${(bytes/1024/1024).toFixed(1)} MB`;
+}
 
 /* =============== state =============== */
 let db = null;
@@ -274,6 +315,8 @@ let calCursor = new Date();      // month shown in planner
 let selectedMsg = null;
 let inboxFilter = "all";
 let analyticsNet = "all";
+let mediaUploadActive = false;
+let deferredInstallPrompt = null;
 let metricsCache = {
   brandId: null, rows: [], loaded: false, loading: false, error: null,
 };
@@ -347,17 +390,23 @@ const RemoteAdapter = {
   _snap: null,          // last-synced server state, for diffing in persist()
 
   async init(){
+    if(this._sb) return; // load() is reused after auth/demo transitions
     const cfg = window.FABLEPEAK_BACKEND;
-    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
-    this._sb = createClient(cfg.url, cfg.anonKey);
-    this._clientId = sessionStorage.getItem("fp_client") ||
-      (sessionStorage.setItem("fp_client", uid()), sessionStorage.getItem("fp_client"));
-    const { data:{ session } } = await this._sb.auth.getSession();
-    if(session) this.user = { id: session.user.id, email: session.user.email };
-    this._sb.auth.onAuthStateChange((event, session) => {
-      if(session?.user) this.user = { id:session.user.id, email:session.user.email };
-      if(event === "PASSWORD_RECOVERY") queueMicrotask(showPasswordReset);
-    });
+    try{
+      // Pin the browser dependency so a future CDN release cannot change the
+      // production app without a reviewed FablePeak deployment.
+      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.112.0");
+      this._sb = createClient(cfg.url, cfg.anonKey);
+      this._clientId = sessionStorage.getItem("fp_client") ||
+        (sessionStorage.setItem("fp_client", uid()), sessionStorage.getItem("fp_client"));
+      const { data:{ session } } = await this._sb.auth.getSession();
+      if(session) this.user = { id: session.user.id, email: session.user.email };
+      this._sb.auth.onAuthStateChange((event, session) => {
+        if(session?.user) this.user = { id:session.user.id, email:session.user.email };
+        else if(event === "SIGNED_OUT") this.user = null;
+        if(event === "PASSWORD_RECOVERY") queueMicrotask(showPasswordReset);
+      });
+    }catch(e){ this._sb=null; throw e; }
   },
 
   _rowsToDb(brands, posts, inbox){
@@ -480,15 +529,45 @@ const RemoteAdapter = {
     const { error } = await this._sb.auth.updateUser({ password });
     if(error) throw new Error(error.message);
   },
-  async uploadMedia(file, brandId){
+  async uploadMedia(file, brandId, onProgress=()=>{}){
     if(!this.user) throw new Error("Sign in before uploading media.");
+    const contentType=mediaContentType(file);
+    if(!contentType) throw new Error("Use JPEG, PNG, WebP, GIF, MP4, MOV or WebM media.");
     const ext=(file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,8) || "bin";
     const path=`${brandId}/${crypto.randomUUID()}.${ext}`;
-    const { data, error } = await this._sb.storage.from("social-media").upload(path, file, {
-      cacheControl:"31536000", contentType:file.type, upsert:false,
+    if(file.size<=6*1024*1024){
+      const { data, error } = await this._sb.storage.from("social-media").upload(path, file, {
+        cacheControl:"31536000", contentType, upsert:false,
+      });
+      if(error) throw new Error(error.message);
+      onProgress(100);
+      const { data:publicData } = this._sb.storage.from("social-media").getPublicUrl(data.path);
+      if(!publicData?.publicUrl) throw new Error("Upload completed but no media URL was returned.");
+      return publicData.publicUrl;
+    }
+
+    // Supabase recommends TUS for files above 6 MB and unstable networks. It
+    // retries 6 MB chunks instead of restarting an entire phone video.
+    const jwt=await this._jwt();
+    if(!jwt) throw new Error("Sign in again before uploading media.");
+    const projectId=new URL(window.FABLEPEAK_BACKEND.url).hostname.split(".")[0];
+    const { Upload } = await import("https://esm.sh/tus-js-client@4.3.1");
+    await new Promise((resolve,reject)=>{
+      const upload=new Upload(file,{
+        endpoint:`https://${projectId}.storage.supabase.co/storage/v1/upload/resumable`,
+        retryDelays:[0,3000,5000,10000,20000],
+        headers:{authorization:`Bearer ${jwt}`,apikey:window.FABLEPEAK_BACKEND.anonKey},
+        uploadDataDuringCreation:true,
+        removeFingerprintOnSuccess:true,
+        chunkSize:6*1024*1024,
+        metadata:{bucketName:"social-media",objectName:path,contentType,cacheControl:"31536000"},
+        onError:error=>reject(error),
+        onProgress:(sent,total)=>onProgress(total ? Math.round(sent/total*100) : 0),
+        onSuccess:()=>resolve(),
+      });
+      upload.start();
     });
-    if(error) throw new Error(error.message);
-    const { data:publicData } = this._sb.storage.from("social-media").getPublicUrl(data.path);
+    const { data:publicData } = this._sb.storage.from("social-media").getPublicUrl(path);
     if(!publicData?.publicUrl) throw new Error("Upload completed but no media URL was returned.");
     return publicData.publicUrl;
   },
@@ -557,7 +636,10 @@ const RemoteAdapter = {
     if(popup) popup.location = out.url; else window.location = out.url;
     return new Promise(resolve => {
       const done = (ok) => { window.removeEventListener("message", onMsg); clearInterval(poll); resolve(ok); };
-      const onMsg = (e) => { if(e.data?.source === "fablepeak-oauth") done(!!e.data.ok); };
+      const onMsg = (e) => {
+        if(e.origin !== location.origin || e.source !== popup) return;
+        if(e.data?.source === "fablepeak-oauth") done(!!e.data.ok);
+      };
       window.addEventListener("message", onMsg);
       const poll = setInterval(() => { if(popup?.closed) done(true); }, 800);
     });
@@ -646,7 +728,7 @@ const demoMode = () => localStorage.getItem(DEMO_KEY) === "1";
 
 async function load(){
   try{ await store.init(); }
-  catch(e){ if(store===RemoteAdapter) toast("Cloud unavailable — running locally"); }
+  catch(e){ if(store===RemoteAdapter) toast("Cloud unavailable — reconnect to sign in, or explore the demo"); }
   // Cloud mode, signed out, not exploring the demo → welcome gate.
   if(store.name === "cloud" && !store.user && !demoMode()){
     db = { brands: [], activeBrand: null };
@@ -826,7 +908,10 @@ function toast(msg){
 }
 function openModal(html){ document.getElementById("modalBody").innerHTML=html;
   document.getElementById("overlay").classList.add("open"); }
-function closeModal(){ document.getElementById("overlay").classList.remove("open"); }
+function closeModal(){
+  if(mediaUploadActive) return toast("Keep this screen open while your media uploads");
+  document.getElementById("overlay").classList.remove("open");
+}
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function renderNav(){
@@ -859,6 +944,13 @@ function render(){
 let wMode = "signin";
 function showWelcome(){
   const w = document.getElementById("welcome");
+  document.querySelector("aside").inert = true;
+  document.getElementById("main").inert = true;
+  // Do not leave the previous workspace visible or exposed in the DOM behind
+  // the signed-out gate. render() rebuilds it after demo entry or sign-in.
+  document.getElementById("main").replaceChildren();
+  document.getElementById("nav").replaceChildren();
+  document.getElementById("brandSel").replaceChildren();
   w.hidden = false;
   w.innerHTML = `
   <div class="wwrap">
@@ -896,9 +988,15 @@ function showWelcome(){
         <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/data-deletion.html">Data deletion</a></div>
     </div>
   </div>`;
-  document.getElementById("w_email").focus();
+  // Avoid covering the welcome actions with the software keyboard on phones.
+  if(window.matchMedia("(min-width: 821px)").matches) document.getElementById("w_email").focus();
 }
-function hideWelcome(){ const w=document.getElementById("welcome"); w.hidden=true; w.innerHTML=""; }
+function hideWelcome(){
+  const w=document.getElementById("welcome");
+  w.hidden=true; w.innerHTML="";
+  document.querySelector("aside").inert = false;
+  document.getElementById("main").inert = false;
+}
 function wTab(m){ wMode=m; showWelcome(); }
 function wSubmit(){
   const email=document.getElementById("w_email").value.trim();
@@ -907,7 +1005,7 @@ function wSubmit(){
   if(!email || !pw){ err.textContent="Email and password, please."; return; }
   if(wMode==="signup" && pw.length<8){ err.textContent="Use at least 8 characters."; return; }
   err.textContent="";
-  const done = () => load().then(()=>{ render(); toast(wMode==='signin'?"Welcome back ✔":"Account created ✔"); });
+  const done = () => load().then(()=>{ render(); handleLaunchAction(); toast(wMode==='signin'?"Welcome back ✔":"Account created ✔"); });
   if(wMode==="signin"){
     store.signIn(email,pw).then(done).catch(e=>err.textContent=e.message);
   }else{
@@ -942,7 +1040,7 @@ function showPasswordReset(){
     <div class="werr" id="reset_err"></div>
     <button class="btn wsubmit" onclick="completePasswordReset()">Update password</button>
   </div></div>`;
-  document.getElementById("reset_pw").focus();
+  if(window.matchMedia("(min-width: 821px)").matches) document.getElementById("reset_pw").focus();
 }
 async function completePasswordReset(){
   const password=document.getElementById("reset_pw").value;
@@ -956,11 +1054,11 @@ async function completePasswordReset(){
 }
 function enterDemo(){
   localStorage.setItem(DEMO_KEY,"1");
-  load().then(()=>{ render(); toast("Demo mode — sample data, stored only on this device"); });
+  load().then(()=>{ render(); handleLaunchAction(); toast("Demo mode — sample data, stored only on this device"); });
 }
 function exitDemo(){
   localStorage.removeItem(DEMO_KEY);
-  load().then(render);
+  load().then(()=>{ render(); handleLaunchAction(); });
 }
 
 /* =============== first-brand onboarding (signed in, empty account) =============== */
@@ -1001,6 +1099,10 @@ function renderPlanner(m){
   for(let i=0;i<42;i++){ const d=new Date(start); d.setDate(start.getDate()+i); cells.push(d); }
   const b=brand();
   const postsBy={}; b.posts.forEach(p=>{ (postsBy[p.date]=postsBy[p.date]||[]).push(p); });
+  const monthKey=`${y}-${String(mo+1).padStart(2,"0")}`;
+  const monthPosts=b.posts.filter(p=>p.date?.startsWith(monthKey+"-"))
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  const newPostDate=todayStr().startsWith(monthKey+"-") ? todayStr() : `${monthKey}-01`;
 
   m.innerHTML = `
   <h1>Content Planner</h1>
@@ -1012,7 +1114,7 @@ function renderPlanner(m){
         <button class="btn ghost mini" onclick="calMove(-1)">← Prev</button>
         <button class="btn ghost mini" onclick="calCursor=new Date();render()">Today</button>
         <button class="btn ghost mini" onclick="calMove(1)">Next →</button>
-        <button class="btn mini" onclick="openPostModal(null,'${todayStr()}')">+ New post</button>
+        <button class="btn mini" onclick="openPostModal(null,'${newPostDate}')">+ New post</button>
       </div>
     </div>
     <div class="calgrid">
@@ -1037,6 +1139,18 @@ function renderPlanner(m){
       <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
       ${liveMode()?`<span><i style="background:#2f91b5"></i>Publishing</span>`:""}
       <span><i style="background:var(--chip-pub)"></i>Published</span>
+    </div>
+    <div class="mobile-agenda">
+      ${monthPosts.length ? monthPosts.map(p=>{
+        const date=new Date(`${p.date}T12:00:00`);
+        const dateLabel=date.toLocaleDateString("en",{weekday:"short",day:"numeric"});
+        const nets=p.networks.map(n=>netOf(n)?.short||n).join(" · ");
+        return `<button type="button" class="agenda-post" onclick="openPostModal('${p.id}')">
+          <span class="agenda-date">${dateLabel}</span>
+          <span class="agenda-copy"><strong>${esc(p.text)}</strong>
+            <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(p.status)}</span></span>
+        </button>`;
+      }).join("") : `<div class="empty">No posts in ${monthName}. Tap <strong>New post</strong> to add one.</div>`}
     </div>
   </div>`;
 }
@@ -1068,13 +1182,20 @@ function openPostModal(id, dateStr){
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, TikTok and YouTube</span></label>
-    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""}>
-    ${liveMode() && !locked ? `<div style="display:flex;gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap">
-      <label class="btn ghost mini" style="cursor:pointer">Upload media
-        <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm"
-          style="display:none" onchange="uploadPostMedia(this)">
+    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""} onchange="showMediaPreview(this.value)">
+    <div class="media-preview" id="pm_media_preview"></div>
+    ${liveMode() && !locked ? `<div class="upload-actions">
+      <label class="filebtn ghost">📱 Choose photo or video
+        <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif,video/mp4,video/quicktime,video/webm,.m4v"
+          onchange="uploadPostMedia(this)">
       </label>
-      <span id="pm_upload_status" style="font-size:11px;color:var(--muted)">Up to 50 MB, or paste a direct HTTPS URL.</span>
+      <label class="filebtn ghost mobile-only">📷 Take photo
+        <input type="file" accept="image/*" capture="environment" onchange="uploadPostMedia(this)">
+      </label>
+      <label class="filebtn ghost mobile-only">🎥 Record video
+        <input type="file" accept="video/*" capture="environment" onchange="uploadPostMedia(this)">
+      </label>
+      <span id="pm_upload_status" class="upload-status">Phone gallery and camera supported · 50 MB maximum.</span>
     </div>` : ""}
     <label class="f">Networks</label>
     <div class="netpick" id="pm_nets">
@@ -1106,6 +1227,7 @@ function openPostModal(id, dateStr){
         ${locked?"":`<button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>`}
       </div>
     </div>`);
+  if(p?.media_url) showMediaPreview(p.media_url);
 }
 function readPostForm(){
   const text=document.getElementById("pm_text").value.trim();
@@ -1115,18 +1237,65 @@ function readPostForm(){
   const media_url=document.getElementById("pm_media").value.trim();
   return {text,nets,date,time,status,media_url};
 }
-async function uploadPostMedia(input){
-  const file=input.files?.[0], status=document.getElementById("pm_upload_status");
-  if(!file) return;
-  if(!/^(image|video)\//.test(file.type)){ status.textContent="Choose an image or video file."; input.value=""; return; }
-  if(file.size>50*1024*1024){ status.textContent="This file is over 50 MB. Use a direct hosted URL instead."; input.value=""; return; }
-  input.disabled=true; status.textContent="Uploading…";
+function showMediaPreview(url,contentType=""){
+  const box=document.getElementById("pm_media_preview");
+  if(!box) return;
+  box.replaceChildren(); box.classList.remove("on");
+  if(!url) return;
+  const video=contentType.startsWith("video/") || /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(url);
+  const media=document.createElement(video?"video":"img");
+  media.src=url; media.alt=video?"Selected video preview":"Selected image preview";
+  if(video){ media.controls=true; media.playsInline=true; media.preload="metadata"; }
+  box.append(media); box.classList.add("on");
+}
+async function compatiblePhoneMedia(file,status){
+  const ext=(file.name||"").split(".").pop().toLowerCase();
+  if(!["heic","heif"].includes(ext) && !/image\/hei[cf]/i.test(file.type||"")) return file;
+  status.textContent="Preparing iPhone photo…";
+  const localUrl=URL.createObjectURL(file);
   try{
-    const url=await store.uploadMedia(file, brand().id);
+    const image=new Image(); image.src=localUrl;
+    await image.decode();
+    const scale=Math.min(1,4096/Math.max(image.naturalWidth,image.naturalHeight));
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
+    canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+    const context=canvas.getContext("2d");
+    if(!context) throw new Error("This browser cannot prepare HEIC photos.");
+    context.drawImage(image,0,0,canvas.width,canvas.height);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",.9));
+    if(!blob) throw new Error("This HEIC photo could not be converted.");
+    return new File([blob],(file.name||"photo").replace(/\.hei[cf]$/i,"")+".jpg",{
+      type:"image/jpeg",lastModified:file.lastModified,
+    });
+  }finally{ URL.revokeObjectURL(localUrl); }
+}
+async function uploadPostMedia(input){
+  let file=input.files?.[0]; const status=document.getElementById("pm_upload_status");
+  if(!file) return;
+  if(mediaUploadActive){ status.textContent="Another upload is already in progress."; input.value=""; return; }
+  const previewUrl=URL.createObjectURL(file); showMediaPreview(previewUrl,file.type);
+  try{
+    file=await compatiblePhoneMedia(file,status);
+    const contentType=mediaContentType(file);
+    if(!contentType) throw new Error("Choose JPEG, PNG, WebP, GIF, MP4, MOV or WebM media.");
+    if(file.size>50*1024*1024) throw new Error("This file is over 50 MB. Trim the video or record at a lower quality, then try again.");
+    mediaUploadActive=true;
+    document.querySelectorAll('.upload-actions input[type="file"]').forEach(el=>el.disabled=true);
+    status.textContent=`Uploading ${file.name} (${fileSizeLabel(file.size)}) · 0%`;
+    const url=await store.uploadMedia(file,brand().id,percent=>{
+      if(status.isConnected) status.textContent=`Uploading ${file.name} (${fileSizeLabel(file.size)}) · ${percent}%`;
+    });
     document.getElementById("pm_media").value=url;
+    showMediaPreview(url,contentType);
     status.textContent="Upload complete ✔";
-  }catch(e){ status.textContent="Upload failed: "+String(e.message||e).slice(0,100); }
-  finally{ input.disabled=false; input.value=""; }
+  }catch(e){ status.textContent="Upload failed: "+String(e.message||e).slice(0,120); }
+  finally{
+    mediaUploadActive=false;
+    URL.revokeObjectURL(previewUrl);
+    document.querySelectorAll('.upload-actions input[type="file"]').forEach(el=>el.disabled=false);
+    input.value="";
+  }
 }
 function validatePostForm({text,nets,date,time,media_url}){
   if(!text) return toast("Write some content first");
@@ -1145,6 +1314,7 @@ function validatePostForm({text,nets,date,time,media_url}){
   return true;
 }
 function savePost(id){
+  if(mediaUploadActive) return toast("Wait for the media upload to finish");
   const values=readPostForm();
   if(!validatePostForm(values)) return;
   const {nets,...postValues}=values;
@@ -1161,6 +1331,7 @@ function savePost(id){
   toast(id?"Post updated":values.status==="draft"?"Draft saved":"Post scheduled ✔");
 }
 async function publishNow(id){
+  if(mediaUploadActive) return toast("Wait for the media upload to finish");
   const p = brand().posts.find(x=>x.id===id);
   const values=readPostForm();
   if(!validatePostForm(values)) return;
@@ -1622,6 +1793,26 @@ function connectNet(id){
 function disconnectNet(id){ delete brand().connections[id]; save(); render(); toast(netOf(id).name+" removed"); }
 
 /* =============== SETTINGS =============== */
+function installedApp(){
+  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone===true;
+}
+async function installPhoneApp(){
+  if(!deferredInstallPrompt) return toast("Use your browser menu and choose Add to Home Screen");
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt=null;
+  render();
+}
+function mobileInstallCard(){
+  const ios=/iPad|iPhone|iPod/.test(navigator.userAgent);
+  if(installedApp()) return `<p style="color:#3d9b63;font-size:13px">Installed ✔ Open FablePeak from your Home Screen for the app experience.</p>`;
+  if(deferredInstallPrompt) return `<p style="color:var(--muted);font-size:13px;margin-bottom:12px">Install FablePeak for a full-screen app that opens directly to your workspace.</p>
+    <button class="btn" onclick="installPhoneApp()">📲 Install FablePeak</button>`;
+  return `<p style="color:var(--muted);font-size:13px;line-height:1.6">
+    ${ios ? `On iPhone or iPad, open FablePeak in <strong>Safari</strong>, tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.`
+      : `On Android, open the browser menu and choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>.`}
+    You can choose media from Photos/Gallery or use the camera inside New post.</p>`;
+}
 function renderSettings(m){
   m.innerHTML=`
   <h1>Settings</h1>
@@ -1663,6 +1854,10 @@ function renderSettings(m){
         <input type="file" id="impFile" accept=".json" style="display:none" onchange="importData(this)">
         <button class="btn dangerb" onclick="resetData()">Reset to demo</button>
       </div>
+    </div>
+    <div class="card" style="flex:1;min-width:280px">
+      <h4 style="margin-bottom:10px">Use FablePeak on your phone</h4>
+      ${mobileInstallCard()}
     </div>
   </div>
   <div class="card" style="margin-top:14px">
@@ -1734,8 +1929,34 @@ async function deleteCloudAccount(){
 }
 
 /* =============== boot =============== */
-load().then(render);
+function handleLaunchAction(){
+  const action=new URLSearchParams(location.search).get("action");
+  if(!action || !db?.brands?.length || !document.getElementById("welcome").hidden) return;
+  if(action==="planner" || action==="connections"){
+    view=action; render();
+  }else if(action==="new-post"){
+    view="planner"; render(); openPostModal(null,todayStr());
+  }else return;
+  history.replaceState(null,"",location.pathname+location.hash);
+}
+load().then(()=>{ render(); handleLaunchAction(); });
 document.getElementById("verSlot").textContent = "v"+APP_VERSION;
+
+window.addEventListener("beforeinstallprompt",event=>{
+  event.preventDefault();
+  deferredInstallPrompt=event;
+  if(view==="settings" && db?.brands?.length) render();
+});
+window.addEventListener("appinstalled",()=>{
+  deferredInstallPrompt=null;
+  if(view==="settings" && db?.brands?.length) render();
+  toast("FablePeak installed ✔");
+});
+window.addEventListener("beforeunload",event=>{
+  if(!mediaUploadActive) return;
+  event.preventDefault();
+  event.returnValue="";
+});
 
 // Offline edits are cached immediately. Push the complete diff as soon as the
 // browser reconnects, even if the user does not make another edit afterward.

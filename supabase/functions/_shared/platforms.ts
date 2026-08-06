@@ -143,11 +143,12 @@ const youtube: PlatformAdapter = {
   label: "YouTube",
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenUrl: "https://oauth2.googleapis.com/token",
-  // upload = publishing; readonly + yt-analytics = metrics
+  // upload = publishing; readonly = channel identity and channel totals.
+  // Do not request yt-analytics.readonly until we actually expose Analytics
+  // reports: Google requires the narrowest scopes used by the live product.
   scopes: [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
-    "https://www.googleapis.com/auth/yt-analytics.readonly",
   ],
   usesPKCE: true,
   // offline + consent are REQUIRED to receive a refresh_token from Google
@@ -406,17 +407,15 @@ const instagram: PlatformAdapter = {
     }), "instagram authorization code");
 
     // Instagram first returns a short-lived token. Exchange it immediately;
-    // only the renewable ~60-day token is persisted. Meta now requires POST
-    // for this exchange.
-    const long = await j(await fetch("https://graph.instagram.com/access_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+    // only the renewable ~60-day token is persisted. This exchange endpoint
+    // is a GET endpoint; POST is interpreted as a Graph object mutation for an
+    // object named `access_token` and fails with IGApiException code 100.
+    const long = await j(await fetch("https://graph.instagram.com/access_token?" +
+      new URLSearchParams({
         grant_type: "ig_exchange_token",
         client_secret: clientSecret,
         access_token: short.access_token,
-      }),
-    }), "instagram long-lived token");
+      })), "instagram long-lived token");
     return {
       access_token: long.access_token,
       // Instagram renews using the current access token rather than issuing a

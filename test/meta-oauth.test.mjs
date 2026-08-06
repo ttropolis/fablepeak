@@ -63,7 +63,8 @@ test("Instagram persists renewable long-lived tokens and uses its Graph host", a
   assert.ok(instagram);
   assert.match(instagram[1], /const shortForm = new FormData\(\)/);
   assert.match(instagram[1], /fetch\(instagram\.tokenUrl/);
-  assert.match(instagram[1], /fetch\("https:\/\/graph\.instagram\.com\/access_token", \{\s*method: "POST"/);
+  assert.match(instagram[1], /fetch\("https:\/\/graph\.instagram\.com\/access_token\?"/);
+  assert.doesNotMatch(instagram[1], /fetch\("https:\/\/graph\.instagram\.com\/access_token", \{\s*method: "POST"/);
   assert.match(instagram[1], /grant_type: "ig_exchange_token"/);
   assert.match(instagram[1], /refresh_access_token\?/);
   assert.match(instagram[1], /grant_type: "ig_refresh_token"/);
