@@ -85,6 +85,10 @@ export interface PlatformAdapter {
   } | null>;
   /** platforms that cannot post text without an image */
   requiresMedia?: boolean;
+  /** false when this adapter deliberately supports text-only publishing */
+  supportsMedia?: boolean;
+  /** false while an adapter cannot meet the provider's production workflow */
+  productionEnabled?: boolean;
 }
 
 const j = async (r: Response, ctx: string) => {
@@ -231,6 +235,7 @@ const x: PlatformAdapter = {
   tokenAuth: "basic",           // confidential clients authenticate with Basic
   clientIdEnv: "X_CLIENT_ID",
   clientSecretEnv: "X_CLIENT_SECRET",
+  supportsMedia: false,
 
   async identify(t) {
     const d = await j(await fetch(
@@ -522,6 +527,7 @@ const linkedin: PlatformAdapter = {
   tokenAuth: "body",
   clientIdEnv: "LINKEDIN_CLIENT_ID",
   clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
+  supportsMedia: false,
 
   async identify(t) {
     const d = await j(await fetch("https://api.linkedin.com/v2/userinfo",
@@ -568,6 +574,10 @@ const tiktok: PlatformAdapter = {
   clientIdEnv: "TIKTOK_CLIENT_KEY",
   clientSecretEnv: "TIKTOK_CLIENT_SECRET",
   requiresMedia: true,
+  // TikTok requires creator-info-driven privacy/interaction controls, explicit
+  // consent, duration validation, and final-status tracking. Keep OAuth and
+  // publishing unreachable until that complete user flow exists.
+  productionEnabled: false,
 
   async identify(t) {
     const d = await j(await fetch(
@@ -596,11 +606,16 @@ export const ADAPTERS: Record<string, PlatformAdapter> = {
   youtube, x, instagram, facebook, linkedin, tiktok,
 };
 
+export function platformConnectionEnabled(adapter: PlatformAdapter) {
+  return adapter.productionEnabled !== false;
+}
+
 /** Which platforms have credentials configured in this deployment. */
 export function configuredPlatforms(env: (k: string) => string | undefined) {
   if (!env("SOCIAL_TOKEN_ENCRYPTION_KEY")) return [];
   return Object.values(ADAPTERS)
-    .filter((a) => env(a.clientIdEnv) && env(a.clientSecretEnv) &&
+    .filter((a) => platformConnectionEnabled(a) &&
+      env(a.clientIdEnv) && env(a.clientSecretEnv) &&
       (!a.authorizeConfigEnv || env(a.authorizeConfigEnv)))
     .map((a) => a.id);
 }

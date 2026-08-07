@@ -2,7 +2,7 @@
 //   POST {post_id}   — publish one post now (called from the app)
 //   POST {due:true}  — publish everything scheduled and due (called by pg_cron)
 // Refreshes expired OAuth tokens automatically.
-import { ADAPTERS } from "../_shared/platforms.ts";
+import { ADAPTERS, platformConnectionEnabled } from "../_shared/platforms.ts";
 import { getUser, isMember, sbOne, sbRpc, sbUpdate, sbUpsert } from "../_shared/db.ts";
 import { freshConnectionToken } from "../_shared/token-manager.ts";
 
@@ -45,7 +45,7 @@ async function publishPost(post: any) {
       continue;
     }
 
-    if (!adapter || !env(adapter.clientIdEnv)) {
+    if (!adapter || !platformConnectionEnabled(adapter) || !env(adapter.clientIdEnv)) {
       await mark({ status: "skipped", error: "Platform not configured on the server" });
       results.push({ platform, status: "skipped", error: "Platform not configured on the server" });
       continue;
@@ -69,6 +69,12 @@ async function publishPost(post: any) {
       const error = "The selected account needs attention — verify or reconnect it before publishing.";
       await mark({ status: "skipped", connection_id: conn.id, error });
       results.push({ platform, status: "skipped", error });
+      continue;
+    }
+    if (post.media_url && adapter.supportsMedia === false) {
+      const error = `${adapter.label} currently supports text-only publishing; media was not sent.`;
+      await mark({ status: "failed", connection_id: conn.id, error });
+      results.push({ platform, status: "failed", error });
       continue;
     }
 
