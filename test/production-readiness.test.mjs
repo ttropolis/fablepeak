@@ -207,6 +207,44 @@ test("incomplete provider workflows cannot be enabled by secrets alone", async (
   assert.match(publish, /!dependencies\.platformConnectionEnabled\(adapter\)/);
 });
 
+test("Pinterest requires explicit board selection and remains production-gated", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const callback = await read("supabase/functions/oauth-callback/index.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const pinterest = platforms.match(
+    /const pinterest: PlatformAdapter = \{([\s\S]*?)\n\};\n\nexport const ADAPTERS/,
+  );
+  assert.ok(pinterest);
+  assert.match(pinterest[1], /scopes: \["boards:read", "boards:write", "pins:read", "pins:write"\]/);
+  assert.match(pinterest[1], /requiresExplicitSelection: true/);
+  assert.match(pinterest[1], /sharedAuthorizationAcrossAssets: true/);
+  assert.match(pinterest[1], /productionEnabled: false/);
+  assert.match(pinterest[1], /source_type: "image_url"/);
+  assert.match(pinterest[1], /video Pins are not supported yet/);
+  assert.match(callback, /adapter\.requiresExplicitSelection \? false : index === 0/);
+  assert.match(callback,
+    /adapter\.sharedAuthorizationAcrossAssets[\s\S]*?crypto\.randomUUID\(\)/);
+  assert.match(callback, /authorization_id: authorizationId/);
+  assert.match(callback, /sbRpc\("replace_shared_social_connections"/);
+  const atomicConnections = await read(
+    "supabase/migrations/20260807170000_pinterest_atomic_connections.sql",
+  );
+  assert.match(atomicConnections, /pg_advisory_xact_lock/);
+  assert.match(atomicConnections,
+    /delete from public\.social_connections[\s\S]*?insert into public\.social_connections/);
+  assert.match(atomicConnections, /p_platform <> 'pinterest'/);
+  assert.match(atomicConnections, /grant execute[\s\S]*?to service_role/);
+  assert.match(publish, /!conn && !adapter\.requiresExplicitSelection/);
+  const tokenManager = await read("supabase/functions/_shared/token-manager.ts");
+  assert.match(tokenManager,
+    /adapter\.sharedAuthorizationAcrossAssets && conn\.brand_id && authorizationId/);
+  assert.match(tokenManager, /meta->>authorization_id=eq\./);
+  const health = await read("supabase/functions/connection-health/index.ts");
+  assert.match(health, /const sharedAccessTokens = new Map<string, string>\(\)/);
+  assert.match(health, /sharedAccessTokens\.get\(authorizationId\)/);
+  assert.match(health, /sharedAccessTokens\.set\(authorizationId, accessToken\)/);
+});
+
 test("media-capable adapters never silently discard an attachment", async () => {
   const html = await read("index.html");
   const platforms = await read("supabase/functions/_shared/platforms.ts");

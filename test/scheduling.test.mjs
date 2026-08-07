@@ -228,6 +228,17 @@ test("post validation rejects watch pages and insecure media sources", async () 
     ...base, nets:["linkedin"], media_url:"https://cdn.example/launch.mp4",
   }), undefined);
   assert.match(context.message, /image attachments only/);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["pinterest"], media_url:"",
+  }), undefined);
+  assert.match(context.message, /need an image\/video URL/);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["pinterest"], media_url:"https://cdn.example/launch.mp4",
+  }), undefined);
+  assert.match(context.message, /video Pins are not supported/);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["pinterest"], media_url:"https://cdn.example/launch.png",
+  }), true);
 });
 
 test("publish now persists the visible modal values before calling the backend", async () => {

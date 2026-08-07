@@ -87,7 +87,7 @@ export async function publishPost(
     // Legacy rows created before explicit account selection may not have a
     // default yet. Only that migration case may fall back to the oldest active
     // connection; never bypass an expired/error selected account.
-    if (!conn) conn = await dependencies.sbOne("social_connections",
+    if (!conn && !adapter.requiresExplicitSelection) conn = await dependencies.sbOne("social_connections",
       `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
       `&platform=eq.${platform}&status=eq.active&order=connected_at.asc`);
     if (!conn) {

@@ -1,6 +1,8 @@
 import {
   ADAPTERS,
+  exchangeAuthorizationCode,
   PublishOutcomeUnknownError,
+  refreshPlatformToken,
 } from "./platforms.ts";
 import { INTERRUPTED, publishPost } from "../publish/index.ts";
 
@@ -384,6 +386,184 @@ Deno.test("LinkedIn upload failures do not create a post", async () => {
     if (postCalled) throw new Error("LinkedIn post must not be created after upload failure");
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest discovers every board and leaves destination selection to the user", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes("page_size=100") && !url.includes("bookmark=")) {
+      return Promise.resolve(json({
+        items: [{ id: "board-1", name: "Recipes", owner: { username: "shiloh" } }],
+        bookmark: "next-page",
+      }));
+    }
+    if (url.includes("bookmark=next-page")) {
+      return Promise.resolve(json({
+        items: [{ id: "board-2", name: "Podcast", owner: { username: "shiloh" } }],
+        bookmark: null,
+      }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const boards = await ADAPTERS.pinterest.identifyAll!({ access_token: "token" });
+    if (boards.map((board) => board.external_id).join(",") !== "board-1,board-2") {
+      throw new Error(`Expected both Pinterest boards, received ${JSON.stringify(boards)}`);
+    }
+    if (!ADAPTERS.pinterest.requiresExplicitSelection) {
+      throw new Error("Pinterest must require explicit board selection");
+    }
+    if (requests.length !== 2) throw new Error(`Expected pagination, received ${requests.length} requests`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest OAuth exchanges and refreshes tokens with Basic authentication", async () => {
+  const requests: Array<{ authorization: string | null; body: URLSearchParams }> = [];
+  globalThis.fetch = (_input, init) => {
+    requests.push({
+      authorization: new Headers(init?.headers).get("Authorization"),
+      body: new URLSearchParams(String(init?.body)),
+    });
+    return Promise.resolve(json({
+      access_token: `access-${requests.length}`,
+      refresh_token: `refresh-${requests.length}`,
+      expires_in: 2_592_000,
+    }));
+  };
+
+  try {
+    await exchangeAuthorizationCode(ADAPTERS.pinterest, {
+      code: "code", redirectUri: "https://example.com/callback",
+      clientId: "client", clientSecret: "secret",
+    });
+    await refreshPlatformToken(ADAPTERS.pinterest, {
+      accessToken: "old-access", refreshToken: "old-refresh",
+      clientId: "client", clientSecret: "secret",
+    });
+    if (!requests.every((request) => request.authorization === `Basic ${btoa("client:secret")}`)) {
+      throw new Error("Expected Pinterest token requests to use HTTP Basic authentication");
+    }
+    if (requests[0].body.get("grant_type") !== "authorization_code" ||
+        requests[1].body.get("grant_type") !== "refresh_token" ||
+        requests[1].body.get("refresh_token") !== "old-refresh") {
+      throw new Error(`Unexpected Pinterest token lifecycle: ${JSON.stringify(requests.map((r) => Object.fromEntries(r.body)))}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest publishes an image Pin to the selected board", async () => {
+  let pinBody: any;
+  globalThis.fetch = (input, init) => {
+    const url = String(input);
+    if (url === "https://cdn.example/pin.png") {
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "Content-Type": "image/png" },
+      }));
+    }
+    if (url === "https://api.pinterest.com/v5/pins") {
+      pinBody = JSON.parse(String(init?.body));
+      return Promise.resolve(json({ id: "pin-1" }, 201));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const result = await ADAPTERS.pinterest.publish({
+      text: "Episode 53", mediaUrl: "https://cdn.example/pin.png",
+      accessToken: "token", connection: { external_id: "board-2", meta: {} },
+    });
+    if (pinBody?.board_id !== "board-2" ||
+        pinBody?.media_source?.source_type !== "image_url" ||
+        pinBody?.media_source?.url !== "https://cdn.example/pin.png") {
+      throw new Error(`Unexpected Pinterest Pin body: ${JSON.stringify(pinBody)}`);
+    }
+    if (result.remote_id !== "pin-1" || !result.remote_url?.includes("/pin/pin-1/")) {
+      throw new Error(`Unexpected Pinterest result: ${JSON.stringify(result)}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest rejects video before creating a Pin", async () => {
+  let pinCalled = false;
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url === "https://cdn.example/pin.mp4") {
+      return Promise.resolve(new Response(new Uint8Array([1]), {
+        headers: { "Content-Type": "video/mp4" },
+      }));
+    }
+    if (url === "https://api.pinterest.com/v5/pins") pinCalled = true;
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    await ADAPTERS.pinterest.publish({
+      text: "Episode 53", mediaUrl: "https://cdn.example/pin.mp4",
+      accessToken: "token", connection: { external_id: "board-2", meta: {} },
+    }).then(
+      () => { throw new Error("Expected Pinterest video rejection"); },
+      (error) => { if (!String(error.message).includes("video Pins are not supported")) throw error; },
+    );
+    if (pinCalled) throw new Error("Pinterest API must not be called for video");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest publishing cannot fall back to another workspace's board", async () => {
+  let providerCalled = false;
+  const queries: string[] = [];
+  const results = await publishPost({
+    id: "post-b", brand_id: "brand-b", networks: ["pinterest"],
+    text: "Episode 53", media_url: "https://cdn.example/pin.png",
+  }, {
+    adapters: {
+      pinterest: {
+        label: "Pinterest", clientIdEnv: "PINTEREST_CLIENT_ID",
+        requiresExplicitSelection: true,
+        publish: async () => {
+          providerCalled = true;
+          return { remote_id: "wrong-pin" };
+        },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string, query: string) => {
+      queries.push(query);
+      if (table === "post_targets") return null;
+      // A board exists for brand A. The publisher must never see or fall back
+      // to it while resolving a post owned by brand B.
+      return query.includes("brand_id=eq.brand-b") ? null : {
+        id: "board-connection-a", brand_id: "brand-a", status: "active",
+        external_id: "board-a", meta: {},
+      };
+    },
+    sbUpsert: async (_table: string, row: any) => row,
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "brand-a-token",
+    now: () => "2026-08-07T00:00:00.000Z",
+  } as any);
+
+  if (providerCalled) throw new Error("Pinterest must not publish through another workspace's board");
+  if (results[0]?.status !== "skipped" ||
+      results[0]?.error !== "No connected account for this platform") {
+    throw new Error(`Expected tenant-scoped skip, received ${JSON.stringify(results)}`);
+  }
+  const boardQueries = queries.filter((query) =>
+    query.includes("select=*") && query.includes("brand_id="));
+  if (!queries.some((query) => query.includes("brand_id=eq.brand-b")) || boardQueries.length !== 1) {
+    throw new Error(`Expected one brand-scoped board lookup without fallback: ${queries.join(", ")}`);
   }
 });
 
