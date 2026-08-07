@@ -124,6 +124,17 @@ test("OAuth is unavailable until token encryption is configured", async () => {
   assert.match(start, /"SOCIAL_TOKEN_ENCRYPTION_KEY"/);
 });
 
+test("Meta API security holds produce an actionable connection error", async () => {
+  const { providerConnectionError } = await import(
+    "../supabase/functions/_shared/oauth-errors.ts"
+  );
+  const captured = 'instagram long-lived token: 400 {"error":{"message":"API access blocked.","type":"OAuthException","code":200,"fbtrace_id":"trace-redacted"}}';
+  assert.equal(
+    providerConnectionError(captured),
+    "Meta has blocked API access for the FablePeak developer account. The app owner must open Meta for Developers, complete Account confirmation, and then try connecting again.",
+  );
+});
+
 test("OAuth state is single-use and expires after ten minutes", async () => {
   const start = await read("supabase/functions/oauth-start/index.ts");
   const callback = await read("supabase/functions/oauth-callback/index.ts");

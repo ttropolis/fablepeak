@@ -2,6 +2,7 @@
 // account, stores the connection, and closes the popup.
 import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
 import { isMember, sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
+import { providerConnectionError } from "../_shared/oauth-errors.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
 import { withSupabase } from "jsr:@supabase/server@1.4.1";
 
@@ -89,7 +90,7 @@ const handleCallback = async (req: Request) => {
         ? `Connected as ${identities[0].display_name}. You can close this window.`
         : `Connected ${identities.length} Pages. Choose which one to publish from in FablePeak.`, true);
   } catch (e) {
-    return page("Connection failed", String((e as Error).message ?? e), false);
+    return page("Connection failed", providerConnectionError(e), false);
   }
 };
 
