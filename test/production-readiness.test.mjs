@@ -179,10 +179,46 @@ test("the installable phone experience has launch shortcuts and a mobile planner
     "phone auth screens should not summon the software keyboard automatically");
 });
 
-test("live customer connections stay focused on the three launch platforms", async () => {
+test("live customer connections show an honest status for every planned platform", async () => {
   const html = await read("index.html");
-  assert.match(html, /const LAUNCH_PLATFORMS = \["instagram", "facebook", "youtube"\]/);
-  assert.match(html, /NETWORKS\.filter\(n => LAUNCH_PLATFORMS\.includes\(n\.id\)\)/);
+  assert.doesNotMatch(html, /LAUNCH_PLATFORMS/);
+  assert.match(html, /const PLATFORM_PENDING_STATUS =/);
+  assert.match(html, /NETWORKS\.map\(n => \{/);
+  for (const status of [
+    "Meta review or tester access pending",
+    "Paid API credentials pending",
+    "Developer app credentials pending",
+    "Deferred — compliance workflow pending",
+    "Not implemented",
+  ]) assert.match(html, new RegExp(status));
+});
+
+test("incomplete provider workflows cannot be enabled by secrets alone", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const start = await read("supabase/functions/oauth-start/index.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const tiktok = platforms.match(
+    /const tiktok: PlatformAdapter = \{([\s\S]*?)\n\};\n\nexport const ADAPTERS/,
+  );
+  assert.ok(tiktok);
+  assert.match(tiktok[1], /productionEnabled: false/);
+  assert.match(platforms, /platformConnectionEnabled\(a\)/);
+  assert.match(start, /!platformConnectionEnabled\(adapter\)/);
+  assert.match(publish, /!platformConnectionEnabled\(adapter\)/);
+});
+
+test("text-only adapters never silently discard an attachment", async () => {
+  const html = await read("index.html");
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const x = platforms.match(/const x: PlatformAdapter = \{([\s\S]*?)\n\};\n\n\/\* ---------------------------------------------------------------- Meta base/);
+  const linkedin = platforms.match(/const linkedin: PlatformAdapter = \{([\s\S]*?)\n\};\n\n\/\* -------------------------------------------------------------------- TikTok/);
+  assert.ok(x && linkedin);
+  assert.match(x[1], /supportsMedia: false/);
+  assert.match(linkedin[1], /supportsMedia: false/);
+  assert.match(html, /currently support text-only posts — remove the media or those networks/);
+  assert.match(publish, /post\.media_url && adapter\.supportsMedia === false/);
+  assert.match(publish, /media was not sent/);
 });
 
 test("production smoke test is read-only and covers public security gates", async () => {

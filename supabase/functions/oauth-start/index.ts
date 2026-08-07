@@ -1,6 +1,8 @@
 // Begins an OAuth connection. Called by the browser with the user's Supabase
 // JWT; returns the platform authorize URL to open. No secrets leave the server.
-import { ADAPTERS, configuredPlatforms } from "../_shared/platforms.ts";
+import {
+  ADAPTERS, configuredPlatforms, platformConnectionEnabled,
+} from "../_shared/platforms.ts";
 import { getUser, isMember, sbDelete, sbInsert } from "../_shared/db.ts";
 
 const env = (k: string) => Deno.env.get(k);
@@ -40,6 +42,11 @@ Deno.serve(async (req) => {
     const { platform, brand_id, redirect_to } = await req.json();
     const adapter = ADAPTERS[platform];
     if (!adapter) return json({ error: `Unknown platform: ${platform}` }, 400);
+    if (!platformConnectionEnabled(adapter)) {
+      return json({
+        error: `${adapter.label} is not available until its required publishing workflow is complete.`,
+      }, 400);
+    }
 
     const clientId = env(adapter.clientIdEnv);
     const missingSecrets = [adapter.clientIdEnv, adapter.clientSecretEnv,

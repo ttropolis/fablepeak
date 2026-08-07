@@ -85,12 +85,17 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
 
 ## Current limits
 
-- The current production deployment has YouTube configured and verified.
-  Facebook and direct Instagram adapters are implemented; production secrets,
-  platform review, and external-account validation are still required before
-  general customer access. LinkedIn and X also need provider setup and review.
-- TikTok integration is intentionally deferred for this release. Its disabled
-  connection card remains as a future placeholder.
+- Production OAuth discovery currently exposes YouTube, Facebook and direct
+  Instagram, and all three have their required server secrets. YouTube has been
+  verified end to end. Facebook and Instagram still need app-role/test-account
+  acceptance tests, then Meta App Review and Live mode before unrelated
+  customers can connect.
+- LinkedIn's personal-profile text adapter and X's text adapter are implemented,
+  but their production developer credentials are not configured. X also needs
+  paid API credits. Media publishing for both remains a separate follow-up.
+- TikTok is intentionally disabled in both discovery and publishing, even if
+  secrets are added, until its mandatory creator-info, consent and final-status
+  workflow is implemented and audited.
 - YouTube publishing requires a public, direct HTTPS video-file URL. A
   `youtube.com/watch` or `youtu.be` page identifies an existing video but
   cannot be used as an upload source.
@@ -98,7 +103,7 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   rows. Until then they display a clearly-labelled simulated fallback.
 - Inbox conversations and replies are simulated; real messaging permissions
   are a separate platform-review project.
-- Pinterest and Google Business are UI placeholders without publishing
-  adapters.
+- Pinterest and Google Business are visible, explicitly disabled roadmap cards
+  without OAuth or publishing adapters.
 - Cloud media uploads are capped at 50 MB per file by the current Supabase Free
   project configuration.

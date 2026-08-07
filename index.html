@@ -288,7 +288,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -1309,6 +1309,9 @@ function validatePostForm({text,nets,date,time,media_url}){
   const needsMedia = nets.filter(n => ["instagram","tiktok","youtube"].includes(n));
   if(needsMedia.length && !media_url)
     return toast(needsMedia.map(n=>netOf(n).name).join(" and ") + " need an image/video URL");
+  const textOnly = media_url && nets.filter(n => ["x","linkedin"].includes(n));
+  if(textOnly.length)
+    return toast(textOnly.map(n=>netOf(n).name).join(" and ") + " currently support text-only posts — remove the media or those networks");
   if(nets.includes("youtube") && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(new URL(media_url).hostname))
     return toast("YouTube needs a direct video file URL, not a YouTube watch link");
   return true;
@@ -1632,13 +1635,24 @@ const liveMode = () => store.name === "cloud" && !!store.user;
 /* Honest, user-facing constraints per platform (from each platform's own docs). */
 const PLATFORM_NOTES = {
   youtube:   "Uploads a video (needs a video URL). New API projects publish as private until Google audits them.",
-  x:         "⚠️ X has no free tier — posting is billed per post (~US$0.015, more with links).",
-  instagram: "Connect a Business or Creator profile directly. No Facebook Page is required. Every post needs media.",
-  facebook:  "Posts to a Page you administer. Text or image.",
-  linkedin:  "Posts to your personal profile. Company Pages need LinkedIn's partner review.",
-  tiktok:    "Deferred for this release. No TikTok credentials are configured.",
+  x:         "Paid API. The current adapter publishes text; media upload support is still pending.",
+  instagram: "Business or Creator profiles connect directly. No Facebook Page is required. Every post needs media.",
+  facebook:  "Posts text, images or video to a Page you administer.",
+  linkedin:  "Personal-profile text posts are implemented. Media and Company Page publishing are separate follow-ups.",
+  tiktok:    "Disabled until FablePeak implements TikTok's required creator controls, consent flow and status tracking.",
+  pinterest: "Planned. OAuth, board selection and Pin publishing are not implemented yet.",
+  gbp:       "Planned. Google API approval, location selection and Business Profile post publishing are not implemented yet.",
 };
-const LAUNCH_PLATFORMS = ["instagram", "facebook", "youtube"];
+const PLATFORM_PENDING_STATUS = {
+  instagram: "Meta review or tester access pending",
+  facebook:  "Meta review or tester access pending",
+  youtube:   "Google setup pending",
+  x:         "Paid API credentials pending",
+  linkedin:  "Developer app credentials pending",
+  tiktok:    "Deferred — compliance workflow pending",
+  pinterest: "Not implemented",
+  gbp:       "Not implemented",
+};
 
 let connCache = { brandId:null, available:[], accounts:[], loaded:false };
 
@@ -1696,9 +1710,10 @@ function renderConnections(m){
         Please try again later. You do not need to create developer credentials or configure anything yourself.</div>
     </div>`}
   <div class="conngrid">
-    ${NETWORKS.filter(n => LAUNCH_PLATFORMS.includes(n.id)).map(n => {
+    ${NETWORKS.map(n => {
       const accounts = byPlatform[n.id] || [];
       const ready = connCache.available.includes(n.id);
+      const pendingStatus = PLATFORM_PENDING_STATUS[n.id] || "Setup pending";
       return `<div class="card conn">
         <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
           <div style="min-width:0">
@@ -1706,7 +1721,7 @@ function renderConnections(m){
             <div class="st ${accounts.some(a=>a.status==="active")?"on":""}">
               ${accounts.length
                 ? esc((accounts.find(a=>a.is_default) || accounts[0]).display_name || "Connected")
-                : ready ? "Not connected" : "Not set up on the server"}</div>
+                : ready ? "Available to connect" : esc(pendingStatus)}</div>
           </div></div>
         <div style="color:var(--muted);font-size:11.5px;line-height:1.5">${PLATFORM_NOTES[n.id]}</div>
         ${accounts.map(a => `
@@ -1731,11 +1746,11 @@ function renderConnections(m){
           ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
           : ready && accounts.length
             ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":"Connect another"}</button>`
-          : `<button class="btn ghost mini" disabled title="This connection is temporarily unavailable">Connect</button>`}
+          : `<button class="btn ghost mini" disabled title="${esc(pendingStatus)}">Connect</button>`}
       </div>`;
     }).join("")}
   </div>
-  <div style="color:var(--muted);font-size:12px;margin-top:12px">More networks will appear here as their production integrations are approved.</div>`;
+  <div style="color:var(--muted);font-size:12px;margin-top:12px">Every planned network is shown here. A disabled card names the exact setup, approval or implementation gate that remains.</div>`;
 }
 
 async function refreshConnections(brandId){

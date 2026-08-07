@@ -4,7 +4,7 @@ This is the one-time setup that turns FablePeak from a demo into something that
 posts to real accounts. Each platform needs a developer app registered once;
 after that, connecting an account is two clicks inside FablePeak.
 
-**Verified against each platform's own developer docs, July 2026.** These APIs
+**Verified against each platform's own developer docs, August 2026.** These APIs
 change often — if something below doesn't match what you see, the platform's
 docs win.
 
@@ -44,13 +44,18 @@ Skip it unless you specifically want X, and know it's billed per action.
   Verified: the scheduler calls the publisher and gets HTTP 200.
 - FablePeak reaches the functions from fablepeak.com (CORS locked to it).
 
+**Production OAuth discovery currently reports Facebook, Instagram and
+YouTube.** Their client credentials and the shared token-encryption key are
+stored as Supabase Edge Function secrets. This proves server configuration,
+not provider approval or customer-account acceptance.
+
 **YouTube is fully configured and verified** (2026-07-26):
 Google Cloud project `fablepeak`, YouTube Data API v3 + YouTube Analytics API
 enabled, OAuth consent screen in Testing with `tcltv987@gmail.com` as test
 user, Web OAuth client `FablePeak web` pointing at the callback below, and
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` stored in Supabase.
-Verified: `oauth-start` reports `{"platforms":["youtube"]}`, and Google's
-consent screen loads for our client and redirect URI with no error.
+Verified: Google's consent screen loads for our client and redirect URI with no
+error, and current discovery includes `youtube`.
 
 To connect it: sign in to fablepeak.com → Connections → Connect on YouTube.
 
@@ -61,8 +66,10 @@ returned HTTP 200 with one successful YouTube ingestion, and the next scheduled
 publisher heartbeat returned HTTP 200 with no due posts. A future CLI deploy
 from the repository can replace these pinned dashboard bundles normally.
 
-Remaining platforms follow the step-by-step below — each needs a developer
-app registered and two credentials pasted.
+Meta credentials are already deployed; Meta's remaining work is the acceptance
+and review gate described below. LinkedIn and X still need developer apps and
+credentials. TikTok, Pinterest and Google Business require product work before
+they can be enabled safely.
 
 ## Before you start
 
@@ -193,8 +200,10 @@ none of that friction.
 ## 4. TikTok (deferred)
 
 TikTok is intentionally not part of the current release. Leave
-`TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` unset; FablePeak will keep the
-connection disabled. The steps below are retained only for a future phase.
+`TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` unset. FablePeak also blocks the
+adapter in OAuth discovery and publishing, so adding secrets alone cannot
+accidentally expose an incomplete integration. The steps below are retained
+only for a future phase.
 
 1. <https://developers.tiktok.com> → create an app.
 2. Add the **Content Posting API** product, request `video.publish`.
@@ -205,9 +214,11 @@ TIKTOK_CLIENT_KEY=<...>
 TIKTOK_CLIENT_SECRET=<...>
 ```
 
-**Gotcha:** until TikTok audits the app, everything you post is visible **only
-to you** (`SELF_ONLY`), capped at 5 posting users per 24h. Fine for proving the
-pipeline; not for real publishing.
+Before enabling it, the export screen must query current creator info, display
+the destination account and allowed privacy/interaction settings, collect
+explicit user consent, validate video duration, and track the final publish
+status. Unaudited clients are additionally limited to private posts and a small
+daily active-user cap.
 
 ---
 
