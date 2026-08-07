@@ -32,6 +32,13 @@ export interface PublishInput {
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
 
+/** The provider may have accepted the final publish request, but its response
+ * was not received. Automatic retrying is unsafe because it can duplicate a
+ * public post. */
+export class PublishOutcomeUnknownError extends Error {
+  override name = "PublishOutcomeUnknownError";
+}
+
 export interface PlatformAdapter {
   id: Platform;
   label: string;
@@ -475,13 +482,34 @@ const instagram: PlatformAdapter = {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(createParams),
       }), "instagram container");
-    if (video) await waitForInstagramContainer(container.id, accessToken);
-    const published = await j(await fetch(
-      `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
+    // Both image and Reel containers are prepared asynchronously. Publishing
+    // before Meta reports FINISHED intermittently fails with OAuth code 9007
+    // ("Media ID is not available").
+    await waitForInstagramContainer(container.id, accessToken);
+    let publishResponse: Response;
+    try {
+      publishResponse = await fetch(
+        `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ creation_id: container.id, access_token: accessToken }),
-      }), "instagram publish");
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "Instagram may have accepted this post. Verify the profile before retrying.");
+    }
+    let published: any;
+    try {
+      published = await j(publishResponse, "instagram publish");
+    } catch (error) {
+      // An explicit non-2xx response is a definite rejection and can be
+      // retried. Losing a successful response body leaves the outcome unknown.
+      if (publishResponse.ok) {
+        throw new PublishOutcomeUnknownError(
+          "Instagram may have accepted this post. Verify the profile before retrying.");
+      }
+      throw error;
+    }
     let permalink: string | undefined;
     try {
       const link = await fetch(
@@ -509,11 +537,11 @@ async function waitForInstagramContainer(containerId: string, accessToken: strin
       "instagram media processing");
     if (status.status_code === "FINISHED") return;
     if (["ERROR", "EXPIRED"].includes(status.status_code)) {
-      throw new Error(`Instagram could not process this video: ${status.status ?? status.status_code}`);
+      throw new Error(`Instagram could not process this media: ${status.status ?? status.status_code}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error("Instagram is still processing this video. Try publishing again shortly.");
+  throw new Error("Instagram is still processing this media. Try publishing again shortly.");
 }
 
 /* ----------------------------------------------------------------- LinkedIn */

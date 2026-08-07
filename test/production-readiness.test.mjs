@@ -221,6 +221,14 @@ test("text-only adapters never silently discard an attachment", async () => {
   assert.match(publish, /media was not sent/);
 });
 
+test("ambiguous provider outcomes require verification before retrying", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  assert.match(platforms, /class PublishOutcomeUnknownError extends Error/);
+  assert.match(platforms, /Instagram may have accepted this post\. Verify the profile before retrying\./);
+  assert.match(publish, /e instanceof PublishOutcomeUnknownError[\s\S]*?\? INTERRUPTED/);
+});
+
 test("production smoke test is read-only and covers public security gates", async () => {
   const script = await read("scripts/production-smoke.mjs");
   assert.match(script, /expectedVersion/);
