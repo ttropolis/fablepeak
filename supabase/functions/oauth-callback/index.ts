@@ -1,7 +1,7 @@
 // OAuth redirect target. Exchanges the code for tokens, identifies the remote
 // account, stores the connection, and closes the popup.
 import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
-import { isMember, sbOne, sbDelete, sbUpsert } from "../_shared/db.ts";
+import { isMember, sbDelete, sbOne, sbRpc, sbUpsert } from "../_shared/db.ts";
 import { providerConnectionError } from "../_shared/oauth-errors.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
 import { withSupabase } from "jsr:@supabase/server@1.4.1";
@@ -63,6 +63,9 @@ const handleCallback = async (req: Request) => {
       `select=external_id&brand_id=eq.${encodeURIComponent(st.brand_id)}` +
       `&platform=eq.${encodeURIComponent(st.platform)}&is_default=eq.true`);
     const now = new Date().toISOString();
+    const authorizationId = adapter.sharedAuthorizationAcrossAssets
+      ? crypto.randomUUID()
+      : null;
     const rows = await Promise.all(identities.map(async (identity, index) => ({
         brand_id: st.brand_id,
         user_id: st.user_id,
@@ -74,21 +77,37 @@ const handleCallback = async (req: Request) => {
         refresh_token: await encryptToken(tokens.refresh_token),
         token_expires_at: expiresAt,
         scopes: tokens.scope ?? adapter.scopes.join(" "),
-        meta: identity.meta ?? {},
+        meta: {
+          ...(identity.meta ?? {}),
+          ...(authorizationId ? { authorization_id: authorizationId } : {}),
+        },
         is_default: currentDefault
           ? currentDefault.external_id === identity.external_id
-          : index === 0,
+          : adapter.requiresExplicitSelection ? false : index === 0,
         status: "active",
         last_error: null,
         last_verified_at: now,
         updated_at: now,
       })));
-    await sbUpsert("social_connections", rows, "brand_id,platform,external_id");
+    if (adapter.sharedAuthorizationAcrossAssets) {
+      // The minimal Pinterest scopes do not expose a stable user-account ID,
+      // and group boards can overlap between users. The database transaction
+      // serializes concurrent callbacks and atomically replaces the one
+      // Pinterest authorization allowed for this workspace.
+      await sbRpc("replace_shared_social_connections", {
+        p_brand_id: st.brand_id,
+        p_platform: st.platform,
+        p_rows: rows,
+      });
+    } else {
+      await sbUpsert("social_connections", rows, "brand_id,platform,external_id");
+    }
 
     return page(`${adapter.label} connected`,
       identities.length === 1
         ? `Connected as ${identities[0].display_name}. You can close this window.`
-        : `Connected ${identities.length} Pages. Choose which one to publish from in FablePeak.`, true);
+        : `Connected ${identities.length} ${adapter.id === "pinterest" ? "boards" : "Pages"}. ` +
+          `Choose which one to publish to in FablePeak.`, true);
   } catch (e) {
     return page("Connection failed", providerConnectionError(e), false);
   }

@@ -288,7 +288,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.1";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -1181,7 +1181,7 @@ function openPostModal(id, dateStr){
       : p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
-    <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, TikTok and YouTube</span></label>
+    <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""} onchange="showMediaPreview(this.value)">
     <div class="media-preview" id="pm_media_preview"></div>
     ${liveMode() && !locked ? `<div class="upload-actions">
@@ -1306,13 +1306,17 @@ function validatePostForm({text,nets,date,time,media_url}){
     catch(e){ return toast("Media must use a valid https:// URL"); }
   }
   // platforms that physically cannot post without media
-  const needsMedia = nets.filter(n => ["instagram","tiktok","youtube"].includes(n));
+  const needsMedia = nets.filter(n => ["instagram","pinterest","tiktok","youtube"].includes(n));
   if(needsMedia.length && !media_url)
     return toast(needsMedia.map(n=>netOf(n).name).join(" and ") + " need an image/video URL");
   const linkedInVideo = media_url && nets.includes("linkedin") &&
     /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(media_url);
   if(linkedInVideo)
     return toast("LinkedIn currently supports image attachments only — remove the video or LinkedIn");
+  const pinterestVideo = media_url && nets.includes("pinterest") &&
+    /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(media_url);
+  if(pinterestVideo)
+    return toast("Pinterest video Pins are not supported yet — choose an image or remove Pinterest");
   if(nets.includes("youtube") && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(new URL(media_url).hostname))
     return toast("YouTube needs a direct video file URL, not a YouTube watch link");
   return true;
@@ -1644,7 +1648,7 @@ const PLATFORM_NOTES = {
   facebook:  "Posts text, images or video to a Page you administer.",
   linkedin:  "Publishes text or one image to a personal profile. Video and Company Page publishing remain separate follow-ups.",
   tiktok:    "Disabled until FablePeak implements TikTok's required creator controls, consent flow and status tracking.",
-  pinterest: "Planned. OAuth, board selection and Pin publishing are not implemented yet.",
+  pinterest: "Image Pin publishing and explicit board selection are implemented. Connection stays disabled until Pinterest credentials and a real-account acceptance test are complete.",
   gbp:       "Planned. Google API approval, location selection and Business Profile post publishing are not implemented yet.",
 };
 const PLATFORM_PENDING_STATUS = {
@@ -1654,7 +1658,7 @@ const PLATFORM_PENDING_STATUS = {
   x:         "Paid API credentials pending",
   linkedin:  "Developer app credentials pending",
   tiktok:    "Deferred — compliance workflow pending",
-  pinterest: "Not implemented",
+  pinterest: "Developer app and acceptance test pending",
   gbp:       "Not implemented",
 };
 
@@ -1749,7 +1753,7 @@ function renderConnections(m){
         ${ready && !accounts.length
           ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
           : ready && accounts.length
-            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":"Connect another"}</button>`
+            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":n.id==="pinterest"?"Refresh boards":"Connect another"}</button>`
           : `<button class="btn ghost mini" disabled title="${esc(pendingStatus)}">Connect</button>`}
       </div>`;
     }).join("")}

@@ -97,6 +97,10 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
 - TikTok is intentionally disabled in both discovery and publishing, even if
   secrets are added, until its mandatory creator-info, consent and final-status
   workflow is implemented and audited.
+- Pinterest OAuth, refresh, board discovery/selection, and image Pin publishing
+  are implemented but deliberately disabled until production credentials and a
+  real-account acceptance test are complete. Video Pins are explicitly rejected;
+  reconnecting refreshes the single Pinterest login allowed per workspace.
 - YouTube publishing requires a public, direct HTTPS video-file URL. A
   `youtube.com/watch` or `youtu.be` page identifies an existing video but
   cannot be used as an upload source.
@@ -104,7 +108,7 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   rows. Until then they display a clearly-labelled simulated fallback.
 - Inbox conversations and replies are simulated; real messaging permissions
   are a separate platform-review project.
-- Pinterest and Google Business are visible, explicitly disabled roadmap cards
-  without OAuth or publishing adapters.
+- Google Business remains a visible, explicitly disabled roadmap card without
+  OAuth or a publishing adapter.
 - Cloud media uploads are capped at 50 MB per file by the current Supabase Free
   project configuration.

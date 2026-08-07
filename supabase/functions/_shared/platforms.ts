@@ -5,7 +5,7 @@
 // Every platform implements the same shape so adding one is a single object.
 
 export type Platform =
-  | "youtube" | "x" | "instagram" | "facebook" | "linkedin" | "tiktok";
+  | "youtube" | "x" | "instagram" | "facebook" | "linkedin" | "tiktok" | "pinterest";
 
 export interface TokenSet {
   access_token: string;
@@ -78,6 +78,10 @@ export interface PlatformAdapter {
   identify(tokens: TokenSet): Promise<Identity>;
   /** providers that authorize several assets at once can return all of them */
   identifyAll?(tokens: TokenSet): Promise<Identity[]>;
+  /** publishing must remain blocked until the user selects one discovered asset */
+  requiresExplicitSelection?: boolean;
+  /** several discovered assets reuse one rotating user authorization */
+  sharedAuthorizationAcrossAssets?: boolean;
   /** verify one stored asset still belongs to the supplied token */
   verify?(accessToken: string, connection: {
     external_id: string;
@@ -796,8 +800,157 @@ const tiktok: PlatformAdapter = {
   },
 };
 
+/* ---------------------------------------------------------------- Pinterest */
+async function pinterestToken(
+  params: Record<string, string>,
+  clientId: string,
+  clientSecret: string,
+): Promise<TokenSet> {
+  const response = await fetch("https://api.pinterest.com/v5/oauth/token", {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + btoa(`${clientId}:${clientSecret}`),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(params),
+  });
+  return await j(response, "pinterest token exchange");
+}
+
+async function pinterestBoards(accessToken: string) {
+  const boards: any[] = [];
+  let bookmark: string | null = null;
+  do {
+    const query = new URLSearchParams({ page_size: "100" });
+    if (bookmark) query.set("bookmark", bookmark);
+    const page = await j(await fetch(`https://api.pinterest.com/v5/boards?${query}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }), "pinterest boards");
+    boards.push(...(page.items ?? []));
+    bookmark = page.bookmark || null;
+  } while (bookmark);
+  return boards;
+}
+
+const pinterest: PlatformAdapter = {
+  id: "pinterest",
+  label: "Pinterest",
+  authorizeUrl: "https://www.pinterest.com/oauth/",
+  tokenUrl: "https://api.pinterest.com/v5/oauth/token",
+  scopes: ["boards:read", "boards:write", "pins:read", "pins:write"],
+  scopeSeparator: ",",
+  usesPKCE: false,
+  tokenAuth: "basic",
+  clientIdEnv: "PINTEREST_CLIENT_ID",
+  clientSecretEnv: "PINTEREST_CLIENT_SECRET",
+  supportsMedia: true,
+  requiresMedia: true,
+  requiresExplicitSelection: true,
+  sharedAuthorizationAcrossAssets: true,
+  // Keep discovery and publishing unavailable until production credentials
+  // and a real-account acceptance test have both passed.
+  productionEnabled: false,
+
+  async exchangeCode({ code, redirectUri, clientId, clientSecret }) {
+    return await pinterestToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      continuous_refresh: "true",
+    }, clientId, clientSecret);
+  },
+
+  async refreshAccess({ refreshToken, clientId, clientSecret }) {
+    if (!refreshToken) throw new Error("Pinterest did not issue a refresh token.");
+    return await pinterestToken({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }, clientId, clientSecret);
+  },
+
+  async identify(tokens) {
+    const boards = await pinterestBoards(tokens.access_token);
+    if (!boards.length) throw new Error(
+      "No Pinterest boards were found. Create a public board, then reconnect.");
+    const board = boards[0];
+    return {
+      external_id: String(board.id),
+      display_name: board.name ?? "Pinterest board",
+      meta: { owner_username: board.owner?.username ?? null },
+    };
+  },
+
+  async identifyAll(tokens) {
+    const boards = await pinterestBoards(tokens.access_token);
+    if (!boards.length) throw new Error(
+      "No Pinterest boards were found. Create a public board, then reconnect.");
+    return boards.map((board: any) => ({
+      external_id: String(board.id),
+      display_name: `${board.name ?? "Pinterest board"}${board.owner?.username ? ` · @${board.owner.username}` : ""}`,
+      meta: { owner_username: board.owner?.username ?? null },
+    }));
+  },
+
+  async verify(accessToken, connection) {
+    const board = await j(await fetch(
+      `https://api.pinterest.com/v5/boards/${encodeURIComponent(connection.external_id)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }), "pinterest board");
+    return {
+      external_id: String(board.id),
+      display_name: `${board.name ?? "Pinterest board"}${board.owner?.username ? ` · @${board.owner.username}` : ""}`,
+      meta: { owner_username: board.owner?.username ?? null },
+    };
+  },
+
+  async publish({ text, mediaUrl, accessToken, connection }) {
+    if (!mediaUrl) throw new Error("Pinterest requires an image URL for every Pin.");
+    const safeMediaUrl = publicMediaUrl(mediaUrl, "Pinterest");
+    const media = await fetchPublicMedia(safeMediaUrl, "Pinterest");
+    if (!media.ok) throw new Error(`Pinterest could not fetch media (${media.status}).`);
+    const contentType = media.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
+    await media.body?.cancel();
+    if (contentType.startsWith("video/") || mediaKind(safeMediaUrl) === "video") {
+      throw new Error("Pinterest video Pins are not supported yet; choose an image instead.");
+    }
+    if (!contentType.startsWith("image/")) {
+      throw new Error("Pinterest needs a direct image file URL.");
+    }
+
+    let response: Response;
+    try {
+      response = await fetch("https://api.pinterest.com/v5/pins", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          board_id: connection.external_id,
+          title: text.slice(0, 100) || "Untitled Pin",
+          description: text.slice(0, 800),
+          media_source: { source_type: "image_url", url: safeMediaUrl },
+        }),
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "Pinterest may have accepted this Pin. Verify the board before retrying.");
+    }
+    let pin: any;
+    try {
+      pin = await j(response, "pinterest publish");
+    } catch (error) {
+      if (response.ok) throw new PublishOutcomeUnknownError(
+        "Pinterest may have accepted this Pin. Verify the board before retrying.");
+      throw error;
+    }
+    if (!pin.id) throw new PublishOutcomeUnknownError(
+      "Pinterest may have accepted this Pin. Verify the board before retrying.");
+    return { remote_id: String(pin.id), remote_url: `https://www.pinterest.com/pin/${pin.id}/` };
+  },
+};
+
 export const ADAPTERS: Record<string, PlatformAdapter> = {
-  youtube, x, instagram, facebook, linkedin, tiktok,
+  youtube, x, instagram, facebook, linkedin, tiktok, pinterest,
 };
 
 export function platformConnectionEnabled(adapter: PlatformAdapter) {

@@ -18,6 +18,7 @@ docs win.
 | **Instagram** | ✅ Yes | ✅ **Yes, fully** — your own account | Direct Instagram Login; needs Business/Creator. No Facebook Page required. |
 | **YouTube** | ✅ Yes | ✅ Yes, with caveats | Uploads stay **private** until Google audits the project. Test tokens expire every 7 days. |
 | **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). |
+| **Pinterest** | ✅ Yes | Trial access required | Implemented but gated until credentials and a real-account acceptance test are complete. |
 | **TikTok** | Deferred | — | Intentionally left unconfigured for the current release. |
 | **X / Twitter** | ❌ **No** | N/A — no review, but no free tier | **~US$0.015 per post, ~US$0.20 if it contains a link.** See below. |
 
@@ -35,7 +36,8 @@ That's the cleanest proof the whole pipeline works.
 | X / Twitter | ✅ | ✅ | ✅ | ✅ | Requires paid API credits and production credentials. |
 | LinkedIn profile | ✅ | ✅ | ✅ | ❌ | One image per post; video is rejected explicitly. |
 | TikTok | ❌ | ❌ | ❌ | Disabled | Compliance workflow is not complete. |
-| Pinterest / Google Business | Disabled | Disabled | Disabled | Disabled | Adapters are not implemented. |
+| Pinterest | ❌ | ✅ | ✅ | ❌ | Image Pins are implemented but production-disabled pending acceptance. |
+| Google Business | Disabled | Disabled | Disabled | Disabled | Adapter is not implemented. |
 
 FablePeak fetches X and LinkedIn attachments from the supplied public HTTPS
 URL, uploads them to the provider, and only then creates the post. An attachment
@@ -85,7 +87,8 @@ from the repository can replace these pinned dashboard bundles normally.
 
 Meta credentials are already deployed; Meta's remaining work is the acceptance
 and review gate described below. LinkedIn and X still need developer apps and
-credentials. TikTok, Pinterest and Google Business require product work before
+credentials. Pinterest needs a developer app, credentials, and a real-account
+acceptance test. TikTok and Google Business require more product work before
 they can be enabled safely.
 
 ## Before you start
@@ -219,7 +222,33 @@ none of that friction.
 
 ---
 
-## 4. TikTok (deferred)
+## 4. Pinterest (implemented, production-gated)
+
+1. Create a Pinterest business account, register an app, and request Trial access.
+2. Register the shared callback URL above.
+3. Request only `boards:read`, `boards:write`, `pins:read`, and `pins:write`.
+4. Store the app ID and secret as Edge Function secrets:
+
+```
+PINTEREST_CLIENT_ID=<app ID>
+PINTEREST_CLIENT_SECRET=<app secret>
+```
+
+The adapter exchanges and continuously refreshes OAuth tokens, discovers every
+public board, and requires the user to choose a publishing board explicitly.
+It creates image Pins from public HTTPS image URLs and records the returned Pin
+ID and URL. Video Pins are rejected before creation until their separate media
+upload lifecycle is implemented. Each workspace supports one Pinterest login;
+reconnecting safely replaces and refreshes that account's available boards.
+
+`productionEnabled` must remain `false` until the credentials are deployed and
+an external-account test has connected, selected a board, published one image
+Pin, and verified that exact Pin on Pinterest. Adding secrets alone does not
+make Pinterest appear in production discovery.
+
+---
+
+## 5. TikTok (deferred)
 
 TikTok is intentionally not part of the current release. Leave
 `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` unset. FablePeak also blocks the
@@ -244,7 +273,7 @@ daily active-user cap.
 
 ---
 
-## 5. X / Twitter (optional, paid)
+## 6. X / Twitter (optional, paid)
 
 1. <https://console.x.com> → create a project and app.
 2. Enable **OAuth 2.0**, type **Web App**, with **Read and write** permissions.
@@ -259,7 +288,7 @@ Billing is per action — see the warning at the top.
 
 ---
 
-## 6. Server secrets FablePeak needs regardless
+## 7. Server secrets FablePeak needs regardless
 
 ```
 CRON_SECRET=<any long random string>     # protects the scheduled publish/metrics jobs

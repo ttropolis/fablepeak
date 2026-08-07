@@ -34,12 +34,22 @@ Deno.serve(async (req) => {
     if (account_id) query += `&id=eq.${encodeURIComponent(account_id)}`;
     const connections = await sbSelect("social_connections", query);
     const results = [];
+    const sharedAccessTokens = new Map<string, string>();
 
     for (const connection of connections) {
       const adapter = ADAPTERS[connection.platform];
       if (!adapter) continue;
       try {
-        const accessToken = await freshConnectionToken(connection, env);
+        const authorizationId = adapter.sharedAuthorizationAcrossAssets
+          ? String(connection.meta?.authorization_id ?? "")
+          : "";
+        let accessToken = authorizationId
+          ? sharedAccessTokens.get(authorizationId)
+          : undefined;
+        if (!accessToken) {
+          accessToken = await freshConnectionToken(connection, env);
+          if (authorizationId) sharedAccessTokens.set(authorizationId, accessToken);
+        }
         const identity = adapter.verify
           ? await adapter.verify(accessToken, connection)
           : await adapter.identify({ access_token: accessToken });

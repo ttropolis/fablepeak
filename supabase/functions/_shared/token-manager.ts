@@ -7,6 +7,7 @@ import { decryptToken, encryptToken } from "./token-crypto.ts";
 
 type Connection = {
   id: string;
+  brand_id?: string;
   platform: string;
   external_id: string;
   meta?: Record<string, unknown> | null;
@@ -53,7 +54,17 @@ export async function freshConnectionToken(
     });
     if (!tokens.access_token) throw new Error("Provider returned no access token.");
 
-    await sbUpdate("social_connections", `id=eq.${encodeURIComponent(conn.id)}`, {
+    // Pinterest exposes many selectable boards through one rotating user
+    // authorization. Keep sibling board rows on the same newly-issued token;
+    // otherwise refreshing one board can strand the others on an old refresh
+    // credential.
+    const authorizationId = conn.meta?.authorization_id;
+    const updateQuery = adapter.sharedAuthorizationAcrossAssets && conn.brand_id && authorizationId
+      ? `brand_id=eq.${encodeURIComponent(conn.brand_id)}` +
+        `&platform=eq.${encodeURIComponent(conn.platform)}` +
+        `&meta->>authorization_id=eq.${encodeURIComponent(String(authorizationId))}`
+      : `id=eq.${encodeURIComponent(conn.id)}`;
+    await sbUpdate("social_connections", updateQuery, {
       access_token: await encryptToken(tokens.access_token),
       refresh_token: await encryptToken(tokens.refresh_token ?? refreshToken),
       token_expires_at: tokens.expires_in
