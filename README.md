@@ -90,9 +90,10 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   verified end to end. Facebook and Instagram still need app-role/test-account
   acceptance tests, then Meta App Review and Live mode before unrelated
   customers can connect.
-- LinkedIn's personal-profile text adapter and X's text adapter are implemented,
-  but their production developer credentials are not configured. X also needs
-  paid API credits. Media publishing for both remains a separate follow-up.
+- LinkedIn's personal-profile adapter supports text and one image; video and
+  Company Page publishing remain deferred. X supports text, images, GIFs and
+  video, but its production credentials are not configured and it requires
+  paid API credits.
 - TikTok is intentionally disabled in both discovery and publishing, even if
   secrets are added, until its mandatory creator-info, consent and final-status
   workflow is implemented and audited.
