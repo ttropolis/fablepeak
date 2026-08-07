@@ -2,7 +2,11 @@
 //   POST {post_id}   — publish one post now (called from the app)
 //   POST {due:true}  — publish everything scheduled and due (called by pg_cron)
 // Refreshes expired OAuth tokens automatically.
-import { ADAPTERS, platformConnectionEnabled } from "../_shared/platforms.ts";
+import {
+  ADAPTERS,
+  platformConnectionEnabled,
+  PublishOutcomeUnknownError,
+} from "../_shared/platforms.ts";
 import { getUser, isMember, sbOne, sbRpc, sbUpdate, sbUpsert } from "../_shared/db.ts";
 import { freshConnectionToken } from "../_shared/token-manager.ts";
 
@@ -90,7 +94,9 @@ async function publishPost(post: any) {
         error: null, published_at: new Date().toISOString() });
       results.push({ platform, status: "published", url: out.remote_url });
     } catch (e) {
-      const msg = String((e as Error).message ?? e).slice(0, 500);
+      const msg = e instanceof PublishOutcomeUnknownError
+        ? INTERRUPTED
+        : String((e as Error).message ?? e).slice(0, 500);
       await mark({ status: "failed", connection_id: conn.id, error: msg });
       results.push({ platform, status: "failed", error: msg });
     }
