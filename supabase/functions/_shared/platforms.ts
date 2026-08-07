@@ -475,7 +475,10 @@ const instagram: PlatformAdapter = {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(createParams),
       }), "instagram container");
-    if (video) await waitForInstagramContainer(container.id, accessToken);
+    // Both image and Reel containers are prepared asynchronously. Publishing
+    // before Meta reports FINISHED intermittently fails with OAuth code 9007
+    // ("Media ID is not available").
+    await waitForInstagramContainer(container.id, accessToken);
     const published = await j(await fetch(
       `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
         method: "POST",
@@ -509,11 +512,11 @@ async function waitForInstagramContainer(containerId: string, accessToken: strin
       "instagram media processing");
     if (status.status_code === "FINISHED") return;
     if (["ERROR", "EXPIRED"].includes(status.status_code)) {
-      throw new Error(`Instagram could not process this video: ${status.status ?? status.status_code}`);
+      throw new Error(`Instagram could not process this media: ${status.status ?? status.status_code}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error("Instagram is still processing this video. Try publishing again shortly.");
+  throw new Error("Instagram is still processing this media. Try publishing again shortly.");
 }
 
 /* ----------------------------------------------------------------- LinkedIn */

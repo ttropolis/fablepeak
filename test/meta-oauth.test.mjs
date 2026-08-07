@@ -73,12 +73,17 @@ test("Instagram persists renewable long-lived tokens and uses its Graph host", a
   assert.doesNotMatch(instagram[1], /graph\.facebook\.com/);
 });
 
-test("Meta publishing distinguishes images from videos and waits for Reels", async () => {
+test("Meta publishing distinguishes images from videos and waits for every Instagram container", async () => {
   const platforms = await read("supabase/functions/_shared/platforms.ts");
   assert.match(platforms, /function mediaKind\(value: string\)/);
   assert.match(platforms, /video \? "videos" : "photos"/);
   assert.match(platforms, /media_type: "REELS", video_url: safeMediaUrl/);
   assert.match(platforms, /await waitForInstagramContainer\(container\.id, accessToken\)/);
+  assert.doesNotMatch(
+    platforms,
+    /if \(video\) await waitForInstagramContainer\(container\.id, accessToken\)/,
+    "Instagram image containers are asynchronous too and must be ready before media_publish",
+  );
   assert.match(platforms, /status\.status_code === "FINISHED"/);
   assert.match(platforms, /fields=permalink/);
   assert.doesNotMatch(platforms, /instagram\.com\/p\/\$\{published\.id\}/);
