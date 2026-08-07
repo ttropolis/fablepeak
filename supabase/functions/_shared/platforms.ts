@@ -148,6 +148,31 @@ function mediaKind(value: string): "image" | "video" {
   return /\.(mp4|mov|m4v|webm)$/.test(path) ? "video" : "image";
 }
 
+const MAX_PROVIDER_MEDIA_BYTES = 50 * 1024 * 1024;
+
+async function loadProviderMedia(value: string, platform: string) {
+  const response = await fetchPublicMedia(value, platform);
+  if (!response.ok) throw new Error(`${platform} could not fetch media (${response.status}).`);
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  if (!contentType.startsWith("image/") && !contentType.startsWith("video/")) {
+    throw new Error(`${platform} needs a direct image or video file URL.`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) throw new Error(`${platform} media source returned an empty file.`);
+  if (bytes.length > MAX_PROVIDER_MEDIA_BYTES) {
+    throw new Error(`${platform} media exceeds FablePeak's 50 MB upload limit.`);
+  }
+  return { bytes, contentType };
+}
+
+function base64Bytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
 /* ------------------------------------------------------------------ YouTube */
 const youtube: PlatformAdapter = {
   id: "youtube",
@@ -232,6 +257,80 @@ const youtube: PlatformAdapter = {
 };
 
 /* ------------------------------------------------------------------------ X */
+const X_MEDIA_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+  "video/mp4", "video/webm", "video/quicktime",
+]);
+
+async function waitForXMedia(mediaId: string, accessToken: string, processing: any) {
+  let info = processing;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const state = info?.state;
+    if (!state || state === "succeeded") return;
+    if (state === "failed") {
+      throw new Error(`X could not process this media: ${info?.error?.message ?? "processing failed"}`);
+    }
+    const seconds = Math.min(Math.max(Number(info?.check_after_secs) || 1, 1), 5);
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1_000));
+    const status = await j(await fetch(
+      `https://api.x.com/2/media/upload?command=STATUS&media_id=${encodeURIComponent(mediaId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }), "x media processing");
+    info = status.data?.processing_info;
+  }
+  throw new Error("X is still processing this media. Try publishing again shortly.");
+}
+
+async function uploadXMedia(mediaUrl: string, accessToken: string): Promise<string> {
+  const { bytes, contentType } = await loadProviderMedia(mediaUrl, "X");
+  if (!X_MEDIA_TYPES.has(contentType)) {
+    throw new Error(`X does not support ${contentType || "this media type"}.`);
+  }
+  const xLimit = contentType === "image/gif" ? 15 * 1024 * 1024
+    : contentType.startsWith("image/") ? 5 * 1024 * 1024
+    : MAX_PROVIDER_MEDIA_BYTES;
+  if (bytes.length > xLimit) {
+    throw new Error(`X ${contentType === "image/gif" ? "GIF" : "image"} exceeds the provider's ${xLimit / 1024 / 1024} MB limit.`);
+  }
+  const headers = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
+  const chunked = contentType === "image/gif" || contentType.startsWith("video/");
+  if (!chunked) {
+    const uploaded = await j(await fetch("https://api.x.com/2/media/upload", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        media: base64Bytes(bytes), media_category: "tweet_image",
+        media_type: contentType, shared: false,
+      }),
+    }), "x media upload");
+    if (!uploaded.data?.id) throw new Error("X media upload returned no media ID.");
+    return String(uploaded.data.id);
+  }
+
+  const initialized = await j(await fetch("https://api.x.com/2/media/upload/initialize", {
+    method: "POST", headers,
+    body: JSON.stringify({
+      media_category: contentType === "image/gif" ? "tweet_gif" : "tweet_video",
+      media_type: contentType, total_bytes: bytes.length, shared: false,
+    }),
+  }), "x media initialize");
+  const mediaId = String(initialized.data?.id ?? "");
+  if (!mediaId) throw new Error("X media initialization returned no media ID.");
+  const chunkSize = 4 * 1024 * 1024;
+  for (let offset = 0, segment = 0; offset < bytes.length; offset += chunkSize, segment++) {
+    await j(await fetch(`https://api.x.com/2/media/upload/${mediaId}/append`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        media: base64Bytes(bytes.subarray(offset, offset + chunkSize)),
+        segment_index: segment,
+      }),
+    }), "x media append");
+  }
+  const finalized = await j(await fetch(`https://api.x.com/2/media/upload/${mediaId}/finalize`, {
+    method: "POST", headers: { Authorization: `Bearer ${accessToken}` },
+  }), "x media finalize");
+  await waitForXMedia(mediaId, accessToken, finalized.data?.processing_info);
+  return mediaId;
+}
+
 const x: PlatformAdapter = {
   id: "x",
   label: "X / Twitter",
@@ -242,7 +341,7 @@ const x: PlatformAdapter = {
   tokenAuth: "basic",           // confidential clients authenticate with Basic
   clientIdEnv: "X_CLIENT_ID",
   clientSecretEnv: "X_CLIENT_SECRET",
-  supportsMedia: false,
+  supportsMedia: true,
 
   async identify(t) {
     const d = await j(await fetch(
@@ -255,13 +354,34 @@ const x: PlatformAdapter = {
     };
   },
 
-  async publish({ text, accessToken }) {
-    const d = await j(await fetch("https://api.x.com/2/tweets", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 280) }),
-    }), "x publish");
-    return { remote_id: d.data.id, remote_url: `https://x.com/i/status/${d.data.id}` };
+  async publish({ text, mediaUrl, accessToken }) {
+    const mediaId = mediaUrl ? await uploadXMedia(mediaUrl, accessToken) : null;
+    let response: Response;
+    try {
+      response = await fetch("https://api.x.com/2/tweets", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text.slice(0, 280),
+          ...(mediaId ? { media: { media_ids: [mediaId] } } : {}),
+        }),
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "X may have accepted this post. Verify the profile before retrying.");
+    }
+    let publishPayload: any;
+    try {
+      publishPayload = await j(response, "x publish");
+    } catch (error) {
+      if (response.ok) throw new PublishOutcomeUnknownError(
+        "X may have accepted this post. Verify the profile before retrying.");
+      throw error;
+    }
+    return {
+      remote_id: publishPayload.data.id,
+      remote_url: `https://x.com/i/status/${publishPayload.data.id}`,
+    };
   },
 };
 
@@ -545,6 +665,8 @@ async function waitForInstagramContainer(containerId: string, accessToken: strin
 }
 
 /* ----------------------------------------------------------------- LinkedIn */
+const LINKEDIN_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif"]);
+
 const linkedin: PlatformAdapter = {
   id: "linkedin",
   label: "LinkedIn",
@@ -555,7 +677,7 @@ const linkedin: PlatformAdapter = {
   tokenAuth: "body",
   clientIdEnv: "LINKEDIN_CLIENT_ID",
   clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
-  supportsMedia: false,
+  supportsMedia: true,
 
   async identify(t) {
     const d = await j(await fetch("https://api.linkedin.com/v2/userinfo",
@@ -563,29 +685,73 @@ const linkedin: PlatformAdapter = {
     return { external_id: d.sub, display_name: d.name ?? "LinkedIn", avatar_url: d.picture };
   },
 
-  async publish({ text, accessToken, connection }) {
+  async publish({ text, mediaUrl, accessToken, connection }) {
     const author = `urn:li:person:${connection.external_id}`;
+    const version = Deno.env.get("LINKEDIN_VERSION") ?? "202601";
+    const linkedInHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "X-Restli-Protocol-Version": "2.0.0",
+      "LinkedIn-Version": version,
+    };
+    let imageUrn: string | null = null;
+    if (mediaUrl) {
+      const { bytes, contentType } = await loadProviderMedia(mediaUrl, "LinkedIn");
+      if (!LINKEDIN_IMAGE_TYPES.has(contentType)) {
+        throw new Error("LinkedIn currently supports image attachments only; remove the video and try again.");
+      }
+      const initialized = await j(await fetch(
+        "https://api.linkedin.com/rest/images?action=initializeUpload", {
+          method: "POST", headers: linkedInHeaders,
+          body: JSON.stringify({ initializeUploadRequest: { owner: author } }),
+        }), "linkedin image initialize");
+      const uploadUrl = String(initialized.value?.uploadUrl ?? "");
+      imageUrn = String(initialized.value?.image ?? "");
+      if (!uploadUrl || !imageUrn) throw new Error("LinkedIn image initialization was incomplete.");
+      const uploadHost = new URL(publicMediaUrl(uploadUrl, "LinkedIn")).hostname.toLowerCase();
+      if (!(uploadHost === "linkedin.com" || uploadHost.endsWith(".linkedin.com") ||
+            uploadHost === "licdn.com" || uploadHost.endsWith(".licdn.com"))) {
+        throw new Error("LinkedIn returned an invalid image upload host.");
+      }
+      const uploaded = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": contentType },
+        body: bytes,
+      });
+      if (!uploaded.ok) {
+        throw new Error(`linkedin image upload: ${uploaded.status} ${(await uploaded.text()).slice(0, 300)}`);
+      }
+    }
     // /rest/posts replaces the legacy /v2/ugcPosts. Both headers are mandatory;
     // LINKEDIN_VERSION sunsets on a ~1-year clock, so keep it configurable.
-    const d = await fetch("https://api.linkedin.com/rest/posts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0",
-        "LinkedIn-Version": Deno.env.get("LINKEDIN_VERSION") ?? "202601",
-      },
-      body: JSON.stringify({
+    let publishResponse: Response;
+    try {
+      publishResponse = await fetch("https://api.linkedin.com/rest/posts", {
+        method: "POST", headers: linkedInHeaders,
+        body: JSON.stringify({
         author,
         commentary: text,
         visibility: "PUBLIC",
         distribution: { feedDistribution: "MAIN_FEED", targetEntities: [], thirdPartyDistributionChannels: [] },
+        ...(imageUrn ? { content: { media: { id: imageUrn } } } : {}),
         lifecycleState: "PUBLISHED",
         isReshareDisabledByAuthor: false,
       }),
-    });
-    if (!d.ok) throw new Error(`linkedin publish: ${d.status} ${(await d.text()).slice(0, 300)}`);
-    const id = d.headers.get("x-restli-id") ?? (await d.json()).id;
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "LinkedIn may have accepted this post. Verify the profile before retrying.");
+    }
+    if (!publishResponse.ok) throw new Error(
+      `linkedin publish: ${publishResponse.status} ${(await publishResponse.text()).slice(0, 300)}`);
+    let id = publishResponse.headers.get("x-restli-id");
+    if (!id) {
+      try { id = (await publishResponse.json()).id; }
+      catch { throw new PublishOutcomeUnknownError(
+        "LinkedIn may have accepted this post. Verify the profile before retrying."); }
+    }
+    if (!id) throw new PublishOutcomeUnknownError(
+      "LinkedIn may have accepted this post. Verify the profile before retrying.");
     return { remote_id: id, remote_url: `https://www.linkedin.com/feed/update/${id}` };
   },
 };

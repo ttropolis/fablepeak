@@ -101,7 +101,7 @@ test("all platform jobs share one token lifecycle module", async () => {
 
   for (const file of ["supabase/functions/publish/index.ts", "supabase/functions/ingest-metrics/index.ts"]) {
     const source = await read(file);
-    assert.match(source, /freshConnectionToken\(conn, env\)/);
+    assert.match(source, /freshConnectionToken\(conn, (?:env|dependencies\.env)\)/);
     assert.doesNotMatch(source, /async function freshToken/);
   }
 });

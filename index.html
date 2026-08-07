@@ -288,7 +288,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.3.0";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -1309,9 +1309,10 @@ function validatePostForm({text,nets,date,time,media_url}){
   const needsMedia = nets.filter(n => ["instagram","tiktok","youtube"].includes(n));
   if(needsMedia.length && !media_url)
     return toast(needsMedia.map(n=>netOf(n).name).join(" and ") + " need an image/video URL");
-  const textOnly = media_url && nets.filter(n => ["x","linkedin"].includes(n));
-  if(textOnly.length)
-    return toast(textOnly.map(n=>netOf(n).name).join(" and ") + " currently support text-only posts — remove the media or those networks");
+  const linkedInVideo = media_url && nets.includes("linkedin") &&
+    /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(media_url);
+  if(linkedInVideo)
+    return toast("LinkedIn currently supports image attachments only — remove the video or LinkedIn");
   if(nets.includes("youtube") && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(new URL(media_url).hostname))
     return toast("YouTube needs a direct video file URL, not a YouTube watch link");
   return true;
@@ -1347,11 +1348,14 @@ async function publishNow(id){
     const results = await store.publishNow(id);
     const ok = results.filter(r=>r.status==="published");
     const bad = results.filter(r=>r.status!=="published");
+    const failures = bad.map(r=>
+      `${netOf(r.platform).name}: ${r.error||r.status}`
+    ).join(" | ");
     if(ok.length) p.status = "published";
     save(); closeModal(); render();
     toast(ok.length
-      ? `Published to ${ok.map(r=>netOf(r.platform).name).join(", ")}${bad.length?` · ${bad.length} failed`:""}`
-      : `Failed: ${bad.map(r=>r.error||r.status).join(" | ").slice(0,120)}`);
+      ? `Published to ${ok.map(r=>netOf(r.platform).name).join(", ")}${failures?` · Failed — ${failures}`:""}`.slice(0,240)
+      : `Failed: ${failures}`.slice(0,240));
     if(bad.length) console.warn("FablePeak publish issues:", bad);
   }catch(e){ toast(e.message); }
 }
@@ -1635,10 +1639,10 @@ const liveMode = () => store.name === "cloud" && !!store.user;
 /* Honest, user-facing constraints per platform (from each platform's own docs). */
 const PLATFORM_NOTES = {
   youtube:   "Uploads a video (needs a video URL). New API projects publish as private until Google audits them.",
-  x:         "Paid API. The current adapter publishes text; media upload support is still pending.",
+  x:         "Paid API. Publishes text, images, GIFs and video after uploading the attachment to X.",
   instagram: "Business or Creator profiles connect directly. No Facebook Page is required. Every post needs media.",
   facebook:  "Posts text, images or video to a Page you administer.",
-  linkedin:  "Personal-profile text posts are implemented. Media and Company Page publishing are separate follow-ups.",
+  linkedin:  "Publishes text or one image to a personal profile. Video and Company Page publishing remain separate follow-ups.",
   tiktok:    "Disabled until FablePeak implements TikTok's required creator controls, consent flow and status tracking.",
   pinterest: "Planned. OAuth, board selection and Pin publishing are not implemented yet.",
   gbp:       "Planned. Google API approval, location selection and Business Profile post publishing are not implemented yet.",

@@ -25,6 +25,23 @@ docs win.
 that publish real, publicly-visible posts, for free, with zero review, today.
 That's the cleanest proof the whole pipeline works.
 
+### Publishing media matrix
+
+| Platform | Text only | Image | GIF | Video | Current constraint |
+|---|---:|---:|---:|---:|---|
+| Facebook Page | ✅ | ✅ | ✅ | ✅ | Publishes to the selected administered Page. |
+| Instagram | ❌ | ✅ | ✅ | ✅ Reels | Requires a Business or Creator profile and public media URL. |
+| YouTube | ❌ | ❌ | ❌ | ✅ | Uploads a direct video file; new projects are private until audited. |
+| X / Twitter | ✅ | ✅ | ✅ | ✅ | Requires paid API credits and production credentials. |
+| LinkedIn profile | ✅ | ✅ | ✅ | ❌ | One image per post; video is rejected explicitly. |
+| TikTok | ❌ | ❌ | ❌ | Disabled | Compliance workflow is not complete. |
+| Pinterest / Google Business | Disabled | Disabled | Disabled | Disabled | Adapters are not implemented. |
+
+FablePeak fetches X and LinkedIn attachments from the supplied public HTTPS
+URL, uploads them to the provider, and only then creates the post. An attachment
+upload failure is recorded for that target and does not silently become a
+text-only post.
+
 ### About X / Twitter — read before enabling
 X removed its free tier for new developers (Feb 2026). It is now pay-per-use:
 roughly **$0.015 per post, $0.20 per post containing a link**, plus per-read
@@ -183,6 +200,11 @@ GOOGLE_CLIENT_SECRET=<...>
    using OpenID Connect**. Both are self-serve — no review.
 3. **Auth** tab → add the callback URL above to **Authorized redirect URLs**.
 4. Copy client ID and secret.
+
+The current adapter publishes text-only posts or one JPG, PNG or GIF image.
+It initializes the Images API upload, sends the image bytes, then attaches the
+returned Image URN to the Posts API request. Video is rejected before any
+LinkedIn post is created.
 
 ```
 LINKEDIN_CLIENT_ID=<...>

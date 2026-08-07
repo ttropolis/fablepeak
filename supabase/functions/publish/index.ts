@@ -19,22 +19,47 @@ const CORS = {
 };
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, "Content-Type": "application/json" } });
-const INTERRUPTED = "Delivery was interrupted. Verify the platform before retrying.";
+export const INTERRUPTED = "Delivery was interrupted. Verify the platform before retrying.";
 
-async function publishPost(post: any) {
+export interface PublishDependencies {
+  adapters: typeof ADAPTERS;
+  platformConnectionEnabled: typeof platformConnectionEnabled;
+  env: (key: string) => string | undefined;
+  sbOne: typeof sbOne;
+  sbUpdate: typeof sbUpdate;
+  sbUpsert: typeof sbUpsert;
+  freshConnectionToken: typeof freshConnectionToken;
+  now: () => string;
+}
+
+export async function publishPost(
+  post: any,
+  overrides: Partial<PublishDependencies> = {},
+) {
+  const dependencies: PublishDependencies = {
+    adapters: ADAPTERS,
+    platformConnectionEnabled,
+    env,
+    sbOne,
+    sbUpdate,
+    sbUpsert,
+    freshConnectionToken,
+    now: () => new Date().toISOString(),
+    ...overrides,
+  };
   const networks: string[] = Array.isArray(post.networks) ? post.networks : [];
   const results: any[] = [];
 
   for (const platform of networks) {
-    const adapter = ADAPTERS[platform];
-    const mark = (patch: any) => sbUpsert("post_targets", {
+    const adapter = dependencies.adapters[platform];
+    const mark = (patch: any) => dependencies.sbUpsert("post_targets", {
       post_id: post.id, brand_id: post.brand_id, platform,
-      updated_at: new Date().toISOString(), ...patch,
+      updated_at: dependencies.now(), ...patch,
     }, "post_id,platform");
 
     // A stale claim may be retried after an Edge Function interruption. Never
     // send again to a platform whose successful delivery was already recorded.
-    const previous = await sbOne("post_targets",
+    const previous = await dependencies.sbOne("post_targets",
       `select=status,remote_id,remote_url,error&post_id=eq.${encodeURIComponent(post.id)}` +
       `&platform=eq.${encodeURIComponent(platform)}`);
     if (previous?.status === "published") {
@@ -49,19 +74,20 @@ async function publishPost(post: any) {
       continue;
     }
 
-    if (!adapter || !platformConnectionEnabled(adapter) || !env(adapter.clientIdEnv)) {
+    if (!adapter || !dependencies.platformConnectionEnabled(adapter) ||
+        !dependencies.env(adapter.clientIdEnv)) {
       await mark({ status: "skipped", error: "Platform not configured on the server" });
       results.push({ platform, status: "skipped", error: "Platform not configured on the server" });
       continue;
     }
 
-    let conn = await sbOne("social_connections",
+    let conn = await dependencies.sbOne("social_connections",
       `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
       `&platform=eq.${platform}&is_default=eq.true`);
     // Legacy rows created before explicit account selection may not have a
     // default yet. Only that migration case may fall back to the oldest active
     // connection; never bypass an expired/error selected account.
-    if (!conn) conn = await sbOne("social_connections",
+    if (!conn) conn = await dependencies.sbOne("social_connections",
       `select=*&brand_id=eq.${encodeURIComponent(post.brand_id)}` +
       `&platform=eq.${platform}&status=eq.active&order=connected_at.asc`);
     if (!conn) {
@@ -84,14 +110,14 @@ async function publishPost(post: any) {
 
     await mark({ status: "publishing", connection_id: conn.id });
     try {
-      const token = await freshConnectionToken(conn, env);
+      const token = await dependencies.freshConnectionToken(conn, dependencies.env);
       const out = await adapter.publish({
         text: post.text, mediaUrl: post.media_url ?? null,
         accessToken: token, connection: conn,
       });
       await mark({ status: "published", connection_id: conn.id,
         remote_id: out.remote_id, remote_url: out.remote_url ?? null,
-        error: null, published_at: new Date().toISOString() });
+        error: null, published_at: dependencies.now() });
       results.push({ platform, status: "published", url: out.remote_url });
     } catch (e) {
       const msg = e instanceof PublishOutcomeUnknownError
@@ -103,10 +129,10 @@ async function publishPost(post: any) {
   }
 
   const anyOk = results.some((r) => r.status === "published");
-  await sbUpdate("posts", `id=eq.${encodeURIComponent(post.id)}`, {
+  await dependencies.sbUpdate("posts", `id=eq.${encodeURIComponent(post.id)}`, {
     status: anyOk ? "published" : "draft",
     publish_claimed_at: null,
-    updated_at: new Date().toISOString(),
+    updated_at: dependencies.now(),
   });
 
   return results;
@@ -139,7 +165,7 @@ async function publishClaimedPost(post: any) {
   }
 }
 
-Deno.serve(async (req) => {
+if (import.meta.main) Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 

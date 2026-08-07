@@ -218,6 +218,16 @@ test("post validation rejects watch pages and insecure media sources", async () 
   assert.equal(context.validatePostForm({...base, media_url:"http://cdn.example/video.mp4"}), undefined);
   assert.match(context.message, /https:\/\//);
   assert.equal(context.validatePostForm({...base, media_url:"https://cdn.example/video.mp4"}), true);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["x"], media_url:"https://cdn.example/launch.png",
+  }), true);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["linkedin"], media_url:"https://cdn.example/launch.png",
+  }), true);
+  assert.equal(context.validatePostForm({
+    ...base, nets:["linkedin"], media_url:"https://cdn.example/launch.mp4",
+  }), undefined);
+  assert.match(context.message, /image attachments only/);
 });
 
 test("publish now persists the visible modal values before calling the backend", async () => {

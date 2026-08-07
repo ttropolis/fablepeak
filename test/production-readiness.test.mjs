@@ -204,21 +204,31 @@ test("incomplete provider workflows cannot be enabled by secrets alone", async (
   assert.match(tiktok[1], /productionEnabled: false/);
   assert.match(platforms, /platformConnectionEnabled\(a\)/);
   assert.match(start, /!platformConnectionEnabled\(adapter\)/);
-  assert.match(publish, /!platformConnectionEnabled\(adapter\)/);
+  assert.match(publish, /!dependencies\.platformConnectionEnabled\(adapter\)/);
 });
 
-test("text-only adapters never silently discard an attachment", async () => {
+test("media-capable adapters never silently discard an attachment", async () => {
   const html = await read("index.html");
   const platforms = await read("supabase/functions/_shared/platforms.ts");
   const publish = await read("supabase/functions/publish/index.ts");
   const x = platforms.match(/const x: PlatformAdapter = \{([\s\S]*?)\n\};\n\n\/\* ---------------------------------------------------------------- Meta base/);
   const linkedin = platforms.match(/const linkedin: PlatformAdapter = \{([\s\S]*?)\n\};\n\n\/\* -------------------------------------------------------------------- TikTok/);
   assert.ok(x && linkedin);
-  assert.match(x[1], /supportsMedia: false/);
-  assert.match(linkedin[1], /supportsMedia: false/);
-  assert.match(html, /currently support text-only posts — remove the media or those networks/);
+  assert.match(x[1], /supportsMedia: true/);
+  assert.match(x[1], /media_ids: \[mediaId\]/);
+  assert.match(linkedin[1], /supportsMedia: true/);
+  assert.match(linkedin[1], /content: \{ media: \{ id: imageUrn \} \}/);
+  assert.match(linkedin[1], /currently supports image attachments only/);
+  assert.match(html, /LinkedIn currently supports image attachments only/);
   assert.match(publish, /post\.media_url && adapter\.supportsMedia === false/);
   assert.match(publish, /media was not sent/);
+});
+
+test("mixed-network failures identify the failed platform and reason", async () => {
+  const html = await read("index.html");
+  assert.match(html, /const failures = bad\.map\(r=>/);
+  assert.match(html, /\$\{netOf\(r\.platform\)\.name\}: \$\{r\.error\|\|r\.status\}/);
+  assert.doesNotMatch(html, /\$\{bad\.length\} failed/);
 });
 
 test("ambiguous provider outcomes require verification before retrying", async () => {

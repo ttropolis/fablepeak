@@ -6,7 +6,7 @@
     "check": "npm test && npm run check:functions",
     "check:functions": "npx --yes deno@2.9.4 check --frozen --node-modules-dir=auto supabase/functions/oauth-start/index.ts supabase/functions/oauth-callback/index.ts supabase/functions/connection-health/index.ts supabase/functions/publish/index.ts supabase/functions/ingest-metrics/index.ts supabase/functions/delete-account/index.ts",
     "test": "node --test && npm run test:functions",
-    "test:functions": "npx --yes deno@2.9.4 test --frozen --node-modules-dir=auto supabase/functions/_shared/platforms.deno.ts",
+    "test:functions": "npx --yes deno@2.9.4 test --allow-env=LINKEDIN_VERSION,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,APP_TIMEZONE,APP_ORIGIN --frozen --node-modules-dir=auto supabase/functions/_shared/platforms.deno.ts",
     "smoke:production": "node scripts/production-smoke.mjs"
   }
 }
