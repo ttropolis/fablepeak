@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   smoke:
@@ -18,3 +19,4 @@ jobs:
         with:
           node-version: 22
       - run: npm run smoke:production
+      - run: npm run smoke:cron

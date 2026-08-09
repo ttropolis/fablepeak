@@ -1,4 +1,8 @@
-# FablePeak general customer onboarding gate
+# FablePeak invite-only external beta gate
+
+Current decision: FablePeak operates internally while being hardened for a
+small invite-only external beta. Facebook, Instagram and YouTube are the frozen
+production provider scope. Do not enable another provider during this gate.
 
 This is the release checklist for moving from internal/test accounts to the
 same customer model used by established social-management platforms. Customers
@@ -8,13 +12,15 @@ and return to a verified connection. They never create developer credentials.
 ## 1. Deploy the implemented connection foundation
 
 - Apply all Supabase migrations, including account selection, connection
-  health, workspace-scoped media, deletion, and stale publish recovery
-  (`20260802120000` through `20260805090000`).
+  health, workspace-scoped media, deletion, proactive token maintenance,
+  delivery recovery and scheduled-job health (`20260802120000` through
+  `20260809130000`).
 - Add `SOCIAL_TOKEN_ENCRYPTION_KEY` and preserve it in the project password
   manager. New provider tokens are AES-GCM encrypted; legacy tokens migrate on
   refresh/reconnect.
-- Deploy `oauth-start`, `oauth-callback`, `connection-health`, `publish`, and
-  `ingest-metrics` and `delete-account` from the same reviewed commit.
+- Deploy `oauth-start`, `oauth-callback`, `connection-health`, `publish`,
+  `ingest-metrics`, `maintain-connections`, `operations-health`, and
+  `delete-account` from the same reviewed commit.
 - Confirm `APP_ORIGIN=https://fablepeak.com` and the exact OAuth callback:
   `https://lghsvxwuaebvotutyjtt.supabase.co/functions/v1/oauth-callback`.
 - Verify that the public account view returns identity/status/default selection
@@ -34,8 +40,12 @@ supabase functions deploy oauth-callback
 supabase functions deploy connection-health
 supabase functions deploy publish
 supabase functions deploy ingest-metrics
+supabase functions deploy maintain-connections
+supabase functions deploy operations-health
 supabase functions deploy delete-account
 npm run smoke:production
+# Optional local check; scheduled CI uses GitHub OIDC instead.
+FABLEPEAK_OPERATIONS_HEALTH_SECRET='<secret>' npm run smoke:cron
 ```
 
 The repository’s `supabase/config.toml` keeps gateway JWT verification disabled
@@ -113,7 +123,8 @@ and [OAuth verification overview](https://support.google.com/cloud/answer/134630
 ## 4. Customer acceptance matrix
 
 Do not open general onboarding until all rows pass with accounts unrelated to
-the FablePeak owners/developers:
+the FablePeak owners/developers. Record dated evidence and the tester/account
+type in [the beta evidence record](docs/acceptance/EXTERNAL_BETA_EVIDENCE.md):
 
 | Scenario | Required evidence |
 |---|---|

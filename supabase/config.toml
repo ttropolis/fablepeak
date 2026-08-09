@@ -262,6 +262,12 @@ verify_jwt = false
 [functions.ingest-metrics]
 verify_jwt = false
 
+[functions.maintain-connections]
+verify_jwt = false
+
+[functions.operations-health]
+verify_jwt = false
+
 [functions.delete-account]
 verify_jwt = false
 

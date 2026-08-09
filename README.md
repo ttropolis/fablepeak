@@ -32,7 +32,7 @@ and backend rather than creating a second product.
 
 | View | What it does |
 |------|--------------|
-| **Planner** | Monthly content calendar. Compose posts per network, upload media (50 MB) or use a direct URL, and choose date/time/status. Cloud schedules publish server-side; local/demo schedules simulate publishing in the browser. |
+| **Planner** | Monthly content calendar. Compose posts per network, upload media (50 MB) or use a direct URL, and choose date/time/status. Cloud schedules publish server-side, retain per-network delivery outcomes, and safely retry definitive failures; local/demo schedules simulate publishing in the browser. |
 | **Analytics** | Real follower totals and day-over-day impression/engagement changes when platform data exists, with a clearly-labelled simulated fallback for new workspaces. |
 | **Inbox** | Unified messages across networks. Reply, resolve, filter. |
 | **SmartLinks** | Link-in-bio page builder with live phone preview and click tracking. |
@@ -45,7 +45,7 @@ and backend rather than creating a second product.
 - **Data** lives in your browser's localStorage, auto-saved on every change. Different browser/device = separate data.
 - **Backups:** Settings → *Export backup* (JSON file). *Import backup* restores. Export before clearing browser data.
 - **Verify an update:** run `npm run check`. It runs browser/unit tests plus Deno type-checking for every Edge Function; CI also rebuilds the database from migrations.
-- **Deploy an update:** merge the reviewed change into `main` and push it. GitHub Pages redeploys fablepeak.com automatically; run `npm run smoke:production` once Pages has updated.
+- **Deploy an update:** apply migrations and deploy the reviewed Edge Functions before merging frontend changes that depend on them. GitHub Pages redeploys `main` automatically; run `npm run smoke:production` and authenticated `npm run smoke:cron` once production has updated.
 - **Rebuild locally:** with the local Supabase database running, `supabase db reset --local --no-seed` replays the complete schema from the first migration onward; it does not require an existing production database or seed file.
 - **Start over:** Settings → *Reset to demo*.
 
@@ -84,6 +84,13 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   100% local mode. Schema lives in `supabase/schema.sql`.
 
 ## Current limits
+
+- FablePeak is an internal tool being hardened for a small invite-only external
+  beta. Provider expansion is frozen: production scope remains Facebook,
+  Instagram and YouTube until reliability monitoring, controlled Meta
+  acceptance and the unrelated-customer acceptance matrix pass.
+  The current technical and human gates are tracked in
+  [the external-beta evidence record](docs/acceptance/EXTERNAL_BETA_EVIDENCE.md).
 
 - Production OAuth discovery currently exposes YouTube, Facebook and direct
   Instagram, and all three have their required server secrets. YouTube has been

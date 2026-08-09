@@ -24,12 +24,12 @@ test("signed-in cloud mode never marks scheduled posts published locally", async
 test("Edge Function claims posts before publishing", async () => {
   const source = await read("supabase/functions/publish/index.ts");
   assert.match(source, /sbRpc\("claim_due_posts"/);
-  assert.match(source, /sbRpc\("claim_post_for_publish"/);
+  assert.match(source, /"claim_post_for_retry"\s*:\s*"claim_post_for_publish"/);
   assert.doesNotMatch(source, /new Date\(`\$\{p\.date\}/);
   assert.match(source, /APP_TIMEZONE.*Australia\/Perth/);
   assert.match(source, /publishClaimedPost/);
   assert.match(source, /status=eq\.publishing/);
-  assert.match(source, /status: "draft"/);
+  assert.match(source, /retryPending \? "scheduled"[\s\S]*?allPublished \? "published" : "failed"/);
   assert.match(source, /previous\?\.status === "published"/,
     "a recovered claim must not repeat a delivery already recorded as successful");
   assert.match(source, /previous\?\.status === "publishing"/,
@@ -67,6 +67,75 @@ test("stale publishing claims become visible and manually retryable", async () =
   assert.match(migration, /Delivery was interrupted/i);
   assert.match(migration, /for update skip locked/i);
   assert.match(migration, /grant execute[^;]+to service_role/i);
+});
+
+test("delivery recovery distinguishes safe retries from unknown outcomes", async () => {
+  const migration = await read(
+    "supabase/migrations/20260809110000_delivery_recovery.sql",
+  );
+  assert.match(migration,
+    /status in \('draft', 'scheduled', 'publishing', 'published', 'failed'\)/);
+  assert.match(migration, /failure_kind[\s\S]*?'retryable'[\s\S]*?'permanent'[\s\S]*?'unknown'/);
+  assert.match(migration, /next_retry_at/);
+  assert.match(migration, /attempts < 3/);
+  assert.match(migration, /failure_kind = 'retryable'/);
+  assert.match(migration, /next_retry_at <= now\(\)/);
+  assert.match(migration, /failure_kind = 'unknown'/);
+  assert.match(migration, /create or replace function public\.claim_post_for_retry/);
+  assert.match(migration, /coalesce\(t\.failure_kind, 'permanent'\) <> 'unknown'/,
+    "manual retry must not resend a target with an ambiguous provider outcome");
+});
+
+test("authenticated delivery retries use the dedicated safe-retry claim", async () => {
+  const source = await read("supabase/functions/publish/index.ts");
+  assert.match(source, /body\.retry\s*\?\s*"claim_post_for_retry"\s*:\s*"claim_post_for_publish"/);
+  assert.match(source, /No retryable delivery targets are available/);
+});
+
+test("delivery panel makes retryable and ambiguous target outcomes actionable", async () => {
+  const html = await read("index.html");
+  const fn = html.match(/(function deliveryPanel\(p\)\{[\s\S]*?\n\})\nfunction postVisibleStatus/);
+  assert.ok(fn, "deliveryPanel should exist beside the post modal interface");
+  const context = {
+    esc: value => String(value),
+    netOf: id => ({ name: id === "x" ? "X / Twitter" : id }),
+    retryLabel: target => target.failure_kind,
+  };
+  vm.runInNewContext(fn[1], context);
+
+  const retryable = context.deliveryPanel({ id:"p1", targets:[{
+    platform:"x", status:"failed", failure_kind:"retryable", attempts:1,
+    next_retry_at:"2026-08-09T00:05:00.000Z", error:"503 unavailable",
+  }]});
+  assert.match(retryable, /X \/ Twitter/);
+  assert.match(retryable, /Automatic retry scheduled/);
+  assert.match(retryable, /retryPost\('p1'\)/);
+
+  const unknown = context.deliveryPanel({ id:"p2", targets:[{
+    platform:"x", status:"failed", failure_kind:"unknown", attempts:1,
+    error:"Delivery was interrupted",
+  }]});
+  assert.match(unknown, /Verify on X \/ Twitter before doing anything else/);
+  assert.doesNotMatch(unknown, /retryPost\('p2'\)/);
+});
+
+test("mixed permanent delivery failures remain visible in planner status", async () => {
+  const html = await read("index.html");
+  const visible = html.match(
+    /(function postVisibleStatus\(p\)\{[\s\S]*?\n\})\nfunction postStatusFromResults/,
+  );
+  const aggregate = html.match(
+    /(function postStatusFromResults\(results\)\{[\s\S]*?\n\})\nfunction openPostModal/,
+  );
+  assert.ok(visible && aggregate, "delivery status helpers should be centrally defined");
+  const context = {};
+  vm.runInNewContext(`${visible[1]}\n${aggregate[1]}`, context);
+  const mixed = [
+    { status:"published", platform:"facebook" },
+    { status:"failed", platform:"instagram", failure_kind:"permanent" },
+  ];
+  assert.equal(context.postStatusFromResults(mixed), "failed");
+  assert.equal(context.postVisibleStatus({ status:"published", targets:mixed }), "failed");
 });
 
 test("connected-account view can read protected rows without exposing tokens", async () => {
@@ -109,7 +178,7 @@ test("account refresh rerenders every view that consumes connection state", asyn
 test("cloud data rejects a stale preferred brand before loading accounts", async () => {
   const html = await read("index.html");
   const method = html.match(
-    /_rowsToDb\(brands, posts, inbox\)\{([\s\S]*?)\n  \},\n  _dbToRows/,
+    /_rowsToDb\(brands, posts, inbox, targets=\[\]\)\{([\s\S]*?)\n  \},\n  _dbToRows/,
   );
   assert.ok(method, "RemoteAdapter._rowsToDb should exist");
   const context = {
@@ -117,7 +186,7 @@ test("cloud data rejects a stale preferred brand before loading accounts", async
   };
   vm.runInNewContext(
     `result = ({ _rowsToDb(brands, posts, inbox) {${method[1]}\n} })` +
-      `._rowsToDb([{id:"brand-1",name:"SCH",seed:1}], [], []);`,
+    `._rowsToDb([{id:"brand-1",name:"SCH",seed:1}], [], [], []);`,
     context,
   );
   assert.equal(context.result.activeBrand, "brand-1");
@@ -243,7 +312,7 @@ test("post validation rejects watch pages and insecure media sources", async () 
 
 test("publish now persists the visible modal values before calling the backend", async () => {
   const html = await read("index.html");
-  const fn = html.match(/(async function publishNow\(id\)\{[\s\S]*?\n\})\nfunction deletePost/);
+  const fn = html.match(/(async function publishNow\(id\)\{[\s\S]*?\n\})\nasync function refreshPostTargets/);
   assert.ok(fn, "publishNow should exist");
   const post = {id:"post-1", text:"Old text", networks:["youtube"], status:"draft"};
   const order = [];
@@ -265,6 +334,8 @@ test("publish now persists the visible modal values before calling the backend",
       assert.equal(post.text, "Updated text");
       return [];
     }},
+    postStatusFromResults: () => "failed",
+    refreshPostTargets: async () => {},
     save: () => { order.push("save"); },
     closeModal: () => {},
     render: () => {},
