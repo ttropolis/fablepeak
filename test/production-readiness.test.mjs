@@ -127,6 +127,59 @@ test("Edge Function gateway settings preserve callback and cron authentication",
   }
 });
 
+test("proactive connection maintenance is deployed and scheduled independently of metrics", async () => {
+  const config = await read("supabase/config.toml");
+  const pkg = JSON.parse(await read("package.json"));
+  const migration = await read(
+    "supabase/migrations/20260809100000_proactive_connection_maintenance.sql",
+  );
+  assert.match(config, /\[functions\.maintain-connections\]\nverify_jwt = false/);
+  assert.match(pkg.scripts["check:functions"], /maintain-connections\/index\.ts/);
+  assert.match(pkg.scripts["test:functions"], /token-manager\.deno\.ts/);
+  assert.match(pkg.scripts["test:functions"], /maintain-connections\/index\.deno\.ts/);
+  assert.match(migration, /fablepeak-maintain-connections/);
+  assert.match(migration, /\/functions\/v1\/maintain-connections/);
+  assert.match(migration, /17 \* \* \* \*/,
+    "renewal should run hourly so provider expiry is not tied to the daily metrics job");
+});
+
+test("every scheduled path records a durable terminal run", async () => {
+  const migration = await read(
+    "supabase/migrations/20260809120000_scheduled_job_health.sql",
+  );
+  assert.match(migration, /create table if not exists public\.scheduled_job_runs/);
+  assert.match(migration, /status in \('running', 'succeeded', 'failed'\)/);
+  assert.match(migration, /alter table public\.scheduled_job_runs enable row level security/);
+  for (const [file, job] of [
+    ["supabase/functions/publish/index.ts", "publish"],
+    ["supabase/functions/ingest-metrics/index.ts", "metrics"],
+    ["supabase/functions/maintain-connections/index.ts", "connections"],
+  ]) {
+    const source = await read(file);
+    assert.match(source, new RegExp(`(?:monitorScheduledJob|dependencies\\.monitor)\\(\"${job}\"`),
+      `${job} must be monitored`);
+  }
+});
+
+test("scheduled production smoke alerts on authenticated cron health", async () => {
+  const config = await read("supabase/config.toml");
+  const pkg = JSON.parse(await read("package.json"));
+  const workflow = await read(".github/workflows/production-smoke.yml");
+  const smoke = await read("scripts/cron-health-smoke.mjs");
+  assert.match(config, /\[functions\.operations-health\]\nverify_jwt = false/);
+  assert.match(pkg.scripts["check:functions"], /operations-health\/index\.ts/);
+  assert.match(pkg.scripts["test:functions"], /operations-health\/index\.deno\.ts/);
+  assert.equal(pkg.scripts["smoke:cron"], "node scripts/cron-health-smoke.mjs");
+  assert.match(workflow, /id-token:\s*write/);
+  assert.match(workflow, /npm run smoke:cron/);
+  assert.match(smoke, /\/functions\/v1\/operations-health/);
+  assert.match(smoke, /x-cron-secret/);
+  assert.match(smoke, /ACTIONS_ID_TOKEN_REQUEST_URL/);
+  assert.match(smoke, /audience.*fablepeak-operations/);
+  assert.match(smoke, /process\.env\.CI/,
+    "CI must fail rather than silently skip when its monitoring secret is absent");
+});
+
 test("Edge Function mutation endpoints reject unsupported HTTP methods", async () => {
   for (const fn of [
     "oauth-start", "connection-health", "publish", "ingest-metrics", "delete-account",
@@ -179,6 +232,22 @@ test("the installable phone experience has launch shortcuts and a mobile planner
     "phone auth screens should not summon the software keyboard automatically");
 });
 
+test("core mobile workflows expose live feedback and keyboard-operable controls", async () => {
+  const html = await read("index.html");
+  assert.match(html, /id="toast"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(html, /id="modalBody"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(html, /function handleModalKeydown\(event\)/);
+  assert.match(html, /event\.key==="Escape"/);
+  assert.match(html, /event\.key!=="Tab"/);
+  assert.match(html, /previousModalFocus\?\.focus/);
+  assert.match(html, /<button type="button" class="post \$\{visibleStatus\}"/);
+  assert.doesNotMatch(html, /<div class="\$\{cls\}" onclick="openPostModal/);
+  assert.match(html, /<button type="button" class="card msg/);
+  assert.match(html, /<small class="netreason">Not connected<\/small>/,
+    "disabled network explanations must be visible without hover");
+  assert.match(html, /:focus-visible/);
+});
+
 test("live customer connections show an honest status for every planned platform", async () => {
   const html = await read("index.html");
   assert.doesNotMatch(html, /LAUNCH_PLATFORMS/);
@@ -205,6 +274,20 @@ test("incomplete provider workflows cannot be enabled by secrets alone", async (
   assert.match(platforms, /platformConnectionEnabled\(a\)/);
   assert.match(start, /!platformConnectionEnabled\(adapter\)/);
   assert.match(publish, /!dependencies\.platformConnectionEnabled\(adapter\)/);
+});
+
+test("provider expansion remains frozen for the internal-first beta milestone", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const decision = await read("docs/adr/0001-internal-first-external-beta-readiness.md");
+  for (const name of ["x", "linkedin"]) {
+    const adapter = platforms.match(
+      new RegExp(`const ${name}: PlatformAdapter = \\{([\\s\\S]*?)\\n\\};\\n\\n/\\*`),
+    );
+    assert.ok(adapter, `${name} adapter should exist`);
+    assert.match(adapter[1], /productionEnabled: false/,
+      `${name} must require an explicit post-milestone code change`);
+  }
+  assert.match(decision, /Production provider scope is frozen to Facebook, Instagram and YouTube/);
 });
 
 test("Pinterest requires explicit board selection and remains production-gated", async () => {
@@ -237,7 +320,8 @@ test("Pinterest requires explicit board selection and remains production-gated",
   assert.match(publish, /!conn && !adapter\.requiresExplicitSelection/);
   const tokenManager = await read("supabase/functions/_shared/token-manager.ts");
   assert.match(tokenManager,
-    /adapter\.sharedAuthorizationAcrossAssets && conn\.brand_id && authorizationId/);
+    /connectionUpdateQuery\(conn, !!adapter\?\.sharedAuthorizationAcrossAssets\)/);
+  assert.match(tokenManager, /shared && conn\.brand_id && authorizationId/);
   assert.match(tokenManager, /meta->>authorization_id=eq\./);
   const health = await read("supabase/functions/connection-health/index.ts");
   assert.match(health, /const sharedAccessTokens = new Map<string, string>\(\)/);

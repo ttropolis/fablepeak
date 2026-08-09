@@ -24,11 +24,12 @@
   :root{
     --bg:#f4f6f9; --panel:#ffffff; --ink:#182b3a; --muted:#6b7c8d;
     --brand:#1c3d5a; --accent:#22c1dc; --accent2:#7ee081; --danger:#e05a5a;
-    --line:#e3e9ef; --chip-draft:#f0ad4e; --chip-sched:#22c1dc; --chip-pub:#5cb87a;
+    --line:#e3e9ef; --chip-draft:#f0ad4e; --chip-sched:#22c1dc; --chip-pub:#5cb87a; --chip-fail:#d95c5c;
     --radius:12px; --shadow:0 1px 3px rgba(24,43,58,.08);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  :focus-visible{outline:3px solid #0b7890;outline-offset:2px}
   body{background:var(--bg);color:var(--ink);display:flex;min-height:100vh;font-size:14px}
 
   /* ---------- sidebar ---------- */
@@ -70,18 +71,19 @@
   .calhead h2{font-size:17px}
   .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
   .dow{font-size:11px;font-weight:700;color:var(--muted);text-align:center;text-transform:uppercase;padding:4px 0}
-  .day{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:96px;min-width:0;padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:4px;transition:border-color .15s}
+  .day{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:96px;min-width:0;padding:6px;display:flex;flex-direction:column;gap:4px;transition:border-color .15s}
   .day:hover{border-color:var(--accent)}
   .day.other{opacity:.42}
   .day.today{border:2px solid var(--accent)}
   .day.dragover{background:#e7f8fb;border-color:var(--accent)}
-  .dnum{font-size:12px;font-weight:600;color:var(--muted)}
-  .post{font-size:11px;padding:3px 6px;border-radius:6px;color:#fff;cursor:grab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:4px;align-items:center}
+  .dnum{font-size:12px;font-weight:600;color:var(--muted);border:0;background:transparent;text-align:left;cursor:pointer}
+  .post{font-size:11px;padding:3px 6px;border:0;border-radius:6px;color:#fff;cursor:grab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:4px;align-items:center;width:100%;text-align:left}
   .post .nets{font-size:9px;opacity:.9}
   .post.draft{background:var(--chip-draft)}
   .post.scheduled{background:var(--chip-sched)}
   .post.publishing{background:#2f91b5}
   .post.published{background:var(--chip-pub)}
+  .post.failed{background:var(--chip-fail)}
   .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
 
@@ -90,9 +92,15 @@
   .overlay.open{display:flex}
   .modal{background:#fff;border-radius:14px;width:520px;max-width:100%;max-height:92vh;overflow-y:auto;padding:22px}
   .modal h3{margin-bottom:4px}
+  .delivery-panel{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;background:#f8fafc}
+  .delivery-panel h4{font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .delivery-row{display:grid;grid-template-columns:120px 1fr;gap:4px 8px;padding:7px 0;border-top:1px solid var(--line);font-size:12px}
+  .delivery-row:first-of-type{border-top:0}.delivery-row small{grid-column:2;color:var(--danger)}
+  .delivery-panel button{margin-top:8px}
   .netpick{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .netpick label{display:flex;align-items:center;gap:5px;border:1px solid var(--line);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13px}
   .netpick label.on{background:#e7f8fb;border-color:var(--accent)}
+  .netreason{display:block;color:#8b3f3f;font-size:10px;margin-left:3px}
   .fieldrow{display:flex;gap:10px;flex-wrap:wrap}
   .modalfoot{display:flex;justify-content:space-between;margin-top:18px;gap:8px}
   .modalfoot .right{display:flex;gap:8px}
@@ -119,7 +127,7 @@
   /* ---------- inbox ---------- */
   .inboxwrap{display:flex;gap:14px;min-height:440px}
   .msglist{width:320px;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
-  .msg{padding:10px 12px;cursor:pointer}
+  .msg{padding:10px 12px;cursor:pointer;width:100%;text-align:left;color:var(--ink);font:inherit}
   .msg.sel{border-color:var(--accent);background:#f2fbfd}
   .msg .from{font-weight:600;display:flex;justify-content:space-between;font-size:13px}
   .msg .prev{color:var(--muted);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -259,10 +267,10 @@
 <main id="main"></main>
 
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
-  <div class="modal" id="modalBody"></div>
+  <div class="modal" id="modalBody" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
 <div id="welcome" hidden></div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Optional cloud config. Absent (404) = local mode. See backend-config.sample.js -->
 <script src="backend-config.js"></script>
@@ -288,7 +296,7 @@ const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.4.0";
 const LS_KEY = "fablepeak_v1";
 const LEGACY_KEYS = ["metricoolito_v1"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -409,13 +417,14 @@ const RemoteAdapter = {
     }catch(e){ this._sb=null; throw e; }
   },
 
-  _rowsToDb(brands, posts, inbox){
+  _rowsToDb(brands, posts, inbox, targets=[]){
     const mappedBrands = brands.map(b => ({
         id: b.id, name: b.name, seed: b.seed,
         connections: b.connections || {}, smartlink: b.smartlink || {},
         posts: posts.filter(p => p.brand_id===b.id).map(p => ({
           id: p.id, date: p.date, time: p.time, text: p.text,
-          networks: p.networks || [], status: p.status, media_url: p.media_url || "" })),
+          networks: p.networks || [], status: p.status, media_url: p.media_url || "",
+          targets: targets.filter(t => t.post_id===p.id) })),
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
           unread: t.unread, msgs: t.msgs || [] })),
@@ -445,14 +454,16 @@ const RemoteAdapter = {
   async load(){
     if(!this.user) return null;                 // logged out → local fallback
     try{
-      const [b, p, t] = await Promise.all([
+      const [brandsResult, postsResult, inboxResult, targetsResult] = await Promise.all([
         this._sb.from("brands").select("*"),
         this._sb.from("posts").select("*"),
         this._sb.from("inbox_threads").select("*"),
+        this._sb.from("post_targets").select("*"),
       ]);
-      if(b.error||p.error||t.error) throw (b.error||p.error||t.error);
+      const queryError=brandsResult.error||postsResult.error||inboxResult.error||targetsResult.error;
+      if(queryError) throw queryError;
       // first sign-in with an empty server: offer to upload existing local data
-      if(!b.data.length){
+      if(!brandsResult.data.length){
         let local=null; try{ local=JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){}
         if(local && local.brands?.length &&
            confirm("Your cloud workspace is empty. Upload this device's existing data to it?")){
@@ -461,8 +472,12 @@ const RemoteAdapter = {
           return local;
         }
       }
-      this._snap = { brands:b.data, posts:p.data, inbox:t.data };
-      const db = this._rowsToDb(b.data, p.data, t.data);
+      this._snap = {
+        brands:brandsResult.data, posts:postsResult.data, inbox:inboxResult.data,
+      };
+      const db = this._rowsToDb(
+        brandsResult.data, postsResult.data, inboxResult.data, targetsResult.data,
+      );
       if(!db.activeBrand && db.brands.length) db.activeBrand = db.brands[0].id;
       localStorage.setItem(LS_KEY, JSON.stringify(db));   // offline cache
       return db.brands.length ? db : null;
@@ -679,18 +694,20 @@ const RemoteAdapter = {
     if(!r.ok) throw new Error(out.error||"Could not delete account");
   },
   /** publish a post to its platforms right now */
-  async publishNow(postId){
+  async _publishRequest(postId,retry=false){
     const jwt = await this._jwt();
     const r = await fetch(`${this._fnBase}/publish`, {
       method: "POST",
       headers: { Authorization: `Bearer ${jwt}`, apikey: window.FABLEPEAK_BACKEND.anonKey,
                  "Content-Type": "application/json" },
-      body: JSON.stringify({ post_id: postId }),
+      body: JSON.stringify({ post_id: postId, ...(retry?{retry:true}:{}) }),
     });
     const out = await r.json();
-    if(!r.ok) throw new Error(out.error || "Publish failed");
+    if(!r.ok) throw new Error(out.error || (retry?"Retry failed":"Publish failed"));
     return out.results || [];
   },
+  async publishNow(postId){ return this._publishRequest(postId); },
+  async retryPost(postId){ return this._publishRequest(postId,true); },
   /** per-platform delivery records for this brand's posts */
   async listTargets(brandId){
     if(!this.user) return [];
@@ -906,12 +923,36 @@ function toast(msg){
   const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200);
 }
-function openModal(html){ document.getElementById("modalBody").innerHTML=html;
-  document.getElementById("overlay").classList.add("open"); }
+let previousModalFocus=null;
+function openModal(html){
+  previousModalFocus=document.activeElement;
+  const modal=document.getElementById("modalBody");
+  modal.innerHTML=html;
+  modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
+  document.getElementById("overlay").classList.add("open");
+  requestAnimationFrame(()=>{
+    (modal.querySelector("input:not([disabled]),textarea:not([disabled]),select:not([disabled]),button:not([disabled]),a[href]")||modal).focus();
+  });
+}
 function closeModal(){
   if(mediaUploadActive) return toast("Keep this screen open while your media uploads");
   document.getElementById("overlay").classList.remove("open");
+  previousModalFocus?.focus?.(); previousModalFocus=null;
 }
+function handleModalKeydown(event){
+  const overlay=document.getElementById("overlay");
+  if(!overlay.classList.contains("open")) return;
+  if(event.key==="Escape"){ event.preventDefault(); closeModal(); return; }
+  if(event.key!=="Tab") return;
+  const modal=document.getElementById("modalBody");
+  const focusable=[...modal.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+    .filter(el=>!el.hidden && el.getAttribute("aria-hidden")!=="true");
+  if(!focusable.length){ event.preventDefault(); modal.focus(); return; }
+  const first=focusable[0],last=focusable[focusable.length-1];
+  if(event.shiftKey&&document.activeElement===first){ event.preventDefault(); last.focus(); }
+  else if(!event.shiftKey&&document.activeElement===last){ event.preventDefault(); first.focus(); }
+}
+document.getElementById("overlay").addEventListener("keydown",handleModalKeydown);
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function renderNav(){
@@ -1122,16 +1163,20 @@ function renderPlanner(m){
       ${cells.map(d=>{
         const ds=fmtDate(d);
         const cls=["day", d.getMonth()!==mo?"other":"", ds===todayStr()?"today":""].join(" ");
-        const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>
-          `<div class="post ${p.status}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${esc(p.text)}"
+        const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>{
+          const visibleStatus=postVisibleStatus(p);
+          return `<button type="button" class="post ${visibleStatus}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${esc(p.text)}"
+                aria-label="${esc(`${p.time||"Any time"}, ${visibleStatus}: ${p.text}`)}"
                 ondragstart="dragPost(event,'${p.id}')"
                 onclick="event.stopPropagation();openPostModal('${p.id}')">
-             <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</div>`).join("");
-        return `<div class="${cls}" onclick="openPostModal(null,'${ds}')"
+             <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</button>`;
+        }).join("");
+        return `<div class="${cls}"
                   ondragover="event.preventDefault();this.classList.add('dragover')"
                   ondragleave="this.classList.remove('dragover')"
                   ondrop="dropPost(event,'${ds}')">
-                  <div class="dnum">${d.getDate()}</div>${chips}</div>`;
+                  <button type="button" class="dnum" aria-label="Schedule a post on ${ds}"
+                    onclick="openPostModal(null,'${ds}')">${d.getDate()}</button>${chips}</div>`;
       }).join("")}
     </div>
     <div class="legend">
@@ -1139,16 +1184,18 @@ function renderPlanner(m){
       <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
       ${liveMode()?`<span><i style="background:#2f91b5"></i>Publishing</span>`:""}
       <span><i style="background:var(--chip-pub)"></i>Published</span>
+      ${liveMode()?`<span><i style="background:var(--chip-fail)"></i>Needs attention</span>`:""}
     </div>
     <div class="mobile-agenda">
       ${monthPosts.length ? monthPosts.map(p=>{
         const date=new Date(`${p.date}T12:00:00`);
         const dateLabel=date.toLocaleDateString("en",{weekday:"short",day:"numeric"});
         const nets=p.networks.map(n=>netOf(n)?.short||n).join(" · ");
+        const visibleStatus=postVisibleStatus(p);
         return `<button type="button" class="agenda-post" onclick="openPostModal('${p.id}')">
           <span class="agenda-date">${dateLabel}</span>
           <span class="agenda-copy"><strong>${esc(p.text)}</strong>
-            <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(p.status)}</span></span>
+            <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(visibleStatus)}</span></span>
         </button>`;
       }).join("") : `<div class="empty">No posts in ${monthName}. Tap <strong>New post</strong> to add one.</div>`}
     </div>
@@ -1166,6 +1213,39 @@ function dropPost(ev,ds){
   p.date=ds; if(p.status==="published") p.status="scheduled";
   save(); render(); toast("Post moved to "+ds);
 }
+function deliveryPanel(p){
+  const targets=p?.targets||[];
+  if(!targets.length) return "";
+  const canRetry=targets.some(t=>["retryable","permanent"].includes(t.failure_kind));
+  return `<section class="delivery-panel" aria-label="Delivery results">
+    <h4>Delivery results</h4>
+    ${targets.map(t=>{
+      const name=netOf(t.platform)?.name||t.platform;
+      const detail=t.status==="published"
+        ? t.remote_url ? `<a href="${esc(t.remote_url)}" target="_blank" rel="noopener">Published — view post</a>` : "Published"
+        : t.failure_kind==="retryable"
+          ? `Automatic retry scheduled${t.next_retry_at?` for ${new Date(t.next_retry_at).toLocaleString()}`:""}`
+          : t.failure_kind==="unknown"
+            ? `Verify on ${esc(name)} before doing anything else — delivery may have succeeded.`
+            : t.error||t.status;
+      return `<div class="delivery-row ${esc(t.status)}">
+        <strong>${esc(name)}</strong><span>${detail}</span>
+        ${t.error&&t.status!=="published"?`<small>${esc(t.error)}</small>`:""}
+      </div>`;
+    }).join("")}
+    ${canRetry?`<button class="btn ghost mini" onclick="retryPost('${p.id}')">Retry failed targets now</button>`:""}
+  </section>`;
+}
+function postVisibleStatus(p){
+  const needsAttention=(p?.targets||[]).some(target=>
+    target.status!=="published" && ["permanent","unknown"].includes(target.failure_kind));
+  return needsAttention?"failed":p.status;
+}
+function postStatusFromResults(results){
+  if(results.some(result=>result.failure_kind==="retryable")) return "scheduled";
+  return results.length && results.every(result=>result.status==="published")
+    ? "published" : "failed";
+}
 function openPostModal(id, dateStr){
   const b=brand();
   const p = id? b.posts.find(x=>x.id===id) : null;
@@ -1179,6 +1259,7 @@ function openPostModal(id, dateStr){
     <div class="sub">${locked
       ? p.status==="publishing" ? "Publishing is in progress…" : "Published posts are read-only. Duplicate this post to reuse it."
       : p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
+    ${p?deliveryPanel(p):""}
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
@@ -1206,7 +1287,8 @@ function openPostModal(id, dateStr){
         return `<label class="${on?'on':''}" style="${conn?'':'opacity:.4'}" title="${conn?'':'Not connected'}">
           <input type="checkbox" value="${n.id}" ${on?'checked':''} ${conn&&!locked?'':'disabled'}
             onchange="this.parentElement.classList.toggle('on',this.checked)">
-          <span style="color:${n.color};font-weight:700">${n.short}</span> ${n.name}</label>`;
+          <span style="color:${n.color};font-weight:700">${n.short}</span> ${n.name}
+          ${conn?"":`<small class="netreason">Not connected</small>`}</label>`;
       }).join("")}
     </div>
     <div class="fieldrow">
@@ -1355,12 +1437,33 @@ async function publishNow(id){
     const failures = bad.map(r=>
       `${netOf(r.platform).name}: ${r.error||r.status}`
     ).join(" | ");
-    if(ok.length) p.status = "published";
+    p.status = postStatusFromResults(results);
+    await refreshPostTargets();
     save(); closeModal(); render();
     toast(ok.length
       ? `Published to ${ok.map(r=>netOf(r.platform).name).join(", ")}${failures?` · Failed — ${failures}`:""}`.slice(0,240)
       : `Failed: ${failures}`.slice(0,240));
     if(bad.length) console.warn("FablePeak publish issues:", bad);
+  }catch(e){ toast(e.message); }
+}
+async function refreshPostTargets(){
+  if(!liveMode()) return [];
+  const b=brand(), rows=await store.listTargets(b.id);
+  b.posts.forEach(post=>{ post.targets=rows.filter(target=>target.post_id===post.id); });
+  return rows;
+}
+async function retryPost(id){
+  if(!confirm("Retry only failed deliveries that are safe to send again? Published and ambiguous targets will not be repeated.")) return;
+  toast("Retrying failed deliveries…");
+  try{
+    const results=await store.retryPost(id);
+    const p=brand().posts.find(post=>post.id===id);
+    if(p){
+      p.status=postStatusFromResults(results);
+    }
+    await refreshPostTargets();
+    save(); closeModal(); render();
+    toast("Delivery retry completed — review the per-network results");
   }catch(e){ toast(e.message); }
 }
 function deletePost(id){
@@ -1500,10 +1603,11 @@ function renderInbox(m){
     <div class="msglist">
       ${list.length? list.map(c=>{
         const n=netOf(c.net);
-        return `<div class="card msg ${c.unread?"unread":""} ${sel&&sel.id===c.id?"sel":""}" onclick="openMsg('${c.id}')">
+        return `<button type="button" class="card msg ${c.unread?"unread":""} ${sel&&sel.id===c.id?"sel":""}"
+          aria-pressed="${sel&&sel.id===c.id?"true":"false"}" onclick="openMsg('${c.id}')">
           <div class="from"><span>${esc(c.from)}</span>
             <span class="nico" style="background:${n.color};width:22px;height:22px;font-size:9px;border-radius:6px">${n.short}</span></div>
-          <div class="prev">${esc(c.msgs[c.msgs.length-1].text)}</div></div>`;
+          <div class="prev">${esc(c.msgs[c.msgs.length-1].text)}</div></button>`;
       }).join("") : `<div class="empty">Nothing here 🎉</div>`}
     </div>
     <div class="card thread">

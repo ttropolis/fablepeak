@@ -336,13 +336,15 @@ publishes publicly, and is easy to delete afterwards.
 
 ## Scheduled publishing — already running
 
-Posts publish automatically at their scheduled time; no setup needed. Two
+Posts publish automatically at their scheduled time; no setup needed. Four
 `pg_cron` jobs are live:
 
 | Job | Schedule | What it does |
 |---|---|---|
 | `fablepeak-publish-due` | every minute | publishes posts whose time has arrived |
+| `fablepeak-maintain-connections` | hourly at :17 | proactively renews every eligible authorization, including non-default assets |
 | `fablepeak-metrics` | 03:17 Perth daily | pulls real follower/impression numbers |
+| `fablepeak-prune-job-runs` | 04:41 Perth daily | removes operational run records older than 30 days |
 
 Check they're healthy any time (SQL editor):
 
@@ -356,3 +358,20 @@ A healthy publisher returns `200` with
 `ingest-metrics` stores real daily measurements. Analytics and Reports
 automatically use those rows when available and retain a labelled simulated
 fallback before the first successful metrics run.
+
+Every publisher, metrics and connection-maintenance invocation writes a
+terminal row to `scheduled_job_runs`. The protected `operations-health` Edge
+Function returns HTTP 503 when publishing is older than five minutes,
+connection maintenance is older than two hours, metrics is older than 26
+hours, or the latest run failed. The GitHub workflow authenticates with a
+short-lived OIDC token restricted to this repository, workflow and `main`
+branch; no shared production credential is stored in GitHub. For an optional
+local operator check, configure `OPERATIONS_HEALTH_SECRET` in the Edge Function
+and pass the same value locally:
+
+```sh
+FABLEPEAK_OPERATIONS_HEALTH_SECRET='<secret>' npm run smoke:cron
+```
+
+The scheduled GitHub workflow runs this authenticated check daily. CI fails if
+GitHub cannot issue its OIDC identity; a missing monitor must never appear healthy.

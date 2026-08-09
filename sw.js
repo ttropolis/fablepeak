@@ -1,4 +1,4 @@
-const CACHE = "fablepeak-v1.3.1";
+const CACHE = "fablepeak-v1.4.0";
 const ASSETS = [
   "./", "./index.html", "./oauth-complete.html", "./privacy.html", "./terms.html",
   "./data-deletion.html", "./manifest.json", "./icon-192.png", "./icon-512.png",

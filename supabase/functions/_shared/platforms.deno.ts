@@ -1,6 +1,7 @@
 import {
   ADAPTERS,
   exchangeAuthorizationCode,
+  ProviderRequestError,
   PublishOutcomeUnknownError,
   refreshPlatformToken,
 } from "./platforms.ts";
@@ -99,6 +100,119 @@ Deno.test("Instagram marks a lost publish response as an unknown outcome", async
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("Instagram marks a successful final response without a media ID as unknown", async () => {
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url.endsWith("/media")) return Promise.resolve(json({ id: "container-missing-id" }));
+    if (url.includes("/container-missing-id?")) {
+      return Promise.resolve(json({ status_code: "FINISHED" }));
+    }
+    if (url.endsWith("/media_publish")) return Promise.resolve(json({}));
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "Episode 53", mediaUrl: "https://cdn.example/episode-53.png",
+        accessToken: "token", connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`Expected unknown Instagram outcome, received ${String(caught)}`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("Facebook marks transport loss on the final publish request as unknown", async () => {
+  globalThis.fetch = () => Promise.reject(new TypeError("connection reset"));
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.facebook.publish({
+        text: "Launch", accessToken: "token", mediaUrl: null,
+        connection: { external_id: "page-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`Expected unknown Facebook outcome, received ${String(caught)}`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("Facebook treats a final 5xx response as unknown rather than duplicate-safe", async () => {
+  globalThis.fetch = () => Promise.resolve(json({ error: "upstream failed" }, 503));
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.facebook.publish({
+        text: "Launch", accessToken: "token", mediaUrl: null,
+        connection: { external_id: "page-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`Expected unknown Facebook 5xx outcome, received ${String(caught)}`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("YouTube marks transport loss during the final upload as unknown", async () => {
+  let request = 0;
+  globalThis.fetch = (_input, init) => {
+    request++;
+    if (request === 1) return Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+      headers: { "content-type": "video/mp4", "content-length": "3" },
+    }));
+    if (request === 2) return Promise.resolve(new Response(null, {
+      status: 200, headers: { location: "https://upload.youtube.test/session-1" },
+    }));
+    if (request === 3 && init?.method === "PUT") {
+      return Promise.reject(new TypeError("connection reset"));
+    }
+    return Promise.reject(new Error(`Unexpected YouTube request ${request}`));
+  };
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.youtube.publish({
+        text: "Launch", accessToken: "token", mediaUrl: "https://cdn.test/video.mp4",
+        connection: { external_id: "channel-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`Expected unknown YouTube outcome, received ${String(caught)}`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("YouTube treats a final upload 5xx as unknown rather than starting over", async () => {
+  let request = 0;
+  globalThis.fetch = () => {
+    request++;
+    if (request === 1) return Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+      headers: { "content-type": "video/mp4", "content-length": "3" },
+    }));
+    if (request === 2) return Promise.resolve(new Response(null, {
+      status: 200, headers: { location: "https://upload.youtube.test/session-1" },
+    }));
+    if (request === 3) return Promise.resolve(json({ error: "backend error" }, 503));
+    return Promise.reject(new Error(`Unexpected YouTube request ${request}`));
+  };
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.youtube.publish({
+        text: "Launch", accessToken: "token", mediaUrl: "https://cdn.test/video.mp4",
+        connection: { external_id: "channel-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`Expected unknown YouTube 5xx outcome, received ${String(caught)}`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 Deno.test("X uploads an image and attaches its media ID", async () => {
@@ -567,7 +681,7 @@ Deno.test("Pinterest publishing cannot fall back to another workspace's board", 
   }
 });
 
-Deno.test("mixed-network publishing preserves success and reports upload failure", async () => {
+Deno.test("mixed-network publishing preserves success while scheduling a safe failed target retry", async () => {
   const targetMarks: any[] = [];
   const postUpdates: any[] = [];
   const called: string[] = [];
@@ -583,7 +697,7 @@ Deno.test("mixed-network publishing preserves success and reports upload failure
       label: "LinkedIn", clientIdEnv: "LINKEDIN_CLIENT_ID", supportsMedia: true,
       publish: async () => {
         called.push("linkedin");
-        throw new Error("linkedin image upload: 500 unavailable");
+        throw new ProviderRequestError("linkedin image upload", 500, "unavailable");
       },
     },
   };
@@ -618,8 +732,8 @@ Deno.test("mixed-network publishing preserves success and reports upload failure
   if (results[0]?.status !== "published" || results[1]?.status !== "failed") {
     throw new Error(`Expected partial success, received ${JSON.stringify(results)}`);
   }
-  if (postUpdates.at(-1)?.status !== "published") {
-    throw new Error("A successful target should keep the post published");
+  if (postUpdates.at(-1)?.status !== "scheduled") {
+    throw new Error("A retryable target should keep the post scheduled without repeating its success");
   }
   if (!targetMarks.some((mark) => mark.platform === "linkedin" && mark.status === "failed")) {
     throw new Error("Expected the LinkedIn upload failure to be recorded");
@@ -654,5 +768,144 @@ Deno.test("interrupted targets are not automatically retried", async () => {
   if (providerCalled) throw new Error("Interrupted delivery must not call the provider again");
   if (results[0]?.error !== INTERRUPTED) {
     throw new Error(`Expected interrupted result, received ${JSON.stringify(results)}`);
+  }
+});
+
+Deno.test("a definitive provider failure is retained as a bounded automatic retry", async () => {
+  const targetMarks: any[] = [];
+  const postUpdates: any[] = [];
+  const results = await publishPost({
+    id: "post-retry", brand_id: "brand-1", networks: ["x"], text: "Launch",
+  }, {
+    adapters: {
+      x: {
+        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+        publish: async () => { throw new ProviderRequestError("x publish", 503, "unavailable"); },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-x", status: "active", external_id: "account-1", meta: {},
+    },
+    sbUpsert: async (_table: string, row: any) => { targetMarks.push(row); return row; },
+    sbUpdate: async (_table: string, _query: string, patch: any) => {
+      postUpdates.push(patch); return patch;
+    },
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-09T00:00:00.000Z",
+  } as any);
+
+  const failure = targetMarks.at(-1);
+  if (results[0]?.failure_kind !== "retryable") {
+    throw new Error(`Expected retryable outcome, received ${JSON.stringify(results)}`);
+  }
+  if (failure?.attempts !== 1 || failure?.failure_kind !== "retryable" ||
+      failure?.next_retry_at !== "2026-08-09T00:05:00.000Z") {
+    throw new Error(`Expected first bounded retry, received ${JSON.stringify(failure)}`);
+  }
+  if (postUpdates.at(-1)?.status !== "scheduled") {
+    throw new Error("A post with a safe retry pending must remain in the scheduler");
+  }
+});
+
+Deno.test("validation and authentication failures are permanent and never automatically retried", async () => {
+  const targetMarks: any[] = [];
+  const postUpdates: any[] = [];
+  const results = await publishPost({
+    id: "post-permanent", brand_id: "brand-1", networks: ["x"], text: "Launch",
+  }, {
+    adapters: {
+      x: {
+        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+        publish: async () => { throw new ProviderRequestError("x publish", 401, "token revoked"); },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-x", status: "active", external_id: "account-1", meta: {},
+    },
+    sbUpsert: async (_table: string, row: any) => { targetMarks.push(row); return row; },
+    sbUpdate: async (_table: string, _query: string, patch: any) => {
+      postUpdates.push(patch); return patch;
+    },
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-09T00:00:00.000Z",
+  } as any);
+
+  if (results[0]?.failure_kind !== "permanent" || targetMarks.at(-1)?.next_retry_at !== null) {
+    throw new Error(`Expected permanent outcome, received ${JSON.stringify(results)}`);
+  }
+  if (postUpdates.at(-1)?.status !== "failed") {
+    throw new Error("A permanent delivery failure must be visible as needs-attention");
+  }
+});
+
+Deno.test("an automatic retry never resends a sibling permanent target", async () => {
+  const called: string[] = [];
+  const results = await publishPost({
+    id: "post-selective", brand_id: "brand-1", networks: ["x", "linkedin"], text: "Launch",
+  }, {
+    adapters: {
+      x: {
+        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+        publish: async () => { called.push("x"); return { remote_id: "tweet-2" }; },
+      },
+      linkedin: {
+        label: "LinkedIn", clientIdEnv: "LINKEDIN_CLIENT_ID",
+        publish: async () => { called.push("linkedin"); return { remote_id: "post-2" }; },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string, query: string) => {
+      if (table === "post_targets") return query.includes("platform=eq.x") ? {
+        status:"failed", attempts:1, failure_kind:"retryable",
+        next_retry_at:"2026-08-09T00:00:00.000Z", error:"rate limited",
+      } : {
+        status:"failed", attempts:1, failure_kind:"permanent",
+        next_retry_at:null, error:"invalid media",
+      };
+      return { id:`connection-${called.length}`, status:"active", external_id:"account", meta:{} };
+    },
+    sbUpsert: async (_table: string, row: any) => row,
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-09T00:05:00.000Z",
+  } as any, "automatic");
+
+  if (called.join(",") !== "x") {
+    throw new Error(`Automatic retry resent an ineligible target: ${called.join(",")}`);
+  }
+  if (results[1]?.failure_kind !== "permanent") {
+    throw new Error(`Permanent sibling outcome was not preserved: ${JSON.stringify(results)}`);
+  }
+});
+
+Deno.test("automatic scheduling publishes a brand-new target with no prior outcome", async () => {
+  let providerCalled = false;
+  const results = await publishPost({
+    id: "post-new-due", brand_id: "brand-1", networks: ["x"], text: "Launch",
+  }, {
+    adapters: {
+      x: {
+        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+        publish: async () => { providerCalled = true; return { remote_id: "tweet-new" }; },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id:"connection-x", status:"active", external_id:"account", meta:{},
+    },
+    sbUpsert: async (_table: string, row: any) => row,
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-09T00:05:00.000Z",
+  } as any, "automatic");
+
+  if (!providerCalled || results[0]?.status !== "published") {
+    throw new Error(`Brand-new scheduled target was not published: ${JSON.stringify(results)}`);
   }
 });

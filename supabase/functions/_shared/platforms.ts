@@ -39,6 +39,36 @@ export class PublishOutcomeUnknownError extends Error {
   override name = "PublishOutcomeUnknownError";
 }
 
+/** A provider returned an explicit non-success response. Only transient
+ * response classes are safe for an automatic retry; client/auth failures need
+ * operator or customer action. */
+export class ProviderRequestError extends Error {
+  override name = "ProviderRequestError";
+  constructor(
+    public readonly context: string,
+    public readonly status: number,
+    detail = "",
+  ) {
+    super(`${context}: ${status}${detail ? ` ${detail.slice(0, 400)}` : ""}`);
+  }
+
+  get retryable() {
+    return this.status === 408 || this.status === 425 || this.status === 429 || this.status >= 500;
+  }
+}
+
+/** Refresh succeeded far enough to prove that the stored authorization can no
+ * longer be used (for example invalid_grant or an asset removed by its owner). */
+export class CredentialRejectedError extends Error {
+  override name = "CredentialRejectedError";
+}
+
+/** Failure happened before a final publish request could have created public
+ * content, so a bounded retry cannot duplicate a post. */
+export class RetryablePublishError extends Error {
+  override name = "RetryablePublishError";
+}
+
 export interface PlatformAdapter {
   id: Platform;
   label: string;
@@ -104,9 +134,23 @@ export interface PlatformAdapter {
 
 const j = async (r: Response, ctx: string) => {
   const body = await r.text();
-  if (!r.ok) throw new Error(`${ctx}: ${r.status} ${body.slice(0, 400)}`);
+  if (!r.ok) throw new ProviderRequestError(ctx, r.status, body);
   try { return JSON.parse(body); } catch { return {}; }
 };
+
+function rethrowFinalPublishFailure(
+  error: unknown,
+  response: Response,
+  message: string,
+): never {
+  // A success whose body was lost and a provider-side 5xx are both ambiguous:
+  // public content may have committed before the response failed. Only an
+  // explicit non-5xx rejection is safe to classify normally.
+  if (response.ok || (error instanceof ProviderRequestError && error.status >= 500)) {
+    throw new PublishOutcomeUnknownError(message);
+  }
+  throw error;
+}
 
 /** Accept only public HTTPS media sources. The YouTube adapter fetches this
  * URL server-side, so allowing loopback/private hosts would create an SSRF
@@ -230,23 +274,43 @@ const youtube: PlatformAdapter = {
       status: { privacyStatus: "private", selfDeclaredMadeForKids: false },
     };
     // resumable upload: start session, then send bytes
-    const start = await fetch(
-      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      { method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json",
-                   "X-Upload-Content-Type": contentType,
-                   ...(video.headers.get("content-length")
-                     ? { "X-Upload-Content-Length": video.headers.get("content-length")! } : {}) },
-        body: JSON.stringify(meta) });
-    if (!start.ok) throw new Error(`youtube upload start: ${start.status} ${await start.text()}`);
+    let start: Response;
+    try {
+      start = await fetch(
+        "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+        { method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json",
+                     "X-Upload-Content-Type": contentType,
+                     ...(video.headers.get("content-length")
+                       ? { "X-Upload-Content-Length": video.headers.get("content-length")! } : {}) },
+          body: JSON.stringify(meta) });
+    } catch {
+      throw new RetryablePublishError("YouTube upload session could not be started.");
+    }
+    if (!start.ok) throw new ProviderRequestError("youtube upload start", start.status, await start.text());
     const session = start.headers.get("location");
     if (!session) throw new Error("YouTube did not return an upload session URL");
     const uploadHeaders: Record<string, string> = { "Content-Type": contentType };
     const contentLength = video.headers.get("content-length");
     if (contentLength) uploadHeaders["Content-Length"] = contentLength;
-    const up = await j(await fetch(session, {
-      method: "PUT", headers: uploadHeaders, body: video.body,
-    }), "youtube upload");
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await fetch(session, {
+        method: "PUT", headers: uploadHeaders, body: video.body,
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "YouTube may have accepted this video. Verify the channel before retrying.");
+    }
+    let up: any;
+    try {
+      up = await j(uploadResponse, "youtube upload");
+    } catch (error) {
+      rethrowFinalPublishFailure(error, uploadResponse,
+        "YouTube may have accepted this video. Verify the channel before retrying.");
+    }
+    if (!up.id) throw new PublishOutcomeUnknownError(
+      "YouTube may have accepted this video. Verify the channel before retrying.");
     return { remote_id: up.id, remote_url: `https://youtu.be/${up.id}` };
   },
 
@@ -346,6 +410,7 @@ const x: PlatformAdapter = {
   clientIdEnv: "X_CLIENT_ID",
   clientSecretEnv: "X_CLIENT_SECRET",
   supportsMedia: true,
+  productionEnabled: false,    // frozen until the external-beta milestone passes
 
   async identify(t) {
     const d = await j(await fetch(
@@ -378,9 +443,8 @@ const x: PlatformAdapter = {
     try {
       publishPayload = await j(response, "x publish");
     } catch (error) {
-      if (response.ok) throw new PublishOutcomeUnknownError(
+      rethrowFinalPublishFailure(error, response,
         "X may have accepted this post. Verify the profile before retrying.");
-      throw error;
     }
     return {
       remote_id: publishPayload.data.id,
@@ -442,7 +506,8 @@ const facebook: PlatformAdapter = {
     const page = (await metaPages(long.access_token))
       .find((candidate: any) => String(candidate.id) === String(connection.external_id));
     if (!page?.access_token) {
-      throw new Error("This Facebook Page is no longer available to the authorizing user.");
+      throw new CredentialRejectedError(
+        "This Facebook Page is no longer available to the authorizing user.");
     }
     return {
       access_token: page.access_token,
@@ -494,12 +559,27 @@ const facebook: PlatformAdapter = {
         ? { file_url: safeMediaUrl, description: text, access_token: accessToken }
         : { url: safeMediaUrl, caption: text, access_token: accessToken }
       : { message: text, access_token: accessToken };
-    const d = await j(await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(body),
-    }), "facebook publish");
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(body),
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "Facebook may have accepted this post. Verify the Page before retrying.");
+    }
+    let d: any;
+    try {
+      d = await j(response, "facebook publish");
+    } catch (error) {
+      rethrowFinalPublishFailure(error, response,
+        "Facebook may have accepted this post. Verify the Page before retrying.");
+    }
     const rid = d.post_id ?? d.id;
+    if (!rid) throw new PublishOutcomeUnknownError(
+      "Facebook may have accepted this post. Verify the Page before retrying.");
     return { remote_id: rid, remote_url: `https://facebook.com/${rid}` };
   },
 
@@ -626,14 +706,11 @@ const instagram: PlatformAdapter = {
     try {
       published = await j(publishResponse, "instagram publish");
     } catch (error) {
-      // An explicit non-2xx response is a definite rejection and can be
-      // retried. Losing a successful response body leaves the outcome unknown.
-      if (publishResponse.ok) {
-        throw new PublishOutcomeUnknownError(
-          "Instagram may have accepted this post. Verify the profile before retrying.");
-      }
-      throw error;
+      rethrowFinalPublishFailure(error, publishResponse,
+        "Instagram may have accepted this post. Verify the profile before retrying.");
     }
+    if (!published.id) throw new PublishOutcomeUnknownError(
+      "Instagram may have accepted this post. Verify the profile before retrying.");
     let permalink: string | undefined;
     try {
       const link = await fetch(
@@ -682,6 +759,7 @@ const linkedin: PlatformAdapter = {
   clientIdEnv: "LINKEDIN_CLIENT_ID",
   clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
   supportsMedia: true,
+  productionEnabled: false,    // frozen until the external-beta milestone passes
 
   async identify(t) {
     const d = await j(await fetch("https://api.linkedin.com/v2/userinfo",
@@ -722,9 +800,8 @@ const linkedin: PlatformAdapter = {
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": contentType },
         body: bytes,
       });
-      if (!uploaded.ok) {
-        throw new Error(`linkedin image upload: ${uploaded.status} ${(await uploaded.text()).slice(0, 300)}`);
-      }
+      if (!uploaded.ok) throw new ProviderRequestError(
+        "linkedin image upload", uploaded.status, await uploaded.text());
     }
     // /rest/posts replaces the legacy /v2/ugcPosts. Both headers are mandatory;
     // LINKEDIN_VERSION sunsets on a ~1-year clock, so keep it configurable.
@@ -746,8 +823,13 @@ const linkedin: PlatformAdapter = {
       throw new PublishOutcomeUnknownError(
         "LinkedIn may have accepted this post. Verify the profile before retrying.");
     }
-    if (!publishResponse.ok) throw new Error(
-      `linkedin publish: ${publishResponse.status} ${(await publishResponse.text()).slice(0, 300)}`);
+    if (!publishResponse.ok) {
+      const failure = new ProviderRequestError(
+        "linkedin publish", publishResponse.status, await publishResponse.text());
+      if (publishResponse.status >= 500) throw new PublishOutcomeUnknownError(
+        "LinkedIn may have accepted this post. Verify the profile before retrying.");
+      throw failure;
+    }
     let id = publishResponse.headers.get("x-restli-id");
     if (!id) {
       try { id = (await publishResponse.json()).id; }
@@ -788,14 +870,27 @@ const tiktok: PlatformAdapter = {
   async publish({ text, mediaUrl, accessToken }) {
     if (!mediaUrl) throw new Error("TikTok requires a video URL.");
     const safeMediaUrl = publicMediaUrl(mediaUrl, "TikTok");
-    const d = await j(await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        post_info: { title: text.slice(0, 150), privacy_level: "SELF_ONLY" },
-        source_info: { source: "PULL_FROM_URL", video_url: safeMediaUrl },
-      }),
-    }), "tiktok publish");
+    let response: Response;
+    try {
+      response = await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          post_info: { title: text.slice(0, 150), privacy_level: "SELF_ONLY" },
+          source_info: { source: "PULL_FROM_URL", video_url: safeMediaUrl },
+        }),
+      });
+    } catch {
+      throw new PublishOutcomeUnknownError(
+        "TikTok may have accepted this video. Verify the profile before retrying.");
+    }
+    let d: any;
+    try {
+      d = await j(response, "tiktok publish");
+    } catch (error) {
+      rethrowFinalPublishFailure(error, response,
+        "TikTok may have accepted this video. Verify the profile before retrying.");
+    }
     return { remote_id: d.data?.publish_id ?? "unknown" };
   },
 };
@@ -939,9 +1034,8 @@ const pinterest: PlatformAdapter = {
     try {
       pin = await j(response, "pinterest publish");
     } catch (error) {
-      if (response.ok) throw new PublishOutcomeUnknownError(
+      rethrowFinalPublishFailure(error, response,
         "Pinterest may have accepted this Pin. Verify the board before retrying.");
-      throw error;
     }
     if (!pin.id) throw new PublishOutcomeUnknownError(
       "Pinterest may have accepted this Pin. Verify the board before retrying.");
@@ -985,7 +1079,7 @@ export async function exchangeToken(
   }
   const r = await fetch(a.tokenUrl, { method: "POST", headers, body: new URLSearchParams(body) });
   const txt = await r.text();
-  if (!r.ok) throw new Error(`token exchange (${a.id}): ${r.status} ${txt.slice(0, 400)}`);
+  if (!r.ok) throw new ProviderRequestError(`token exchange (${a.id})`, r.status, txt);
   return JSON.parse(txt);
 }
 
