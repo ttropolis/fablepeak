@@ -463,7 +463,7 @@ const metaAuthorize = `https://www.facebook.com/${META_VERSION}/dialog/oauth`;
 async function metaPages(accessToken: string) {
   const d = await j(await fetch(
     `https://graph.facebook.com/${META_VERSION}/me/accounts` +
-    `?fields=id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}` +
+    `?fields=id,name,access_token,picture{url}` +
     `&access_token=${encodeURIComponent(accessToken)}`), "meta pages");
   return d.data ?? [];
 }
