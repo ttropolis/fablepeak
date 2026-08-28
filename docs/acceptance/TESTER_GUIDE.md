@@ -1,0 +1,755 @@
+# FablePeak acceptance tester guide
+
+- Product: FablePeak 1.4.0 at <https://fablepeak.com>
+- Purpose: collect the eight human-acceptance rows in
+  [EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md)
+- Audience: two testers who do not work on FablePeak
+- Last updated: 2026-08-28
+
+You do not need to know anything about programming to run this. Every step is
+something you click, type or look at. If a screen does not match what a step
+describes, stop that step, write down what you actually saw, and tell the
+release owner. A mismatch is useful information, not a mistake.
+
+---
+
+## Fill this in before you start
+
+Your release owner completes this box and hands you the guide.
+
+| Field | Value |
+|---|---|
+| Release owner name | |
+| Release owner contact (email or chat) | |
+| Where to send evidence (shared drive folder or upload link) | |
+| Your tester number (Tester 1 or Tester 2) | |
+| Date you start | |
+
+Send every screenshot and note to the one location named above. Do not email
+evidence anywhere else and do not post it publicly.
+
+---
+
+## Ground rules — read this page first
+
+**1. Never share a password with anyone, including the release owner.**
+Not by email, not by chat, not in a screenshot, not "just this once". You will
+type your own passwords into the FablePeak sign-in box and into Facebook,
+Instagram and Google. Nobody else ever needs them.
+
+**2. Never share an access token.** A token is a long random string of letters,
+numbers and dashes. You should never see one in normal use. If one ever appears
+on screen, in a browser address bar, or in an error message, **do not screenshot
+it**. Instead, write down "a long code appeared here" and tell the release owner
+what page you were on.
+
+**3. Check every screenshot before you send it.** Crop or black out:
+
+- anything in a password box
+- any long random code in the browser address bar
+- any part of a web address after `?code=`, `?token=`, `access_token=` or
+  `#access_token=`
+- other people's names, photos or messages that are not part of the test
+
+If you are unsure whether something is safe to include, black it out. A
+screenshot with a token in it cannot be used as evidence and has to be
+destroyed.
+
+**4. Timestamps matter.** For each screenshot, write down the date and clock
+time you took it, and your time zone (for example "3 Sep 2026, 14:32 AEST").
+Either include your computer clock in the screenshot or write it in your notes.
+
+**5. Remote links matter.** When FablePeak says a post was published, it shows a
+link to the real post on Facebook, Instagram or YouTube. Copy that whole web
+address into your notes. That link is the proof the post really arrived.
+
+**6. Do not use anyone else's account.** Use only the accounts you created for
+this test.
+
+**7. Post nothing embarrassing.** These posts go to real social accounts.
+Use plain, boring test wording such as
+`FablePeak acceptance test - please ignore` plus the date.
+
+---
+
+## Prerequisites
+
+### Why your accounts must be unrelated to FablePeak
+
+FablePeak's owners and developers can reach the database and the server
+settings directly. If an owner or developer runs these tests, a step can appear
+to pass because of something only they can do — a setting they already changed,
+an account already trusted by the app, or a permission that ordinary customers
+will not have. Evidence collected that way proves nothing about a real customer,
+and the release cannot open on it.
+
+So:
+
+- Your FablePeak sign-in email must be **new** and must not have been used with
+  FablePeak before.
+- Your Facebook, Instagram and Google accounts must be **your own or newly
+  created for this test**, and must not be listed as a developer, admin or
+  tester on FablePeak's Facebook or Google developer apps.
+- If the release owner already knows your FablePeak password, or set the account
+  up for you, the evidence is invalid. You create the account yourself.
+- Tester 1 and Tester 2 must be **different people** with no shared accounts
+  and no shared devices. Do not use two browser profiles on one machine.
+
+If any of this is not true for you, say so before starting.
+
+### What each tester needs
+
+| Item | Tester 1 | Tester 2 | Notes |
+|---|---|---|---|
+| Fresh email address, never used with FablePeak | Required | Required | You must be able to open its inbox — FablePeak sends a confirmation link |
+| A device with a modern browser (Chrome, Safari, Edge, Firefox) | Required | Required | Pop-ups must be allowed for fablepeak.com; the social sign-in opens in a small extra window |
+| Facebook account that administers **2 or more Pages** | Required | Not required | Two Pages are needed to prove you can choose which Page receives a post. Free test Pages are fine |
+| Instagram **Business** professional profile | Required | Not required | Set in the Instagram app: Settings → Account type and tools → Switch to professional account → Business |
+| Instagram **Creator** professional profile | Required | Not required | A second, separate Instagram profile switched to Creator instead of Business |
+| YouTube channel you own | Required | Not required | A brand-new channel is fine. Uploads in this test are set to private |
+| An image file, JPEG, under 10 MB | Required | Not required | A plain photo. Not a screenshot containing personal data |
+| A short video file, MP4, under 50 MB | Required | Not required | 10–20 seconds is plenty |
+
+### Which rows need two testers
+
+| Script | Testers involved |
+|---|---|
+| 1, 2, 3, 4, 5, 7, 8 | Tester 1 alone |
+| **6 — tenant isolation** | **Tester 1 and Tester 2 together** |
+
+Tester 2's only job is Script 6. Tester 2 still has to create their own FablePeak
+account (see "First-run setup" below) and connect **one** social account of any
+kind, so that there is something of their own to compare against. Tester 2 does
+not need multiple Pages, a Creator profile or a YouTube channel.
+
+Script 6 must be run **before** Script 8, because Script 8 deletes Tester 1's
+account.
+
+---
+
+## First-run setup — do this once
+
+Both testers do this. Script 1 continues straight on from here.
+
+1. Open <https://fablepeak.com> in your browser.
+2. You land on a dark blue welcome screen headed
+   **"All your social media, one clean workspace."**
+3. In the white card on the right, click the **Create account** tab.
+4. Type your fresh email in **Email** and a password of at least 8 characters in
+   **Password**.
+5. Click **Create my account**.
+6. A green line appears: *"✉️ Check your inbox — click the confirmation link,
+   then sign in here."*
+7. Open your email inbox and click the confirmation link.
+8. Return to <https://fablepeak.com>, click the **Sign in** tab, enter the same
+   email and password, and click **Sign in**. A small message reading
+   *"Welcome back ✔"* appears at the bottom right.
+9. You now see a card headed **"Welcome to FablePeak, …!"** explaining that a
+   brand is a workspace. Type a name for your workspace (for example
+   `Tester 1 Workspace`) and click **Create brand**.
+10. FablePeak moves you straight to the **Connections** screen.
+
+**Evidence to capture (setup)**
+
+- [ ] Screenshot of the confirmation email in your inbox, with the email
+      address visible and the link **not** clicked yet
+- [ ] Screenshot of the "Welcome to FablePeak" brand-creation card
+- [ ] Screenshot of the Connections screen after your brand is created
+- [ ] Note: date, time and time zone of each screenshot
+- [ ] Note: the workspace (brand) name you chose
+- [ ] Confirm no screenshot shows your password box filled in
+- [ ] Send to the location in "Fill this in before you start"
+
+**Never** send your password or any long code from the confirmation link.
+
+---
+
+## How to find things in FablePeak
+
+- The dark blue strip on the left (or the row of buttons across the top on a
+  phone) is the menu: **Planner, Analytics, Inbox, SmartLinks, Reports,
+  Connections, Settings**.
+- The **Brand** dropdown at the top of that strip switches between workspaces.
+- Small grey messages appear briefly at the bottom right of the screen. They
+  disappear after a few seconds, so screenshot them quickly.
+- On the **Connections** screen each social network has its own card, showing
+  the network name, a short note about what it can do, and a **Connect** button.
+
+---
+
+## Script 1 — Facebook: connect, choose a Page, publish, disconnect
+
+Tester 1. Allow about 30 minutes.
+
+1. Sign in at <https://fablepeak.com> and open **Connections** from the left
+   menu.
+2. Find the **Facebook** card. Under the name it should read
+   **Available to connect**. Click **Connect**.
+3. A small extra window opens with Facebook's sign-in and permission screens.
+   Sign in as yourself.
+4. When Facebook asks which Pages FablePeak may use, **choose at least two of
+   your Pages**. Screenshot this Facebook screen before you continue.
+5. Approve the permissions Facebook lists. The small window closes on its own.
+6. Back on the Connections screen, the Facebook card now lists **one row per
+   Page you authorised**. One row is marked **✓ Publishing account** in green;
+   the others each have a **Use for publishing** button. Most rows also show a
+   small grey **Verified**.
+7. Screenshot the whole Facebook card showing all Pages.
+8. Click **Use for publishing** on a *different* Page from the one currently
+   marked. A message reads *"… selected for publishing ✔"*, and the green
+   **✓ Publishing account** mark moves to the Page you chose. Screenshot this.
+   Write down which Page name you selected.
+9. Open **Planner** from the left menu. Click **+ New post**.
+10. In **Content**, type `FablePeak acceptance test - please ignore` and today's
+    date.
+11. Leave **Image / video** empty. Facebook accepts text-only posts.
+12. Under **Networks**, tick **FB Facebook**. Make sure nothing else is ticked.
+13. Leave **Date** and **Time** as they are and set **Status** to `scheduled`.
+14. Click **🚀 Publish now**. A confirmation box asks
+    *"Publish to Facebook right now? This posts to the real accounts."* —
+    click OK.
+15. Wait. A message names the network it published to. Reopen the post by
+    clicking its coloured chip on the calendar.
+16. A panel headed **Delivery results** now appears at the top of the post,
+    with a row for **Facebook** reading **Published — view post**.
+17. Click **Published — view post**. It opens the real post on Facebook.
+    **Check it is on the Page you selected in step 8, not the other one.**
+    Copy the full web address from your browser.
+18. Screenshot the real Facebook post showing the Page name.
+19. Return to FablePeak, open **Connections**, and on the Facebook card click
+    **Disconnect** on one of the Page rows. A box asks *"Disconnect …?
+    Scheduled posts will stop publishing to it."* — click OK. A message reads
+    *"Disconnected"*.
+20. Screenshot the Facebook card after disconnecting, showing that the row is
+    gone.
+21. Repeat step 19 for the remaining Facebook rows so no Facebook account is
+    left connected. Screenshot the empty Facebook card.
+
+**Evidence to capture (Script 1)**
+
+- [ ] Screenshot: Facebook's Page-choosing screen with two or more Pages ticked
+- [ ] Screenshot: FablePeak Facebook card listing all authorised Pages
+- [ ] Screenshot: the green **✓ Publishing account** mark on the Page you chose
+- [ ] Note: the exact name of the Page you selected for publishing
+- [ ] Screenshot: the **Delivery results** panel showing Facebook —
+      **Published — view post**
+- [ ] Remote link: the full web address of the real Facebook post
+- [ ] Screenshot: the real Facebook post, showing which Page posted it
+- [ ] Screenshot: the Facebook card after every Page has been disconnected
+- [ ] Note: date, time and time zone for each screenshot
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 2 — Instagram Business: connect, publish an image, disconnect
+
+Tester 1. Allow about 30 minutes. Use your **Business** Instagram profile.
+
+You do **not** need a Facebook Page for this. FablePeak signs you in through
+Instagram directly.
+
+1. Open **Connections**. Find the **Instagram** card. Its note reads
+   *"Business or Creator profiles connect directly. No Facebook Page is
+   required. Every post needs media."*
+2. Click **Connect**. A small window opens with Instagram's own sign-in.
+3. Sign in with your **Business** profile and approve the permissions.
+   Screenshot the Instagram permission screen.
+4. Back in FablePeak, the Instagram card now shows your profile name, a green
+   **✓ Publishing account** and a grey **Verified**. Screenshot the card.
+5. Open **Planner** and click **+ New post**.
+6. In **Content**, type `FablePeak acceptance test - please ignore` and the date.
+7. For the image, either:
+   - click **📱 Choose photo or video** and pick your JPEG — the status line
+     counts up `Uploading … 0%` to `Upload complete ✔` and a preview appears; or
+   - paste a public `https://` link to a JPEG into **Image / video**.
+8. Under **Networks**, tick **IG Instagram** only.
+9. Set **Status** to `scheduled` and click **🚀 Publish now**, then OK.
+10. Reopen the post from the calendar. The **Delivery results** panel shows
+    **Instagram — Published — view post**. Screenshot it.
+11. Click the link, confirm the image is really on your Instagram profile, and
+    copy the full web address. Screenshot the real Instagram post.
+12. Open **Connections**, click **Disconnect** on the Instagram row, confirm,
+    and screenshot the card afterwards.
+
+**Evidence to capture (Script 2)**
+
+- [ ] Screenshot: Instagram's own permission screen (no Facebook Page step)
+- [ ] Screenshot: FablePeak Instagram card showing your Business profile name
+      and **✓ Publishing account**
+- [ ] Screenshot: **Delivery results** showing Instagram —
+      **Published — view post**
+- [ ] Remote link: the full web address of the real Instagram post
+- [ ] Screenshot: the real Instagram post on your profile
+- [ ] Screenshot: the Instagram card after disconnecting
+- [ ] Note: that the profile used was a **Business** profile
+- [ ] Note: date, time and time zone for each screenshot
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 3 — Instagram Creator: connect, and check it survives
+
+Tester 1. About 15 minutes on day 1, then two short check-backs.
+
+This row proves a **Creator** profile connects the same way, and that FablePeak
+keeps the connection alive by itself over several days without asking you to
+sign in again.
+
+**Day 1**
+
+1. Open **Connections** and click **Connect** on the **Instagram** card. (If a
+   previous Instagram profile is still listed, the button reads
+   **Connect another**.)
+2. Sign in with your **Creator** profile and approve the permissions.
+3. The Instagram card shows the Creator profile name with **✓ Publishing
+   account** and **Verified**. Screenshot the card. Write down the exact
+   profile name and the date and time.
+4. Hover your mouse over the grey word **Verified** — a small tooltip shows the
+   date and time FablePeak last checked the connection. Note it down. (On a
+   phone there is no hover; skip this and just note the day-1 time.)
+
+**Day 2 (about 24 hours later)**
+
+5. Sign in, open **Connections**, and screenshot the Instagram card again.
+6. It must still show the Creator profile with **✓ Publishing account**.
+   It must **not** show **⚠️ Needs reconnecting** or **⚠️ Connection check
+   failed**, and you must **not** have been asked to sign in to Instagram again.
+
+**Day 7 (about a week after day 1)**
+
+7. Repeat step 5. Screenshot the card again.
+8. Then prove it still works: open **Planner**, create a post with your image,
+   tick **IG Instagram** only, and use **🚀 Publish now**. The **Delivery
+   results** panel must show **Published — view post**. Copy the link.
+9. Open **Connections** and **Disconnect** the Creator profile. Screenshot.
+
+If at any check-back the card shows **⚠️ Needs reconnecting**, stop and report
+it immediately with a screenshot and the time — that is a result the release
+owner needs.
+
+**Evidence to capture (Script 3)**
+
+- [ ] Screenshot: Instagram card on day 1 showing the **Creator** profile
+      connected
+- [ ] Note: the exact Creator profile name, and that it is a Creator (not
+      Business) profile
+- [ ] Note: the day-1 "Verified" tooltip date and time, if you could see it
+- [ ] Screenshot: Instagram card on day 2, still healthy, with the date visible
+      or noted
+- [ ] Screenshot: Instagram card on day 7, still healthy, with the date noted
+- [ ] Note: confirmation that you were never asked to sign in to Instagram again
+      between day 1 and day 7
+- [ ] Screenshot: **Delivery results** for the day-7 post
+- [ ] Remote link: the full web address of the day-7 Instagram post
+- [ ] Screenshot: the Instagram card after disconnecting
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+> Note for the release owner: FablePeak's screens do not display token renewal
+> directly. Pair these dated screenshots with the hourly connection-maintenance
+> job evidence in the beta evidence record.
+
+---
+
+## Script 4 — YouTube: connect, check the channel, upload a private video
+
+Tester 1. Allow about 30 minutes.
+
+1. Open **Connections**. The **YouTube** card note reads *"Uploads a video
+   (needs a video URL). New API projects publish as private until Google audits
+   them."*
+2. Click **Connect**. A small window opens with Google's sign-in.
+3. Sign in with the Google account that owns your YouTube channel and approve
+   the permissions. Screenshot Google's permission screen.
+4. Back in FablePeak, the YouTube card shows your channel name with
+   **✓ Publishing account**. **Check the channel name is the right one** — if
+   your Google account owns several channels, confirm it matches the channel
+   you intended. Screenshot the card.
+5. Open **Planner** and click **+ New post**.
+6. In **Content**, type `FablePeak acceptance test - please ignore` and the date.
+7. Add your video: click **📱 Choose photo or video**, pick your MP4, and wait
+   for **Upload complete ✔**. A video preview appears.
+   - If you paste a link instead, it must be a direct link to a video **file**.
+     A `youtube.com/watch` or `youtu.be` link is refused with the message
+     *"YouTube needs a direct video file URL, not a YouTube watch link"*.
+8. Under **Networks**, tick **YT YouTube** only.
+9. Set **Status** to `scheduled` and click **🚀 Publish now**, then OK. This
+   takes longer than a text post — wait for it.
+10. Reopen the post. **Delivery results** shows **YouTube — Published — view
+    post**. Screenshot it and copy the link.
+11. Open the link. Sign in to YouTube Studio if asked. Confirm:
+    - the video is on the channel named in step 4, and
+    - its visibility is **Private**.
+    Screenshot the video in YouTube Studio showing the channel name and the
+    Private setting.
+12. Return to **Connections**, click **Disconnect** on the YouTube row, confirm,
+    and screenshot the card afterwards.
+
+**Evidence to capture (Script 4)**
+
+- [ ] Screenshot: Google's permission screen
+- [ ] Screenshot: FablePeak YouTube card showing the correct channel name
+- [ ] Note: the exact channel name, written out
+- [ ] Screenshot: **Delivery results** showing YouTube —
+      **Published — view post**
+- [ ] Remote link: the full web address of the uploaded video
+- [ ] Screenshot: YouTube Studio showing the video on that channel and set to
+      **Private**
+- [ ] Screenshot: the YouTube card after disconnecting
+- [ ] Note: date, time and time zone for each screenshot
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 5 — Revoking access at the provider
+
+Tester 1. Allow about 45 minutes, including a 20-minute wait.
+
+This proves that when you take FablePeak's access away at Facebook itself,
+FablePeak notices and says so — and that it does **not** wrongly break a
+different account that is still fine.
+
+**You need two accounts connected at once before you start.** Reconnect if you
+disconnected them earlier:
+
+- Facebook: connect and authorise at least one Page (as in Script 1).
+- YouTube: connect your channel (as in Script 4).
+
+Screenshot the Connections screen showing **both** healthy, each with
+**✓ Publishing account**. Note the time. This is your "before" picture.
+
+**Now revoke Facebook only.** Do this in Facebook, not in FablePeak:
+
+1. Go to <https://www.facebook.com/> and sign in as yourself.
+2. Open **Settings & privacy → Settings**, then find **Apps and Websites**
+   (on some accounts this sits under a **Security** or **Apps** heading, and on
+   the Accounts Center it may be listed as **Apps and websites**).
+3. Find **FablePeak** in the list of active apps.
+4. Screenshot the list showing FablePeak present.
+5. Choose **Remove** for FablePeak and confirm.
+6. Screenshot the list again showing FablePeak gone.
+7. Write down the exact date, time and time zone of the removal. This is the
+   most important timestamp in this script.
+
+**Do not touch YouTube. Leave it exactly as it is.**
+
+**Then watch FablePeak:**
+
+8. Wait at least **20 minutes** after the removal. FablePeak re-checks a
+   connection only when its last check is more than 15 minutes old, so an
+   immediate reload may still show the old, healthy state — that is expected and
+   is not a failure.
+9. Go back to <https://fablepeak.com>, sign in, and open **Connections**.
+   Reload the page once.
+10. On the **Facebook** card, the account row must now show
+    **⚠️ Needs reconnecting** in red, or **⚠️ Connection check failed** in red,
+    with a red explanation line underneath. Screenshot the whole card,
+    including the red text.
+11. The Facebook card's button will now read **Reconnect**.
+12. **The Facebook row must never keep showing the healthy green
+    ✓ Publishing account state.** If it still looks healthy 30 minutes after
+    the removal, that is a failure — screenshot it, note the time, and report it.
+13. On the same screen, the **YouTube** card must still show your channel with
+    the green **✓ Publishing account** and no red warning. Screenshot it.
+14. Prove the good account still works: open **Planner**, create a post, tick
+    **YT YouTube** only, add your video, and **🚀 Publish now**. It must publish
+    normally. Screenshot the **Delivery results** and copy the link.
+15. Optional but useful: create a second post, tick **FB Facebook** only, and
+    try **🚀 Publish now**. It should fail and say so plainly. Screenshot the
+    **Delivery results** panel with the Facebook failure message.
+16. Click **Reconnect** on the Facebook card, sign in again, and confirm the
+    card returns to green **✓ Publishing account**. Screenshot it.
+
+**Evidence to capture (Script 5)**
+
+- [ ] Screenshot: "before" Connections screen with Facebook **and** YouTube both
+      healthy
+- [ ] Screenshot: Facebook's apps list showing FablePeak, before removal
+- [ ] Screenshot: Facebook's apps list after removal, FablePeak gone
+- [ ] Note: exact date, time and time zone of the removal, and the exact menu
+      path you actually used inside Facebook
+- [ ] Note: the time you reloaded FablePeak afterwards
+- [ ] Screenshot: FablePeak Facebook card showing **⚠️ Needs reconnecting** (or
+      **⚠️ Connection check failed**) with its red message
+- [ ] Screenshot: FablePeak YouTube card still healthy at the same moment
+- [ ] Screenshot: **Delivery results** for the YouTube post published after the
+      Facebook revocation, plus its remote link
+- [ ] Screenshot (optional): **Delivery results** showing the Facebook failure
+- [ ] Screenshot: Facebook card healthy again after **Reconnect**
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 6 — Two testers: no one can see anyone else's workspace
+
+**Tester 1 and Tester 2 together.** Allow about 45 minutes. Do this on two
+separate devices, in the same room or on a call so you can compare screens.
+Run this **before** Script 8.
+
+Before starting, Tester 2 completes "First-run setup" and connects **one**
+social account of any kind, so each tester has real assets of their own.
+
+**Part A — Tester 2 cannot see Tester 1's things**
+
+1. Both testers sign in at <https://fablepeak.com> on their own devices.
+2. Tester 1: open **Settings**. Under **Cloud sync & team accounts** it reads
+   `☁️ Cloud · synced · signed in as <your email>`. Screenshot it. Do the same
+   on Tester 2's device. These two screenshots prove two different people are
+   signed in.
+3. Tester 1: click the **Brand** dropdown at the top of the left menu and
+   screenshot the full list of workspace names.
+4. Tester 2: do the same. **Tester 1's workspace name must not appear in Tester
+   2's list, and Tester 2's must not appear in Tester 1's.**
+5. Tester 2: open **Connections** and screenshot the whole screen. **None of
+   Tester 1's Pages, Instagram profiles or YouTube channels may appear**, and
+   there must be no **Use for publishing** or **Disconnect** button belonging to
+   Tester 1's accounts.
+6. Tester 2: open **Planner** and screenshot the calendar. **None of Tester 1's
+   test posts may appear.** Move back a month and forward a month and check
+   again.
+7. Tester 2: open **Inbox**, **SmartLinks** and **Reports** and screenshot each.
+   Nothing belonging to Tester 1 may appear.
+
+**Part B — Tester 2 cannot force Tester 1's workspace in**
+
+8. Tester 1: open **Settings** and click **⬇ Export backup**. A file named
+   `fablepeak-backup-<date>.json` downloads. Send **only this file** to Tester 2
+   (it contains no passwords and no access tokens, but treat it as private and
+   delete it afterwards).
+9. Tester 2: open **Settings**, click **⬆ Import backup**, and choose Tester 1's
+   file.
+10. Watch the bottom right of the screen closely and screenshot immediately. Two
+    messages appear in quick succession: *"Backup restored ✔"*, then a red-tinted
+    warning beginning **"⚠️ Cloud save failed:"** and mentioning that you are
+    **not authorised for this brand**.
+11. That second message is the point of the test. It shows the server refused to
+    hand Tester 1's workspace to Tester 2, even though Tester 2 held the file.
+12. Tester 2: while the imported copy is on screen, open **Connections**.
+    Tester 1's connected accounts must **not** be listed — the imported file
+    describes a workspace, not access to it. Screenshot this.
+13. **Clean up (required).** Tester 2: reload the page (F5, or Cmd-R on a Mac).
+    Tester 2's own workspace name returns in the **Brand** dropdown, and Tester
+    1's is gone. Screenshot the dropdown after the reload. Then delete the
+    backup file from Tester 2's device.
+
+If at any point Tester 2 can see, select, disconnect or post to anything
+belonging to Tester 1, stop immediately, screenshot it, note the time, and tell
+the release owner. That is a serious finding.
+
+**Evidence to capture (Script 6)**
+
+- [ ] Screenshot: Tester 1's Settings showing "signed in as \<Tester 1 email\>"
+- [ ] Screenshot: Tester 2's Settings showing "signed in as \<Tester 2 email\>"
+- [ ] Screenshot: Tester 1's **Brand** dropdown list
+- [ ] Screenshot: Tester 2's **Brand** dropdown list, without Tester 1's
+      workspace
+- [ ] Screenshot: Tester 2's **Connections** screen, without Tester 1's accounts
+- [ ] Screenshot: Tester 2's **Planner** calendar, without Tester 1's posts
+- [ ] Screenshots: Tester 2's **Inbox**, **SmartLinks** and **Reports**
+- [ ] Screenshot: the **"⚠️ Cloud save failed … not authorised for this brand"**
+      message after the import
+- [ ] Screenshot: Tester 2's **Connections** during the imported view, still
+      showing none of Tester 1's accounts
+- [ ] Screenshot: Tester 2's **Brand** dropdown after reloading, back to normal
+- [ ] Note: both testers' names, both dates and times, and confirmation that two
+      separate devices were used
+- [ ] Confirm: the exported backup file has been deleted from Tester 2's device
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 7 — A scheduled post where one network works and one fails
+
+Tester 1. Allow about 1 hour, mostly waiting.
+
+This proves that when FablePeak sends a scheduled post to two networks at once
+and only one succeeds, the success is kept and the failure is shown clearly
+rather than hidden.
+
+**Important about time.** FablePeak's scheduler runs on Perth time
+(Australia/Perth, AWST). The **Time** box in the post composer has no time-zone
+label. Ask the release owner what to type so the post fires roughly 15 minutes
+from now, and write down both the time you typed and your own local clock time.
+
+**Set up:** connect **Facebook** (at least one Page) and **Instagram**
+(Business profile). Both must show green **✓ Publishing account**. Screenshot
+this starting state.
+
+**Make one network fail on purpose.** Use method A; use method B only if A does
+not produce a failure.
+
+- **Method A — a picture format Instagram will not accept.** Use a **PNG**
+  image. Instagram's publishing service accepts JPEG images only, while Facebook
+  accepts PNG happily. Upload a `.png` file through **📱 Choose photo or video**,
+  or paste a public `https://` link ending in `.png`.
+- **Method B — remove Instagram's permission after scheduling.** Schedule the
+  post first (steps 1–6 below), then immediately go to the Instagram app →
+  **Settings and privacy → Website permissions → Apps and websites** and remove
+  FablePeak, before the scheduled time arrives.
+
+Now:
+
+1. Open **Planner** and click **+ New post**.
+2. **Content:** `FablePeak acceptance test - mixed delivery - please ignore` and
+   the date.
+3. **Image / video:** add your PNG (method A) or your JPEG (method B).
+4. **Networks:** tick **FB Facebook** *and* **IG Instagram**. Both, together.
+5. **Date / Time:** set the time about 15 minutes ahead as agreed above.
+6. **Status:** `scheduled`. Click **Schedule**. A message reads
+   *"Post scheduled ✔"*. Screenshot the composer before you click, and the
+   calendar afterwards showing the light-blue **Scheduled** chip.
+7. If using method B, remove FablePeak's Instagram permission now, and note the
+   time.
+8. Wait until the scheduled time passes, then wait another 5 minutes. Reload the
+   page.
+9. On the calendar the post chip should now be **red**. The legend below the
+   calendar labels red as **Needs attention**. Screenshot the calendar.
+10. Click the post. The **Delivery results** panel lists both networks
+    separately:
+    - **Facebook** — **Published — view post** (a link), and
+    - **Instagram** — a red failure line explaining what went wrong.
+    One of three wordings may appear for the failing network: a plain error
+    message, *"Automatic retry scheduled for …"* with a date and time, or
+    *"Verify on Instagram before doing anything else — delivery may have
+    succeeded."*
+11. Screenshot the whole **Delivery results** panel so both rows are visible in
+    one image. This single screenshot is the core evidence for this row.
+12. Click the Facebook **Published — view post** link, confirm the post is
+    really on the Page, and copy the address. Screenshot the real post.
+13. Check Instagram directly and confirm nothing was posted there (or, if the
+    message said delivery may have succeeded, note what you actually found).
+14. If a **Retry failed targets now** button is shown, click it once. A box
+    explains that published and uncertain targets will not be repeated. Click
+    OK, then screenshot the panel again.
+15. **Check nothing was posted twice.** Reload the real Facebook Page and
+    confirm there is exactly **one** copy of this test post. Screenshot it.
+
+**Evidence to capture (Script 7)**
+
+- [ ] Note: which method (A or B) you used to make Instagram fail
+- [ ] Note: the time you typed into the composer, your own local time, and your
+      time zone
+- [ ] Screenshot: the composer with both **FB** and **IG** ticked, before saving
+- [ ] Screenshot: the calendar showing the **Scheduled** chip
+- [ ] Screenshot: the calendar afterwards showing the red **Needs attention**
+      chip
+- [ ] Screenshot: the full **Delivery results** panel showing Facebook published
+      **and** Instagram failed, in one image
+- [ ] Note: the exact failure wording shown for Instagram, typed out
+- [ ] Remote link: the full web address of the real Facebook post
+- [ ] Screenshot: the real Facebook Page showing exactly **one** copy of the post
+- [ ] Screenshot (if shown): the panel after using **Retry failed targets now**
+- [ ] Note: what you found on Instagram when you checked directly
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+---
+
+## Script 8 — Deleting your data and your account
+
+Tester 1. Allow about 30 minutes. **Do this last.** It destroys the account you
+have been testing with, so make sure Scripts 1–7 are finished and their evidence
+is already sent.
+
+**Part A — follow the published instructions as written**
+
+1. Open <https://fablepeak.com/data-deletion.html>. This is the public page
+   FablePeak points social platforms at. Screenshot the top of it.
+2. Follow its first set of instructions, **Disconnect one social account**,
+   exactly as printed: sign in to FablePeak, open your workspace, choose
+   **Connections**, find one connected account, choose **Disconnect** and
+   confirm.
+3. Screenshot the Connections card afterwards showing the account is gone.
+4. Note whether the printed steps matched what you actually saw. If any wording
+   differed, write down both versions.
+
+**Part B — remove FablePeak at Facebook and capture the reference code**
+
+5. In Facebook, go to **Settings & privacy → Settings → Apps and Websites**,
+   find **FablePeak**, and choose **Remove**.
+6. Facebook may offer a link to check the status of your data-deletion request.
+   If it does, follow it. It opens a FablePeak page headed **"Your deletion
+   request reference"** showing a **Confirmation code**.
+7. **Screenshot that page and write the confirmation code down.** The code is
+   the deletion reference this row needs.
+8. If Facebook does **not** offer such a link, say so in your notes, then send
+   an email from your registered address to the deletion address on the
+   data-deletion page, with the subject **Delete my FablePeak account**. Keep
+   the reply as your reference and screenshot it.
+
+> The confirmation code on that page is safe to share — it is a request
+> reference, not a password and not an access token. The **web address** of that
+> page contains the same code after `?code=`; you may include it, but do not
+> include any address containing `token`.
+
+**Part C — delete the FablePeak account itself**
+
+9. Sign in to FablePeak and open **Settings**.
+10. Scroll to the red-bordered box headed **Delete account**. Screenshot it.
+11. Click **Delete my account**.
+12. A box asks you to type `DELETE`. Type it in capitals and confirm.
+13. A second box asks for your FablePeak password. Enter it. **Do not screenshot
+    this box while your password is in it.**
+14. A message reads *"Deleting account…"* and the page reloads to the signed-out
+    welcome screen. Screenshot the welcome screen.
+15. Try to sign in again with the same email and password. It must fail.
+    Screenshot the error message on the sign-in card.
+16. Note the exact date, time and time zone of the deletion.
+
+**Evidence to capture (Script 8)**
+
+- [ ] Screenshot: the public `data-deletion.html` page
+- [ ] Note: whether its printed steps matched the real screens, and any wording
+      that differed
+- [ ] Screenshot: Connections card after disconnecting per the published steps
+- [ ] Screenshot: Facebook's apps list after removing FablePeak
+- [ ] Screenshot: the **"Your deletion request reference"** page showing the
+      **Confirmation code** — or, if Facebook gave no link, the email reply you
+      received instead
+- [ ] Note: the confirmation code, typed out
+- [ ] Screenshot: the **Delete account** box in Settings
+- [ ] Screenshot: the signed-out welcome screen after deletion
+- [ ] Screenshot: the failed sign-in attempt afterwards
+- [ ] Note: exact date, time and time zone of the deletion
+- [ ] Check: **no screenshot shows the password prompt with text in it**, and no
+      screenshot shows any address containing `token`
+- [ ] Send to the agreed evidence location
+
+---
+
+## When you are finished
+
+Tell the release owner you are done and list which scripts you completed. Then:
+
+- Delete any exported backup files from your device.
+- You may keep or delete your test Facebook Pages, Instagram profiles and
+  YouTube channel — check with the release owner first, in case any evidence
+  still needs to be re-checked.
+- Do not delete the evidence you sent.
+
+---
+
+## For the release owner — evidence mapping
+
+Transcribe each completed script into the matching row of the
+**Human-controlled provider acceptance** table in
+[EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md). Record the date, the
+tester, the result, and a link to the access-controlled evidence folder. Never
+paste tokens, passwords or the testers' personal data into that record.
+
+| Script | Evidence-record row (Scenario column) | Account/tester column | Key artefacts to link |
+|---|---|---|---|
+| First-run setup | Supports rows 1–8; also satisfies the "New customer" line in PRODUCTION_ONBOARDING §4 | Unrelated test account | Confirmation email, brand creation, first Connections view |
+| 1 | Facebook OAuth, multi-Page selection, publish, remote link, disconnect | Unrelated test account | Page-choosing screen, multi-Page card, publishing-account switch, delivery panel, Facebook remote link, empty card after disconnect |
+| 2 | Direct Instagram Business OAuth, image publish, remote link, disconnect | Unrelated test account | Instagram-only consent screen, connected card, delivery panel, Instagram remote link, card after disconnect |
+| 3 | Direct Instagram Creator OAuth and token renewal | Unrelated test account | Day 1 / day 2 / day 7 dated card screenshots, day-7 publish + remote link. Pair with the hourly `connections` job evidence — the UI does not show renewal directly |
+| 4 | YouTube OAuth, correct channel, private video upload, disconnect | Unrelated test account | Google consent screen, channel name on card, delivery panel, video link, YouTube Studio showing Private + channel, card after disconnect |
+| 5 | Revoked credential becomes needs-reconnect without disabling a still-valid token on transient outage | Controlled provider account | Before/after Facebook apps list with removal timestamp, red **⚠️ Needs reconnecting** card, healthy YouTube card at the same moment, successful YouTube publish afterwards, healthy card after Reconnect. The transient-outage half remains covered by the automated regression tests |
+| 6 | Tenant A cannot read/select/disconnect/publish through Tenant B assets | Two unrelated FablePeak users | Both signed-in Settings screenshots, both Brand dropdowns, Tester 2's Connections/Planner/Inbox/SmartLinks/Reports, the **"not authorised for this brand"** cloud-save refusal, post-reload dropdown |
+| 7 | Scheduled mixed-network delivery retains success and visibly identifies failure | Unrelated test account | Composer with both networks, Scheduled chip, red Needs-attention chip, single delivery panel showing one published + one failed, Facebook remote link, proof of exactly one live copy |
+| 8 | Account deletion and provider-data deletion instructions complete | Unrelated test account | data-deletion.html screenshot, disconnect per published steps, deletion-reference confirmation code (or email reply), Delete account box, signed-out state, failed re-sign-in |
