@@ -786,6 +786,126 @@ Deno.test("Pinterest publishing cannot fall back to another workspace's board", 
   }
 });
 
+Deno.test("X metrics report the cumulative follower total and no invented impressions", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === "https://api.x.com/2/users/me?user.fields=public_metrics") {
+      return Promise.resolve(json({ data: {
+        id: "user-1",
+        public_metrics: {
+          followers_count: 4210, following_count: 87, post_count: 512, listed_count: 9,
+        },
+      } }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const measured = await ADAPTERS.x.metrics!({
+      accessToken: "token", connection: { external_id: "user-1", meta: {} },
+    });
+    if (measured?.followers !== 4210) {
+      throw new Error(`Expected 4210 followers, received ${JSON.stringify(measured)}`);
+    }
+    // X exposes no impression figure inside these scopes; reporting one would
+    // be fabricated.
+    if (measured.impressions !== undefined || measured.engagements !== undefined) {
+      throw new Error(`X must not report metrics it cannot read: ${JSON.stringify(measured)}`);
+    }
+    if (requests.length !== 1) {
+      throw new Error(`Expected one metrics request, received ${requests.join(", ")}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("X metrics surface a provider failure as a ProviderRequestError", async () => {
+  globalThis.fetch = () => Promise.resolve(json({ title: "Unauthorized" }, 401));
+
+  try {
+    await ADAPTERS.x.metrics!({
+      accessToken: "expired", connection: { external_id: "user-1", meta: {} },
+    }).then(
+      () => { throw new Error("Expected X metrics to fail"); },
+      (error) => {
+        if (!(error instanceof ProviderRequestError)) {
+          throw new Error(`Expected ProviderRequestError, received ${error?.name}`);
+        }
+        if (!String(error.message).includes("x metrics: 401")) throw error;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest metrics report the connected board's follower total", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === "https://api.pinterest.com/v5/boards/board-1") {
+      return Promise.resolve(json({
+        id: "board-1", name: "Coffee", follower_count: 133, pin_count: 42,
+      }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const measured = await ADAPTERS.pinterest.metrics!({
+      accessToken: "token", connection: { external_id: "board-1", meta: {} },
+    });
+    if (measured?.followers !== 133) {
+      throw new Error(`Expected 133 followers, received ${JSON.stringify(measured)}`);
+    }
+    // monthly_views lives on /v5/user_account, which needs a scope this
+    // adapter deliberately does not request.
+    if (measured.impressions !== undefined) {
+      throw new Error(`Pinterest must not report unreadable impressions: ${JSON.stringify(measured)}`);
+    }
+    if (requests.length !== 1 || requests[0].includes("/user_account")) {
+      throw new Error(`Expected one board metrics request, received ${requests.join(", ")}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Pinterest metrics surface a provider failure as a ProviderRequestError", async () => {
+  globalThis.fetch = () => Promise.resolve(json({ message: "Board not found" }, 404));
+
+  try {
+    await ADAPTERS.pinterest.metrics!({
+      accessToken: "token", connection: { external_id: "board-gone", meta: {} },
+    }).then(
+      () => { throw new Error("Expected Pinterest metrics to fail"); },
+      (error) => {
+        if (!(error instanceof ProviderRequestError)) {
+          throw new Error(`Expected ProviderRequestError, received ${error?.name}`);
+        }
+        if (!String(error.message).includes("pinterest metrics: 404")) throw error;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("LinkedIn exposes no metrics adapter while its scopes cannot read any", () => {
+  // Absent rather than a null-returning metrics(): ingest-metrics skips a
+  // platform with no metrics() before counting an attempt, so the daily job
+  // keeps attempted == ingested + failed instead of reporting a phantom
+  // dropped ingestion every night.
+  if (ADAPTERS.linkedin.metrics !== undefined) {
+    throw new Error(
+      "LinkedIn analytics need partner scopes; metrics() must stay absent, not return null");
+  }
+});
+
 Deno.test("mixed-network publishing preserves success while scheduling a safe failed target retry", async () => {
   const targetMarks: any[] = [];
   const postUpdates: any[] = [];

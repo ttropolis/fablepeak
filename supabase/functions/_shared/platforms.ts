@@ -481,6 +481,23 @@ const x: PlatformAdapter = {
       remote_url: `https://x.com/i/status/${publishPayload.data.id}`,
     };
   },
+
+  /** `public_metrics` is served to the `users.read` + `tweet.read` scopes this
+   * adapter already requests, so no scope change is needed to read it.
+   * `followers_count` is a cumulative account total, which is what
+   * metrics_daily stores and converts into day-over-day deltas.
+   *
+   * X exposes impressions only through per-post organic/private metrics, which
+   * need scopes this adapter deliberately does not hold, so impressions are
+   * omitted rather than reported as a fabricated zero. */
+  async metrics({ accessToken }) {
+    const d = await j(await fetch(
+      "https://api.x.com/2/users/me?user.fields=public_metrics",
+      { headers: { Authorization: `Bearer ${accessToken}` } }), "x metrics");
+    const publicMetrics = d.data?.public_metrics;
+    if (publicMetrics?.followers_count == null) return null;
+    return { followers: Number(publicMetrics.followers_count) };
+  },
 };
 
 /* ---------------------------------------------------------------- Meta base */
@@ -917,6 +934,26 @@ const linkedin: PlatformAdapter = {
       "LinkedIn may have accepted this post. Verify the profile before retrying.");
     return { remote_id: id, remote_url: `https://www.linkedin.com/feed/update/${id}` };
   },
+
+  // No metrics(). Deliberate, and deliberately absent rather than a metrics()
+  // that returns null.
+  //
+  // Nothing truthful is retrievable with the scopes above. `openid`/`profile`
+  // buy /v2/userinfo, which carries identity only — no connection, follower or
+  // impression figure. Network size needs `r_1st_connections_size`, and
+  // follower or share statistics need the Community Management / Marketing
+  // partner APIs; both are review-gated, and requesting them here is out of
+  // scope for this adapter.
+  //
+  // Given nothing is retrievable, absent beats returning null. ingest-metrics
+  // skips a platform with no metrics() *before* incrementing `attempted`, but
+  // counts a null-returning adapter as attempted and then writes no row, so the
+  // daily job result would report attempted > ingested + failed. Operators read
+  // that gap as a silently dropped ingestion (the beta evidence record treats
+  // attempted == ingested + failed as the healthy shape), which would be a
+  // false alarm every single night. Omitting metrics() states the same fact —
+  // LinkedIn analytics are not available — without corrupting the counter that
+  // says whether real ingestion work succeeded.
 };
 
 /* -------------------------------------------------------------------- TikTok */
@@ -1117,6 +1154,24 @@ const pinterest: PlatformAdapter = {
     if (!pin.id) throw new PublishOutcomeUnknownError(
       "Pinterest may have accepted this Pin. Verify the board before retrying.");
     return { remote_id: String(pin.id), remote_url: `https://www.pinterest.com/pin/${pin.id}/` };
+  },
+
+  /** Board follower count — the only audience total reachable with the
+   * `boards:read` scope this adapter already requests. A FablePeak Pinterest
+   * connection *is* one board (`external_id` is the board id), so the board's
+   * own cumulative follower total is the honest audience figure for it.
+   *
+   * The account-level `/v5/user_account` object (`follower_count`,
+   * `monthly_views`) is the obvious alternative, but it requires
+   * `user_accounts:read`, which this adapter does not request and which must
+   * not be added here. Pinterest has no impression figure inside `boards:read`,
+   * so impressions stay unreported instead of guessed. */
+  async metrics({ accessToken, connection }) {
+    const board = await j(await fetch(
+      `https://api.pinterest.com/v5/boards/${encodeURIComponent(connection.external_id)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }), "pinterest metrics");
+    if (board?.follower_count == null) return null;
+    return { followers: Number(board.follower_count) };
   },
 };
 

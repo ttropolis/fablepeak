@@ -228,6 +228,14 @@ account shows "⚠️ Needs reconnecting" with a **Reconnect** button while the
 current token still publishes. Reconnecting through the normal Connect flow
 issues a fresh 60-day token and returns the connection to `active`.
 
+**Analytics — not available on these scopes.** The daily `ingest-metrics` job
+has no LinkedIn adapter, deliberately. `openid`/`profile` buy `/v2/userinfo`,
+which is identity only; connection counts need `r_1st_connections_size` and
+follower or share statistics need the Community Management / Marketing partner
+APIs, all of which are review-gated. Rather than record a fabricated or empty
+figure, FablePeak reports nothing for LinkedIn and Analytics keeps its labelled
+simulated fallback for that platform until partner scopes are granted.
+
 **Gotcha:** posting to a **Company Page** needs the Community Management API,
 which LinkedIn only grants to registered legal businesses after a two-stage
 review, and there's no sandbox to test it first. Personal-profile posting has
@@ -253,6 +261,12 @@ It creates image Pins from public HTTPS image URLs and records the returned Pin
 ID and URL. Video Pins are rejected before creation until their separate media
 upload lifecycle is implemented. Each workspace supports one Pinterest login;
 reconnecting safely replaces and refreshes that account's available boards.
+
+**Analytics.** Once a board is connected, the daily `ingest-metrics` job reads
+that board's cumulative `follower_count` from `GET /v5/boards/{board_id}`,
+which the `boards:read` scope above already covers. Account-level reach
+(`monthly_views` on `/v5/user_account`) needs `user_accounts:read`, which
+FablePeak does not request, so no impression figure is recorded.
 
 `productionEnabled` must remain `false` until the credentials are deployed and
 an external-account test has connected, selected a board, published one image
@@ -298,6 +312,12 @@ X_CLIENT_SECRET=<...>
 ```
 
 Billing is per action — see the warning at the top.
+
+**Analytics.** The daily `ingest-metrics` job reads the cumulative
+`followers_count` from `GET /2/users/me?user.fields=public_metrics`, covered by
+the `users.read` and `tweet.read` scopes the adapter already requests. X exposes
+impressions only through per-post organic metrics on scopes FablePeak does not
+hold, so no impression figure is recorded.
 
 ---
 

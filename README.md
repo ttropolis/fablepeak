@@ -113,6 +113,12 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
   cannot be used as an upload source.
 - Analytics and Reports use daily platform data once ingestion has produced
   rows. Until then they display a clearly-labelled simulated fallback.
+- Daily ingestion reads real follower totals for Facebook, Instagram, YouTube,
+  X and Pinterest, plus YouTube channel views as impressions. X and Pinterest
+  are still production-frozen, so those two only start producing rows on the day
+  they are enabled and an account connects. LinkedIn reports nothing: follower
+  and connection counts need LinkedIn partner scopes FablePeak does not hold,
+  so its Analytics stay on the labelled simulated fallback.
 - Inbox conversations and replies are simulated; real messaging permissions
   are a separate platform-review project.
 - Google Business remains a visible, explicitly disabled roadmap card without
