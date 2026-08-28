@@ -2,7 +2,11 @@
 // view reports the last verified result; provider credentials never leave this
 // function.
 import { ADAPTERS } from "../_shared/platforms.ts";
-import { freshConnectionToken } from "../_shared/token-manager.ts";
+import {
+  type Connection,
+  freshConnectionToken,
+  revokeUserAuthorizations,
+} from "../_shared/token-manager.ts";
 import { getUser, isMember, sbSelect, sbUpdate } from "../_shared/db.ts";
 
 const env = (key: string) => Deno.env.get(key);
@@ -25,14 +29,28 @@ Deno.serve(async (req) => {
     const user = await getUser(jwt);
     if (!user) return json({ error: "Invalid session" }, 401);
 
-    const { brand_id, account_id } = await req.json();
+    const { brand_id, account_id, action } = await req.json();
     if (!brand_id || !await isMember(brand_id, user.id)) {
       return json({ error: "You don't have access to that brand" }, 403);
+    }
+    // Revoking is deliberately per-connection: a whole-brand revoke would be
+    // a destructive action no disconnect button ever asks for.
+    if (action === "revoke" && !account_id) {
+      return json({ error: "account_id is required to revoke" }, 400);
     }
 
     let query = `select=*&brand_id=eq.${encodeURIComponent(brand_id)}`;
     if (account_id) query += `&id=eq.${encodeURIComponent(account_id)}`;
     const connections = await sbSelect("social_connections", query);
+
+    // Provider-side revocation seam for disconnect. The row itself is still
+    // removed by the disconnect_account RPC, which resolves membership from the
+    // caller's own auth.uid(); this function only makes the provider call that
+    // the browser cannot, because it never sees the stored credentials.
+    if (action === "revoke") {
+      return json({ results: await revokeUserAuthorizations(connections as Connection[], env) });
+    }
+
     const results = [];
     const sharedAccessTokens = new Map<string, string>();
 

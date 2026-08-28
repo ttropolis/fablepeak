@@ -32,6 +32,12 @@ export interface PublishInput {
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
 
+/** Outcome of asking a provider to drop FablePeak's authorization.
+ * `unsupported` distinguishes "the provider has no revocation API" from
+ * "revocation was performed", so disconnect never claims an action it could
+ * not take. */
+export interface RevokeResult { revoked: boolean; unsupported?: boolean; }
+
 /** The provider may have accepted the final publish request, but its response
  * was not received. Automatic retrying is unsafe because it can duplicate a
  * public post. */
@@ -118,6 +124,10 @@ export interface PlatformAdapter {
     display_name?: string;
     meta?: Record<string, unknown>;
   }): Promise<Identity>;
+  /** ask the provider to drop this authorization when the customer
+   * disconnects or deletes. Best effort by contract: callers must treat a
+   * throw as non-fatal. Absent while an adapter is production-frozen. */
+  revoke?(tokens: TokenSet): Promise<RevokeResult>;
   /** publish a post; throws with a readable message on failure */
   publish(input: PublishInput): Promise<PublishResult>;
   /** best-effort daily metrics; return null when unsupported */
@@ -253,6 +263,22 @@ const youtube: PlatformAdapter = {
       avatar_url: ch.snippet?.thumbnails?.default?.url,
       meta: { customUrl: ch.snippet?.customUrl },
     };
+  },
+
+  /** Google's revocation endpoint accepts either credential. Revoking the
+   * refresh token invalidates every access token minted from it, so prefer it
+   * when the connection still holds one. */
+  async revoke(t) {
+    const token = t.refresh_token ?? t.access_token;
+    const response = await fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }),
+    });
+    if (!response.ok) {
+      throw new ProviderRequestError("youtube revoke", response.status, await response.text());
+    }
+    return { revoked: true };
   },
 
   // A text "post" on YouTube is a community post — that API is not public.
@@ -547,6 +573,18 @@ const facebook: PlatformAdapter = {
     };
   },
 
+  /** Meta revokes an app authorization through the authorizing *user* token.
+   * Page tokens are derived from it and would only address the Page, so the
+   * retained long-lived user token in `refresh_token` is the credential here. */
+  async revoke(t) {
+    const token = t.refresh_token ?? t.access_token;
+    await j(await fetch(
+      `https://graph.facebook.com/${META_VERSION}/me/permissions` +
+      `?access_token=${encodeURIComponent(token)}`, { method: "DELETE" }),
+      "facebook revoke");
+    return { revoked: true };
+  },
+
   async publish({ text, mediaUrl, accessToken, connection }) {
     const id = connection.external_id;
     const safeMediaUrl = mediaUrl ? publicMediaUrl(mediaUrl, "Facebook") : null;
@@ -669,6 +707,14 @@ const instagram: PlatformAdapter = {
       avatar_url: ig.profile_picture_url,
       meta: { account_name: ig.name ?? null, login_type: "instagram" },
     };
+  },
+
+  /** Business Login for Instagram exposes no revocation endpoint: people
+   * remove FablePeak from Instagram's own "Apps and websites" settings, and
+   * Meta's data-deletion callback covers deletion requests. Reporting that
+   * honestly beats calling an endpoint that would silently do nothing. */
+  revoke() {
+    return Promise.resolve({ revoked: false, unsupported: true });
   },
 
   // IG publishing is two-step: create a media container, then publish it.

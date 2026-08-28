@@ -48,6 +48,66 @@ export async function freshConnectionToken(
   return connectionToken(conn, env, 120_000);
 }
 
+export type RevocationOutcome = {
+  connection_id: string;
+  status: "revoked" | "unsupported" | "failed";
+  error?: string;
+};
+
+/**
+ * Ask the provider to drop FablePeak's authorization for one connection.
+ *
+ * Best effort by contract: a customer must always be able to disconnect or
+ * delete, so a provider outage, an already-invalid credential or a missing
+ * revocation API is reported as an outcome and never thrown.
+ */
+export async function revokeConnectionAuthorization(
+  conn: Connection,
+  env: (key: string) => string | undefined,
+): Promise<RevocationOutcome> {
+  const adapter = ADAPTERS[conn.platform];
+  if (!adapter?.revoke) return { connection_id: conn.id, status: "unsupported" };
+  try {
+    const rawKey = env("SOCIAL_TOKEN_ENCRYPTION_KEY") ?? "";
+    const accessToken = await decryptToken(conn.access_token, rawKey);
+    const refreshToken = await decryptToken(conn.refresh_token, rawKey);
+    if (!accessToken && !refreshToken) {
+      return { connection_id: conn.id, status: "unsupported" };
+    }
+    const outcome = await adapter.revoke({
+      access_token: accessToken ?? refreshToken!,
+      refresh_token: refreshToken ?? undefined,
+    });
+    return {
+      connection_id: conn.id,
+      status: outcome.revoked ? "revoked" : "unsupported",
+    };
+  } catch (error) {
+    return {
+      connection_id: conn.id,
+      status: "failed",
+      error: String((error as Error).message ?? error).slice(0, 300),
+    };
+  }
+}
+
+/**
+ * Revoke a whole set of authorizations — every connection of an account being
+ * deleted, or the single connection being disconnected. Returns one outcome per
+ * connection and never throws, so callers can proceed to local removal
+ * unconditionally.
+ */
+export async function revokeUserAuthorizations(
+  connections: Connection[],
+  env: (key: string) => string | undefined,
+): Promise<RevocationOutcome[]> {
+  const outcomes: RevocationOutcome[] = [];
+  for (const connection of connections) {
+    outcomes.push(await revokeConnectionAuthorization(connection, env));
+  }
+  return outcomes;
+}
+
 async function connectionToken(
   conn: Connection,
   env: (key: string) => string | undefined,

@@ -1,7 +1,8 @@
 // Authenticated FablePeak account deletion. Provider credentials connected by
 // this user are removed, sole-owner workspaces are deleted, and shared
 // workspaces retain continuity by promoting another member before auth removal.
-import { getUser, sbDelete, sbRpc } from "../_shared/db.ts";
+import { getUser, sbDelete, sbRpc, sbSelect } from "../_shared/db.ts";
+import { type Connection, revokeUserAuthorizations } from "../_shared/token-manager.ts";
 
 const env = (key: string) => Deno.env.get(key);
 const CORS = {
@@ -35,6 +36,16 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ email: user.email, password: body.password }),
       });
     if (!reauthenticated.ok) return json({ error: "Password confirmation failed" }, 401);
+
+    // Ask each provider to drop its authorization while the credentials are
+    // still readable — after the rows are gone the grant could only be removed
+    // by the customer, from the provider's own settings. Revocation is best
+    // effort and must never leave someone unable to delete their account.
+    try {
+      const connections = await sbSelect("social_connections",
+        `select=*&user_id=eq.${encodeURIComponent(user.id)}`) as Connection[];
+      await revokeUserAuthorizations(connections, env);
+    } catch { /* provider revocation never blocks local deletion */ }
 
     // This RPC performs credential removal, ownership transfer and membership
     // cleanup in one transaction. Its job row makes Storage cleanup resumable.

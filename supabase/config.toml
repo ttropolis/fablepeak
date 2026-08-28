@@ -271,6 +271,9 @@ verify_jwt = false
 [functions.delete-account]
 verify_jwt = false
 
+[functions.data-deletion]
+verify_jwt = false
+
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]
 # 4152127777 = "123456"

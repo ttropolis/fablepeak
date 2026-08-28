@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "check": "npm test && npm run check:functions",
-    "check:functions": "npx --yes deno@2.9.4 check --frozen --node-modules-dir=auto supabase/functions/oauth-start/index.ts supabase/functions/oauth-callback/index.ts supabase/functions/connection-health/index.ts supabase/functions/publish/index.ts supabase/functions/ingest-metrics/index.ts supabase/functions/maintain-connections/index.ts supabase/functions/operations-health/index.ts supabase/functions/delete-account/index.ts",
+    "check:functions": "npx --yes deno@2.9.4 check --frozen --node-modules-dir=auto supabase/functions/oauth-start/index.ts supabase/functions/oauth-callback/index.ts supabase/functions/connection-health/index.ts supabase/functions/publish/index.ts supabase/functions/ingest-metrics/index.ts supabase/functions/maintain-connections/index.ts supabase/functions/operations-health/index.ts supabase/functions/delete-account/index.ts supabase/functions/data-deletion/index.ts",
     "test": "node --test && npm run test:functions",
-    "test:functions": "npx --yes deno@2.9.4 test --allow-env=LINKEDIN_VERSION,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,APP_TIMEZONE,APP_ORIGIN --frozen --node-modules-dir=auto supabase/functions/_shared/platforms.deno.ts supabase/functions/_shared/token-manager.deno.ts supabase/functions/_shared/job-monitor.deno.ts supabase/functions/_shared/github-oidc.deno.ts supabase/functions/maintain-connections/index.deno.ts supabase/functions/operations-health/index.deno.ts",
+    "test:functions": "npx --yes deno@2.9.4 test --allow-env=LINKEDIN_VERSION,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,APP_TIMEZONE,APP_ORIGIN --frozen --node-modules-dir=auto supabase/functions/_shared/platforms.deno.ts supabase/functions/_shared/token-manager.deno.ts supabase/functions/_shared/job-monitor.deno.ts supabase/functions/_shared/github-oidc.deno.ts supabase/functions/maintain-connections/index.deno.ts supabase/functions/operations-health/index.deno.ts supabase/functions/data-deletion/index.deno.ts",
     "smoke:production": "node scripts/production-smoke.mjs",
     "smoke:cron": "node scripts/cron-health-smoke.mjs"
   }

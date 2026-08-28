@@ -388,10 +388,13 @@ settings at any time; FablePeak's health check then marks the connection
 - Privacy policy: `https://fablepeak.com/privacy.html`
 - Terms of service: `https://fablepeak.com/terms.html`
 - User data deletion instructions: `https://fablepeak.com/data-deletion.html`
-- Data deletion callback URL: **NEEDS-HUMAN-CONFIRM** — no data-deletion
-  *callback* endpoint exists in this repository. Meta accepts a published
-  instructions URL instead; use `https://fablepeak.com/data-deletion.html` in
-  the "Data Deletion Instructions URL" field and leave the callback field empty.
+- Data deletion callback URL: `https://<project-ref>.supabase.co/functions/v1/data-deletion`
+  (the `data-deletion` Edge Function; see ADR 0002). It verifies Meta's
+  `signed_request` against `META_APP_SECRET`, falling back to
+  `INSTAGRAM_APP_SECRET`, and answers with the status URL and confirmation
+  code. Both Meta apps may register the same URL. Keep
+  `https://fablepeak.com/data-deletion.html` in the "Data Deletion
+  Instructions URL" field.
 
 ---
 

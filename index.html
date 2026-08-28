@@ -659,7 +659,20 @@ const RemoteAdapter = {
       const poll = setInterval(() => { if(popup?.closed) done(true); }, 800);
     });
   },
-  async disconnectAccount(id){
+  /** ask the provider to drop its authorization; best effort by design, so a
+   * provider outage never stops the local disconnect below */
+  async revokeAccount(id, brandId){
+    const jwt = await this._jwt();
+    if(!jwt || !brandId) return;
+    await fetch(`${this._fnBase}/connection-health`, {
+      method:"POST",
+      headers:{ Authorization:`Bearer ${jwt}`, apikey:window.FABLEPEAK_BACKEND.anonKey,
+                "Content-Type":"application/json" },
+      body:JSON.stringify({ brand_id:brandId, account_id:id, action:"revoke" }),
+    });
+  },
+  async disconnectAccount(id, brandId){
+    await this.revokeAccount(id, brandId).catch(()=>{});
     const { error } = await this._sb.rpc("disconnect_account", { account_id: id });
     if(error) throw new Error(error.message);
   },
@@ -1896,7 +1909,7 @@ async function disconnectReal(id){
   const name=connCache.accounts.find(a=>a.id===id)?.display_name;
   if(!confirm(`Disconnect ${name || "this account"}? Scheduled posts will stop publishing to it.`)) return;
   try{
-    await store.disconnectAccount(id);
+    await store.disconnectAccount(id, brand().id);
     connCache.loaded = false;
     await refreshConnections(brand().id);
     toast("Disconnected");

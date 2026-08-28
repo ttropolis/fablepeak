@@ -1,5 +1,11 @@
-import { refreshFailureDisposition, maintainConnectionTokens } from "./token-manager.ts";
+import {
+  maintainConnectionTokens,
+  refreshFailureDisposition,
+  revokeUserAuthorizations,
+} from "./token-manager.ts";
 import { CredentialRejectedError, ProviderRequestError } from "./platforms.ts";
+
+const originalFetch = globalThis.fetch;
 
 const assertEquals = (actual: unknown, expected: unknown, message = "values differ") => {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -85,6 +91,92 @@ Deno.test("a shared authorization failure is reported for every exposed asset", 
     ["failed", "refresh token rejected"],
     ["failed", "refresh token rejected"],
   ]);
+});
+
+Deno.test("account deletion revokes every live authorization with the user credential", async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const body = init?.body instanceof URLSearchParams ? init.body.toString() : "";
+    calls.push(`${init?.method ?? "GET"} ${url.host}${url.pathname} ` +
+      `${url.searchParams.get("access_token") ?? body}`);
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const outcomes = await revokeUserAuthorizations([
+      {
+        id: "page-conn", platform: "facebook", external_id: "page-1",
+        access_token: "page-token", refresh_token: "user-token",
+      },
+      {
+        id: "channel-conn", platform: "youtube", external_id: "channel-1",
+        access_token: "google-access", refresh_token: "google-refresh",
+      },
+    ], () => undefined);
+
+    assertEquals(calls, [
+      // The Page token would only address the Page; Meta needs the user token.
+      "DELETE graph.facebook.com/v25.0/me/permissions user-token",
+      "POST oauth2.googleapis.com/revoke token=google-refresh",
+    ]);
+    assertEquals(outcomes, [
+      { connection_id: "page-conn", status: "revoked" },
+      { connection_id: "channel-conn", status: "revoked" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("a provider revocation failure is reported and never blocks deletion", async () => {
+  globalThis.fetch = (input) => String(input).includes("facebook")
+    ? Promise.reject(new TypeError("network unavailable"))
+    : Promise.resolve(new Response("revoke unavailable", { status: 503 }));
+
+  try {
+    const outcomes = await revokeUserAuthorizations([
+      {
+        id: "page-conn", platform: "facebook", external_id: "page-1",
+        access_token: "page-token", refresh_token: "user-token",
+      },
+      {
+        id: "channel-conn", platform: "youtube", external_id: "channel-1",
+        access_token: "google-access",
+      },
+    ], () => undefined);
+
+    assertEquals(outcomes.map(outcome => outcome.status), ["failed", "failed"]);
+    assertEquals(outcomes[0].error, "network unavailable");
+    assertEquals(outcomes[1].error?.startsWith("youtube revoke: 503"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("platforms without a revocation API are skipped without a provider call", async () => {
+  globalThis.fetch = (input) => Promise.reject(new Error(`Unexpected request: ${input}`));
+
+  try {
+    const outcomes = await revokeUserAuthorizations([
+      // Instagram has no revocation endpoint; it reports the fact instead.
+      { id: "ig-conn", platform: "instagram", external_id: "ig-1", access_token: "ig-token" },
+      // Production-frozen adapters deliberately omit `revoke` entirely.
+      { id: "li-conn", platform: "linkedin", external_id: "li-1", access_token: "li-token" },
+      // A connection whose credentials were already cleared cannot be revoked.
+      { id: "empty-conn", platform: "youtube", external_id: "channel-1" },
+    ], () => undefined);
+
+    assertEquals(outcomes, [
+      { connection_id: "ig-conn", status: "unsupported" },
+      { connection_id: "li-conn", status: "unsupported" },
+      { connection_id: "empty-conn", status: "unsupported" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("transient proactive refresh failures preserve a still-valid authorization", () => {
