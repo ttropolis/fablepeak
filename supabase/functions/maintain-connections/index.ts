@@ -46,10 +46,15 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
           "select=*&status=eq.active",
         ) as Connection[];
         const outcomes = await dependencies.maintain(connections, dependencies.env);
+        const count = (status: TokenMaintenanceOutcome["status"]) =>
+          outcomes.filter(outcome => outcome.status === status).length;
         return {
           checked: connections.length,
-          refreshed: outcomes.filter(outcome => outcome.status === "refreshed").length,
-          failed: outcomes.filter(outcome => outcome.status === "failed").length,
+          refreshed: count("refreshed"),
+          failed: count("failed"),
+          // Connections a provider will never renew, marked for reconnection
+          // while their token still works. Expected, not a job failure.
+          needs_reconnect: count("needs_reconnect"),
           outcomes,
         };
       });

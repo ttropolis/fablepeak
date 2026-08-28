@@ -12,6 +12,10 @@ export interface TokenSet {
   refresh_token?: string;
   expires_in?: number;
   scope?: string;
+  /** identity facts learned during the exchange that belong on the stored
+   * connection (for example Meta's app-scoped user id). Merged into the
+   * existing `meta`, never replacing it. */
+  meta?: Record<string, unknown>;
 }
 
 export interface Identity {
@@ -494,6 +498,26 @@ async function metaPages(accessToken: string) {
   return d.data ?? [];
 }
 
+/** The app-scoped user id (ASID) of the person who authorized FablePeak.
+ *
+ * Meta's data-deletion callback identifies the customer by this id and never
+ * by the Page ids FablePeak stores as `external_id`, so it is captured on
+ * every path that writes a Facebook connection. Best effort by contract:
+ * losing the ASID must never fail a connection or a token renewal, so a
+ * provider failure returns null and the row simply keeps whatever it had.
+ * Requires the long-lived *user* token — a Page token resolves `/me` to the
+ * Page itself. */
+async function metaAppScopedUserId(userAccessToken: string): Promise<string | null> {
+  try {
+    const d = await j(await fetch(
+      `https://graph.facebook.com/${META_VERSION}/me?fields=id` +
+      `&access_token=${encodeURIComponent(userAccessToken)}`), "meta app-scoped user id");
+    return d.id ? String(d.id) : null;
+  } catch {
+    return null;
+  }
+}
+
 const facebook: PlatformAdapter = {
   id: "facebook",
   label: "Facebook Page",
@@ -535,11 +559,15 @@ const facebook: PlatformAdapter = {
       throw new CredentialRejectedError(
         "This Facebook Page is no longer available to the authorizing user.");
     }
+    const asid = await metaAppScopedUserId(long.access_token);
     return {
       access_token: page.access_token,
       refresh_token: long.access_token,
       expires_in: long.expires_in,
       scope: facebook.scopes.join(" "),
+      // Backfills the ASID onto connections created before it was captured, so
+      // a deletion callback can match them without waiting for a reconnect.
+      ...(asid ? { meta: { asid } } : {}),
     };
   },
 
@@ -552,12 +580,15 @@ const facebook: PlatformAdapter = {
     if (!pages.length) throw new Error(
       "No Facebook Page found. The account must administer a Page, and the Page must be " +
       "selected during the permission step.");
+    // Every Page authorized in this handshake belongs to the same person, so
+    // one lookup labels them all with the id Meta's deletion callback sends.
+    const asid = await metaAppScopedUserId(t.access_token);
     return pages.map((p: any) => ({
       external_id: p.id,
       display_name: p.name,
       avatar_url: p.picture?.data?.url,
       access_token: p.access_token,
-      meta: {},
+      meta: asid ? { asid } : {},
     }));
   },
 

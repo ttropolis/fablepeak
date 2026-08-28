@@ -14,24 +14,31 @@
    Non-POST is `405`. Unconfigured secrets are `503`, never a silent success.
 3. A verified request records one `provider_deletion_requests` row
    (`provider_user_id`, `platform`, `status`, `confirmation_code`) and deletes
-   every `social_connections` row matching `platform` + `external_id`.
-4. Matching is conservative: only the verified platform's own scoped identifier
-   is trusted. Instagram's callback id equals the stored `external_id`;
-   Facebook's app-scoped user id does not equal a Page id, so those requests
-   record `no_matching_connection` for the documented manual 30-day path.
-5. Response is always `{ "url": "<origin>/data-deletion.html?code=<code>",
+   every `social_connections` row the platform's scoped identifiers match (4).
+4. Matching is conservative: only identifiers the verified platform actually
+   scopes are trusted. Instagram's callback id equals the stored `external_id`.
+   Facebook's app-scoped user id (ASID) is never a Page id, so a Facebook
+   request additionally matches `meta->>'asid'`; the two identifiers are queried
+   separately and neither is inferred from the other. A row holding neither
+   records `no_matching_connection` for the documented manual 30-day path.
+5. The Facebook adapter captures the ASID with `GET /me?fields=id` on the
+   long-lived *user* token — a Page token would resolve `/me` to the Page — and
+   returns it as `meta.asid` from both `identifyAll` (every Page discovered in
+   one handshake belongs to one person) and `refreshAccess`. The lookup is best
+   effort: a failure returns no ASID and never fails a connect or a renewal.
+6. Response is always `{ "url": "<origin>/data-deletion.html?code=<code>",
    "confirmation_code": "<code>" }` with a fresh 24-hex random code.
-6. `data-deletion.html` echoes a `?code=` query param as the confirmation
+7. `data-deletion.html` echoes a `?code=` query param as the confirmation
    reference, stating plainly that it displays the code from the link only.
-7. `PlatformAdapter.revoke(tokens)` asks the provider to drop FablePeak's
+8. `PlatformAdapter.revoke(tokens)` asks the provider to drop FablePeak's
    authorization. Live platforms only: Facebook `DELETE /me/permissions`,
    YouTube `POST oauth2.googleapis.com/revoke`, Instagram a documented no-op
    reporting `unsupported`. Frozen adapters omit the field entirely.
-8. Revocation is best effort: `revokeUserAuthorizations` never throws, so a
+9. Revocation is best effort: `revokeUserAuthorizations` never throws, so a
    provider outage can never block local deletion or disconnect.
-9. Out of scope: a status-lookup API behind the confirmation code, storing
-   Facebook app-scoped user ids at connect time, revocation for X, LinkedIn,
-   TikTok, Pinterest or Google Business, and any `productionEnabled` change.
+10. Out of scope: a status-lookup API behind the confirmation code, revocation
+    for X, LinkedIn, TikTok, Pinterest or Google Business, and any
+    `productionEnabled` change.
 
 ## Context
 
@@ -65,15 +72,32 @@ credentials can no longer be read.
 Both call `revokeUserAuthorizations` in `token-manager.ts`, which owns
 decryption and swallows every provider failure into a reported outcome.
 
+The ASID is captured at `identifyAll`, not at `exchangeCode`, because
+`oauth-callback` writes one row per identity and copies `identity.meta` into it:
+capturing there guarantees the ASID is present on every row the callback
+creates. Renewal carries it too, on a new optional `TokenSet.meta` that
+`token-manager` merges into the row's existing `meta` after a successful
+refresh, so `account_name` and `authorization_id` survive. The merge is skipped
+for shared authorizations (Pinterest), where a single patch rewrites every
+sibling row and would overwrite their per-asset meta with one asset's.
+
 `data-deletion` is a new unauthenticated Edge Function with
 `verify_jwt = false`: Meta's POST carries no Supabase JWT, and the
 `signed_request` signature is the authentication.
 
 ## Consequences
 
-- Facebook-originated deletion callbacks are recorded and answered correctly
-  but cannot be auto-matched, because the app-scoped user id in the callback is
-  not the Page id FablePeak stores. The recorded row is the operator's queue.
+- Facebook-originated deletion callbacks auto-match through `meta.asid`, but
+  only for connections that carry one. A connection written before this change
+  gains its ASID at its next *successful token renewal* — `maintain-connections`
+  renews a Facebook authorization once it is within seven days of expiry, and
+  Meta's long-lived user token lasts about 60 days, so the existing fleet
+  backfills itself within roughly two months with no customer action — or
+  immediately if the customer reconnects. Until a row is backfilled its callback
+  still records `no_matching_connection`, and that row remains the operator's
+  queue for the manual 30-day path.
+- A Facebook connection whose renewal keeps failing never backfills, which is
+  the correct outcome: it is already headed for `expired` and reconnection.
 - The confirmation status page is honest about being a static echo; adding a
   real lookup needs a read endpoint and is deliberately deferred.
 - Instagram disconnect reports `unsupported` rather than claiming a provider

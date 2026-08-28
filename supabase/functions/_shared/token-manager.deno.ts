@@ -93,6 +93,61 @@ Deno.test("a shared authorization failure is reported for every exposed asset", 
   ]);
 });
 
+const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
+Deno.test("a LinkedIn authorization that can never be renewed is marked for reconnection", async () => {
+  const requests: Array<{ method: string; url: string; body: any }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({
+      method: init?.method ?? "GET",
+      url: String(input),
+      body: JSON.parse(String(init?.body ?? "null")),
+    });
+    return new Response("", { status: 200 });
+  };
+
+  try {
+    // Three days out: still publishing today, but inside the renewal window.
+    const outcomes = await maintainConnectionTokens([{
+      id: "li-conn", platform: "linkedin", external_id: "person-1",
+      status: "active", is_default: true,
+      access_token: "linkedin-token", token_expires_at: inDays(3),
+    }], key => (({
+      LINKEDIN_CLIENT_ID: "client",
+      LINKEDIN_CLIENT_SECRET: "secret",
+    }) as Record<string, string>)[key]);
+
+    const reconnect = "LinkedIn cannot renew this authorization automatically — " +
+      "reconnect this account to keep publishing.";
+    assertEquals(outcomes, [
+      { connection_id: "li-conn", status: "needs_reconnect", error: reconnect },
+    ]);
+    // No provider call is attempted, and the row is flagged while it still works.
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0].method, "PATCH");
+    assertEquals(requests[0].url.includes("social_connections?id=eq.li-conn"), true);
+    assertEquals(requests[0].body.status, "expired");
+    assertEquals(requests[0].body.last_error, reconnect);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("a LinkedIn token outside the renewal window is left untouched", async () => {
+  globalThis.fetch = (input) => Promise.reject(new Error(`Unexpected request: ${input}`));
+
+  try {
+    const outcomes = await maintainConnectionTokens([{
+      id: "li-conn", platform: "linkedin", external_id: "person-1",
+      status: "active", access_token: "linkedin-token", token_expires_at: inDays(40),
+    }], () => undefined);
+
+    assertEquals(outcomes, [{ connection_id: "li-conn", status: "not_due" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("account deletion revokes every live authorization with the user credential", async () => {
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {

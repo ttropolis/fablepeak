@@ -503,6 +503,111 @@ Deno.test("LinkedIn upload failures do not create a post", async () => {
   }
 });
 
+Deno.test("LinkedIn stays production-frozen and gains no renewal it was never granted", () => {
+  const linkedin = ADAPTERS.linkedin;
+  if (linkedin.productionEnabled !== false) {
+    throw new Error("LinkedIn must stay production-frozen");
+  }
+  if (linkedin.refreshAccess) {
+    throw new Error("LinkedIn refresh tokens require LinkedIn partner approval");
+  }
+  if (linkedin.scopes.join(" ") !== "openid profile w_member_social") {
+    throw new Error(`Unexpected LinkedIn scopes: ${linkedin.scopes.join(" ")}`);
+  }
+});
+
+Deno.test("Facebook labels every discovered Page with the authorizing app-scoped user id", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes("/me/accounts")) {
+      return Promise.resolve(json({
+        data: [
+          { id: "page-1", name: "Coffee", access_token: "page-token-1" },
+          { id: "page-2", name: "Roastery", access_token: "page-token-2" },
+        ],
+      }));
+    }
+    if (url.includes("/me?fields=id")) return Promise.resolve(json({ id: "asid-9" }));
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const identities = await ADAPTERS.facebook.identifyAll!({ access_token: "user-token" });
+    const stored = identities.map((identity) => (identity.meta as any)?.asid);
+    if (stored.join(",") !== "asid-9,asid-9") {
+      throw new Error(`Every Page must carry the ASID, received ${JSON.stringify(stored)}`);
+    }
+    // A Page token resolves /me to the Page, so the lookup must use the user token.
+    const lookup = requests.find((url) => url.includes("/me?fields=id")) ?? "";
+    if (!lookup.includes("access_token=user-token")) {
+      throw new Error(`ASID lookup must use the user token, received ${lookup}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Facebook renewal backfills the app-scoped user id onto an existing connection", async () => {
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url.includes("/oauth/access_token")) {
+      return Promise.resolve(json({ access_token: "fresh-user-token", expires_in: 5_184_000 }));
+    }
+    if (url.includes("/me/accounts")) {
+      return Promise.resolve(json({
+        data: [{ id: "page-1", name: "Coffee", access_token: "fresh-page-token" }],
+      }));
+    }
+    if (url.includes("/me?fields=id")) return Promise.resolve(json({ id: "asid-9" }));
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const tokens = await refreshPlatformToken(ADAPTERS.facebook, {
+      accessToken: "stale-page-token",
+      refreshToken: "stored-user-token",
+      clientId: "client",
+      clientSecret: "secret",
+      connection: { external_id: "page-1", meta: {} },
+    });
+    if (tokens.access_token !== "fresh-page-token") {
+      throw new Error(`Expected the renewed Page token, received ${tokens.access_token}`);
+    }
+    if ((tokens.meta as any)?.asid !== "asid-9") {
+      throw new Error(`Renewal must carry the ASID, received ${JSON.stringify(tokens.meta)}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("a failed app-scoped id lookup never blocks connecting a Page", async () => {
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url.includes("/me/accounts")) {
+      return Promise.resolve(json({
+        data: [{ id: "page-1", name: "Coffee", access_token: "page-token-1" }],
+      }));
+    }
+    if (url.includes("/me?fields=id")) return Promise.resolve(json({ error: {} }, 500));
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+
+  try {
+    const identities = await ADAPTERS.facebook.identifyAll!({ access_token: "user-token" });
+    if (identities.length !== 1 || identities[0].external_id !== "page-1") {
+      throw new Error(`Expected the Page to connect, received ${JSON.stringify(identities)}`);
+    }
+    if (Object.keys(identities[0].meta ?? {}).length !== 0) {
+      throw new Error(`Expected no ASID, received ${JSON.stringify(identities[0].meta)}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("Pinterest discovers every board and leaves destination selection to the user", async () => {
   const requests: string[] = [];
   globalThis.fetch = (input) => {

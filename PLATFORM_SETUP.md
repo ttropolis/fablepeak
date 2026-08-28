@@ -17,7 +17,7 @@ docs win.
 | **Facebook Page** | ✅ Yes | ✅ **Yes, fully** — your own Page | Easiest. Start here. |
 | **Instagram** | ✅ Yes | ✅ **Yes, fully** — your own account | Direct Instagram Login; needs Business/Creator. No Facebook Page required. |
 | **YouTube** | ✅ Yes | ✅ Yes, with caveats | Uploads stay **private** until Google audits the project. Test tokens expire every 7 days. |
-| **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). |
+| **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). Tokens last 60 days and cannot be refreshed; reconnecting is the renewal. |
 | **Pinterest** | ✅ Yes | Trial access required | Implemented but gated until credentials and a real-account acceptance test are complete. |
 | **TikTok** | Deferred | — | Intentionally left unconfigured for the current release. |
 | **X / Twitter** | ❌ **No** | N/A — no review, but no free tier | **~US$0.015 per post, ~US$0.20 if it contains a link.** See below. |
@@ -214,6 +214,19 @@ LINKEDIN_CLIENT_ID=<...>
 LINKEDIN_CLIENT_SECRET=<...>
 LINKEDIN_VERSION=202601        # optional; bump when LinkedIn sunsets it
 ```
+
+**Token lifecycle — reconnect is the only renewal.** LinkedIn access tokens
+last **60 days**. Refresh tokens are issued only to apps approved for
+LinkedIn's partner program, and the self-serve scopes above never receive one,
+so there is no automatic renewal and none should be assumed: adding a refresh
+scope to the adapter without that approval changes nothing.
+
+FablePeak therefore treats the end of those 60 days as a scheduled reconnect
+rather than a surprise. The nightly `maintain-connections` job marks a LinkedIn
+connection **`expired`** once it comes within seven days of its expiry, so the
+account shows "⚠️ Needs reconnecting" with a **Reconnect** button while the
+current token still publishes. Reconnecting through the normal Connect flow
+issues a fresh 60-day token and returns the connection to `active`.
 
 **Gotcha:** posting to a **Company Page** needs the Community Management API,
 which LinkedIn only grants to registered legal businesses after a two-stage

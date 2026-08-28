@@ -108,6 +108,74 @@ Deno.test("a request with no matching connection is still recorded", async () =>
   });
 });
 
+Deno.test("a Facebook callback matches the connection by its app-scoped user id", async () => {
+  const queries: string[] = [];
+  const { handler, recorded, deleted, updated } = harness({
+    listConnections: async (_table: string, query: string) => {
+      queries.push(query);
+      // No Page id can equal the app-scoped user id Meta sends; the ASID
+      // captured on the connection is what identifies the person.
+      if (query.includes("meta->>asid=eq.1000123")) {
+        return [{ id: "conn-1", brand_id: "brand-1", platform: "facebook", is_default: true }];
+      }
+      return query.startsWith("select=id&brand_id=") ? [{ id: "conn-2" }] : [];
+    },
+  });
+  const request = await signedRequest(metaPayload("1000123"), "meta-secret");
+  const response = await handler(post(`signed_request=${encodeURIComponent(request)}`));
+
+  assertEquals(response.status, 200);
+  assertEquals(deleted, [
+    "social_connections?platform=eq.facebook&meta->>asid=eq.1000123",
+  ]);
+  assertEquals(updated, [
+    { filter: "social_connections?id=eq.conn-2", patch: { is_default: true } },
+  ]);
+  assertEquals(recorded[0].row, {
+    provider_user_id: "1000123",
+    platform: "facebook",
+    status: "completed",
+    confirmation_code: "abc123",
+  });
+});
+
+Deno.test("a Facebook connection stored without an app-scoped id takes the manual path", async () => {
+  const queries: string[] = [];
+  const { handler, recorded, deleted } = harness({
+    listConnections: async (_table: string, query: string) => {
+      queries.push(query);
+      return [];
+    },
+  });
+  const request = await signedRequest(metaPayload("1000123"), "meta-secret");
+  const response = await handler(post(`signed_request=${encodeURIComponent(request)}`));
+
+  assertEquals(response.status, 200);
+  // Both scoped identifiers are tried; neither is inferred from the other.
+  assertEquals(queries, [
+    "select=id,brand_id,platform,is_default&platform=eq.facebook&external_id=eq.1000123",
+    "select=id,brand_id,platform,is_default&platform=eq.facebook&meta->>asid=eq.1000123",
+  ]);
+  assertEquals(deleted, []);
+  assertEquals(recorded[0].row.status, "no_matching_connection");
+});
+
+Deno.test("an Instagram callback never widens its match beyond the stored account id", async () => {
+  const queries: string[] = [];
+  const { handler } = harness({
+    listConnections: async (_table: string, query: string) => {
+      queries.push(query);
+      return [];
+    },
+  });
+  const request = await signedRequest(metaPayload("ig-9"), "instagram-secret");
+  await handler(post(`signed_request=${encodeURIComponent(request)}`));
+
+  assertEquals(queries, [
+    "select=id,brand_id,platform,is_default&platform=eq.instagram&external_id=eq.ig-9",
+  ]);
+});
+
 Deno.test("the Instagram app secret verifies when the Meta secret does not", async () => {
   const { handler, recorded } = harness();
   const request = await signedRequest(metaPayload("ig-42"), "instagram-secret");

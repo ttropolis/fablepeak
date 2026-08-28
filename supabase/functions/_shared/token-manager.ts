@@ -27,9 +27,29 @@ export type Connection = {
 
 export const PROACTIVE_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * This authorization can never be renewed: the provider issued no refresh
+ * credential and the adapter has no provider-specific renewal path. LinkedIn is
+ * the live case — refresh tokens are reserved for its partner program, so a
+ * 60-day token simply ends.
+ *
+ * Distinct from a refresh that failed, because retrying cannot help. Waiting
+ * only moves the discovery to publish time, so the connection is marked for
+ * reconnection while the current token still works.
+ */
+export class UnrenewableAuthorizationError extends Error {
+  override name = "UnrenewableAuthorizationError";
+}
+
 export type TokenMaintenanceOutcome = {
   connection_id: string;
-  status: "refreshed" | "failed" | "covered" | "not_due" | "not_refreshable";
+  status:
+    | "refreshed"
+    | "failed"
+    | "covered"
+    | "not_due"
+    | "not_refreshable"
+    | "needs_reconnect";
   error?: string;
 };
 
@@ -132,7 +152,9 @@ async function connectionToken(
       throw new Error("Platform credentials are unavailable.");
     }
     if (!adapter.refreshAccess && !refreshToken) {
-      throw new Error("Provider did not issue a refresh token.");
+      throw new UnrenewableAuthorizationError(
+        `${adapter.label} cannot renew this authorization automatically — ` +
+        `reconnect this account to keep publishing.`);
     }
     const tokens = await refreshPlatformToken(adapter, {
       accessToken,
@@ -143,11 +165,19 @@ async function connectionToken(
     });
     if (!tokens.access_token) throw new Error("Provider returned no access token.");
 
+    // Identity facts the renewal discovered are merged onto this row's own
+    // meta. Skipped for shared authorizations, where one patch rewrites every
+    // sibling row and would overwrite their per-asset meta with this one's.
+    const renewedMeta = tokens.meta && !adapter.sharedAuthorizationAcrossAssets
+      ? { ...(conn.meta ?? {}), ...tokens.meta }
+      : null;
+
     // Pinterest exposes many selectable boards through one rotating user
     // authorization. Keep sibling board rows on the same newly-issued token;
     // otherwise refreshing one board can strand the others on an old refresh
     // credential.
     await sbUpdate("social_connections", updateQuery, {
+      ...(renewedMeta ? { meta: renewedMeta } : {}),
       access_token: await encryptToken(tokens.access_token),
       refresh_token: await encryptToken(tokens.refresh_token ?? refreshToken),
       token_expires_at: tokens.expires_in
@@ -163,8 +193,15 @@ async function connectionToken(
     const detail = String((e as Error).message ?? e).slice(0, 300);
     const disposition = refreshFailureDisposition(e, expiresAt, Date.now());
     if (disposition === "expire") {
-      await expire(updateQuery, `Could not refresh access — reconnect this account. ${detail}`);
-      throw new Error("Could not refresh access — reconnect this account.");
+      // An authorization that was never renewable already explains itself; the
+      // customer sees `last_error` verbatim, so do not prefix it with a refresh
+      // attempt that never happened.
+      const unrenewable = e instanceof UnrenewableAuthorizationError;
+      const message = unrenewable
+        ? detail
+        : "Could not refresh access — reconnect this account.";
+      await expire(updateQuery, unrenewable ? message : `${message} ${detail}`);
+      throw unrenewable ? e : new Error(message);
     }
     await recordRefreshIssue(updateQuery,
       `Temporary refresh failure; the current token remains active. ${detail}`);
@@ -179,6 +216,9 @@ export function refreshFailureDisposition(
   now: number,
 ): "preserve" | "expire" {
   if (expiresAt <= now) return "expire";
+  // Nothing can renew this credential, so preserving it only postpones the
+  // reconnect until the token dies mid-publish.
+  if (error instanceof UnrenewableAuthorizationError) return "expire";
   if (error instanceof CredentialRejectedError) return "expire";
   if (error instanceof ProviderRequestError && [400, 401, 403].includes(error.status)) {
     return "expire";
@@ -224,8 +264,10 @@ export async function maintainConnectionTokens(
       : connection.id;
     const prior = authorizationOutcomes.get(authorizationKey);
     if (prior) {
-      outcomes.push(prior.status === "failed"
-        ? { connection_id: connection.id, status: "failed", error: prior.error }
+      // A renewal covers every sibling asset, and so does a verdict that the
+      // shared authorization cannot be renewed at all.
+      outcomes.push(prior.status === "failed" || prior.status === "needs_reconnect"
+        ? { connection_id: connection.id, status: prior.status, error: prior.error }
         : { connection_id: connection.id, status: "covered" });
       continue;
     }
@@ -239,9 +281,15 @@ export async function maintainConnectionTokens(
       authorizationOutcomes.set(authorizationKey, outcome);
       outcomes.push(outcome);
     } catch (error) {
+      // A credential that was never renewable is not a maintenance failure:
+      // the run did its job by marking the connection for reconnection while
+      // the token still works. Reporting it separately keeps the failure count
+      // meaningful for the cron monitor.
       const outcome: TokenMaintenanceOutcome = {
         connection_id: connection.id,
-        status: "failed",
+        status: error instanceof UnrenewableAuthorizationError
+          ? "needs_reconnect"
+          : "failed",
         error: String((error as Error).message ?? error).slice(0, 300),
       };
       authorizationOutcomes.set(authorizationKey, outcome);

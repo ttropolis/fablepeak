@@ -128,27 +128,42 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
     if (!verified) return json({ error: "invalid signed_request" }, 400);
 
     try {
-      // Conservative match: only the identifier the verifying app actually
-      // scopes. An Instagram callback id is the stored Instagram account id; a
-      // Facebook app-scoped user id is not a Page id, so those requests record
-      // without a match and are completed through the documented manual path.
-      const filter = `platform=eq.${encodeURIComponent(verified.platform)}` +
-        `&external_id=eq.${encodeURIComponent(verified.user_id)}`;
-      const matched = await dependencies.listConnections(
-        "social_connections", `select=id,brand_id,platform,is_default&${filter}`);
-      if (matched.length) {
+      // Conservative match: only identifiers the verifying app actually scopes.
+      // An Instagram callback id is the stored Instagram account id. A Facebook
+      // callback carries the authorizing person's app-scoped user id, which is
+      // never a Page id, so Facebook also matches the ASID captured on the
+      // connection at connect and at token renewal. Rows written before that
+      // capture hold no ASID and still take the documented manual path.
+      const identifier = encodeURIComponent(verified.user_id);
+      const platform = encodeURIComponent(verified.platform);
+      // Two single-column filters instead of one PostgREST `or=` list: each
+      // value is then percent-encoded whole, leaving no quoting rule to get
+      // wrong on an endpoint anyone can POST to.
+      const filters = [`platform=eq.${platform}&external_id=eq.${identifier}`];
+      if (verified.platform === "facebook") {
+        filters.push(`platform=eq.facebook&meta->>asid=eq.${identifier}`);
+      }
+
+      const matched: Array<Record<string, any>> = [];
+      for (const filter of filters) {
+        const rows = await dependencies.listConnections(
+          "social_connections", `select=id,brand_id,platform,is_default&${filter}`);
+        if (!rows.length) continue;
         await dependencies.deleteConnections("social_connections", filter);
-        // Mirror disconnect_account: a workspace with another authorized
-        // profile for this platform keeps a selected publishing account.
-        for (const removed of matched.filter(row => row.is_default)) {
-          const remaining = await dependencies.listConnections("social_connections",
-            `select=id&brand_id=eq.${encodeURIComponent(removed.brand_id)}` +
-            `&platform=eq.${encodeURIComponent(removed.platform)}` +
-            `&status=eq.active&order=connected_at.asc&limit=1`);
-          if (remaining[0]) {
-            await dependencies.updateConnections("social_connections",
-              `id=eq.${encodeURIComponent(remaining[0].id)}`, { is_default: true });
-          }
+        for (const row of rows) {
+          if (!matched.some(seen => seen.id === row.id)) matched.push(row);
+        }
+      }
+      // Mirror disconnect_account: a workspace with another authorized
+      // profile for this platform keeps a selected publishing account.
+      for (const removed of matched.filter(row => row.is_default)) {
+        const remaining = await dependencies.listConnections("social_connections",
+          `select=id&brand_id=eq.${encodeURIComponent(removed.brand_id)}` +
+          `&platform=eq.${encodeURIComponent(removed.platform)}` +
+          `&status=eq.active&order=connected_at.asc&limit=1`);
+        if (remaining[0]) {
+          await dependencies.updateConnections("social_connections",
+            `id=eq.${encodeURIComponent(remaining[0].id)}`, { is_default: true });
         }
       }
 
