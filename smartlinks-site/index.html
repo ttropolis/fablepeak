@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<!--
+  FablePeak public SmartLinks renderer — ADR 0004, as amended by
+  "Decisions (2026-08-29)".
+
+  This file is the entire site. It is deployed to a *separate* GitHub Pages
+  repo serving https://links.fablepeak.com, deliberately NOT the app origin
+  (decisions 2 and 3): this page renders text authored by one tenant to every
+  visitor on the internet, so a DOM-XSS bug here must not be able to reach a
+  signed-in user's session on the app origin. Canonical URL shape:
+  https://links.fablepeak.com/?b=<slug>
+
+  Three rules govern every line below.
+
+  1. Nothing from the database is ever treated as markup. Every dynamic value
+     reaches the DOM through textContent or a validated attribute, and every
+     element is produced by createElement. There is no HTML string building
+     anywhere in this file, and no API that parses a string as markup is used.
+  2. Nothing from the database is trusted for shape. The RPC already caps and
+     filters, but it reads a jsonb column the editor is not the only possible
+     writer of, so the renderer re-validates: URLs must parse to http(s), the
+     button color must match ^#[0-9a-f]{6}$ before it reaches any style, and
+     lengths and counts are capped again here.
+  3. No client-side storage of any kind and no identifiers. privacy.html
+     promises that public pages set nothing on a visitor's device, so this
+     file uses no browser storage API at all. The only visitor-derived value
+     that ever leaves the page is a bare referrer hostname, and the server
+     re-validates and re-reduces even that.
+-->
+
+<!--
+  Content-Security-Policy, delivered as a meta tag because GitHub Pages serves
+  static files and cannot set response headers.
+
+    default-src 'none'   Nothing loads unless a directive below says so. This
+                         also covers img/font/media/frame/worker/manifest, so
+                         those directives are intentionally absent rather than
+                         spelled out as 'none'.
+    script-src  sha256   The page's one script is inline (this file is the
+                         whole site), so 'self' — the ADR body's choice, which
+                         assumed an external bundle — is not available. A
+                         static file cannot mint a per-response nonce either,
+                         and a hard-coded nonce is worth nothing. A SHA-256
+                         hash of the exact script text is the only option that
+                         does not require 'unsafe-inline'. Editing that block
+                         by one byte breaks the page, so both hashes are
+                         recomputed and asserted in
+                         test/smartlinks-site.test.mjs: drift fails
+                         `npm run check` rather than production.
+    style-src   sha256   Same reasoning for the single inline style block (the
+                         literal tag names are avoided in this comment so the
+                         hashed region stays unambiguous); the ADR
+                         allowed 'unsafe-inline' here, and a hash is strictly
+                         stronger for the same cost. The one dynamic style —
+                         the tenant's button color — is applied through CSSOM
+                         (element.style.setProperty), which CSP does not
+                         govern, so no style attribute is ever parsed from a
+                         string and no 'unsafe-hashes' is needed.
+    img-src     data:    Only the inline data: favicon below. No remote images
+                         at all: the avatar is an emoji, not an upload.
+    connect-src          Exactly the Supabase project origin. The two anon
+                         RPCs are the only network destinations that exist.
+    base-uri / form-action 'none'   There is no <base> and no form; pinning
+                         both closes the injected-<base> and form-exfiltration
+                         paths outright.
+
+  frame-ancestors is deliberately absent: it is ignored in a meta-delivered
+  policy (ADR 0004 decision 1 accepts this). Clickjacking a page whose only
+  interactive elements are outbound links is low value; the fix is real
+  response headers, which needs a host that can set them.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ICdAbM/1Kr2fwG5PPzSySfpBDJqob1DBJ6e/9nLBbYg='; style-src 'sha256-zbHpwB4Dj3CE5mJR3fiZCPJwOG29aWLdM2U3sLOC7wg='; img-src data:; connect-src https://lghsvxwuaebvotutyjtt.supabase.co; base-uri 'none'; form-action 'none'">
+
+<title>FablePeak SmartLinks</title>
+<meta name="description" content="A FablePeak SmartLinks page.">
+<meta name="color-scheme" content="light dark">
+<!-- Generic, non-per-brand social metadata: static hosting cannot render per-page OG tags (ADR 0004 decision 1, v2 problem). -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FablePeak">
+<meta property="og:title" content="FablePeak SmartLinks">
+<meta property="og:description" content="A FablePeak SmartLinks page.">
+<!-- Inline data: favicon keeps the page self-contained and stops a stray /favicon.ico request from being answered with 404.html. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='25' font-size='25'%3E%E2%9B%B0%3C/text%3E%3C/svg%3E">
+
+<style>
+/* System font stack only — no external fonts, nothing to load, nothing to leak. */
+:root {
+  --bg: #f4f6f9;
+  --card: #ffffff;
+  --ink: #0d1b2a;
+  --muted: #5d6b7a;
+  --line: #e3e8ee;
+  --shadow: 0 1px 2px rgba(13, 27, 42, .05), 0 12px 32px rgba(13, 27, 42, .07);
+  --avatar-bg: #eef2f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1420;
+    --card: #131f2e;
+    --ink: #eaf0f6;
+    --muted: #94a3b4;
+    --line: #22303f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 12px 32px rgba(0, 0, 0, .35);
+    --avatar-bg: #1c2b3b;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  padding: 28px 16px calc(28px + env(safe-area-inset-bottom));
+}
+.wrap { width: 100%; max-width: 420px; display: flex; flex-direction: column; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 28px 20px 24px;
+  text-align: center;
+}
+.avatar {
+  width: 76px; height: 76px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: var(--avatar-bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px; line-height: 1;
+}
+.title { font-size: 19px; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
+.bio {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.bio:empty { display: none; }
+.links { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+.links:empty { display: none; }
+.slink {
+  display: block;
+  padding: 13px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition: transform .12s ease, filter .12s ease;
+}
+.slink:hover { filter: brightness(1.06); }
+.slink:active { transform: translateY(1px); }
+.slink:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.state { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 0; }
+.foot { color: var(--muted); font-size: 11px; text-align: center; margin-top: 18px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .slink { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <p id="state" class="state">Loading…</p>
+
+  <section id="card" class="card" hidden>
+    <div id="avatar" class="avatar" aria-hidden="true"></div>
+    <h1 id="title" class="title"></h1>
+    <p id="bio" class="bio"></p>
+    <nav id="links" class="links" aria-label="Links"></nav>
+  </section>
+
+  <section id="gone" class="card" hidden>
+    <div class="avatar" aria-hidden="true">⛰️</div>
+    <h1 class="title">This page isn’t available</h1>
+    <!--
+      One message for every failure. The RPC returns '{}' for an unknown slug
+      and for an unpublished brand alike, and the page must not reintroduce a
+      distinction the backend deliberately removed.
+    -->
+    <p class="bio">This link may have been removed, renamed, or is no longer published.</p>
+  </section>
+
+  <noscript>
+    <section class="card">
+      <div class="avatar" aria-hidden="true">⛰️</div>
+      <h1 class="title">JavaScript required</h1>
+      <p class="bio">This page loads its content from FablePeak in your browser.</p>
+    </section>
+  </noscript>
+
+  <footer class="foot">⛰️ FablePeak Link</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // Public values, identical to backend-config.js in the app repo. The
+  // publishable key is designed to ship to every browser; it grants nothing
+  // beyond the two RPCs this page calls, both of which are exact-match and
+  // return no brand_id.
+  var SUPABASE_URL = "https://lghsvxwuaebvotutyjtt.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_XXJWxAPn2q0I5rgSQ6LUPg_oUQTPJ13";
+  var RPC = SUPABASE_URL + "/rest/v1/rpc/";
+
+  // Mirrors the caps get_smartlink already applies, so a jsonb the editor
+  // never produced cannot make the page unbounded.
+  var MAX_TITLE = 120;
+  var MAX_BIO = 400;
+  var MAX_AVATAR = 8;
+  var MAX_URL = 2000;
+  var MAX_LINKS = 50;
+  var DEFAULT_COLOR = "#22c1dc";
+
+  // Deliberately plain fetch against PostgREST rather than supabase-js: this
+  // page has zero dependencies, zero build step, and nothing to keep patched.
+  function headers() {
+    return {
+      "apikey": SUPABASE_KEY,
+      "authorization": "Bearer " + SUPABASE_KEY,
+      "content-type": "application/json",
+      "accept": "application/json"
+    };
+  }
+
+  function byId(id) { return document.getElementById(id); }
+
+  // --- validation -------------------------------------------------------
+
+  // Same rule as public.smartlink_slug_is_valid: 3–30 chars, [a-z0-9-], never
+  // leading/trailing a hyphen, no doubled hyphen. Checked here only to avoid a
+  // pointless round trip; the database remains the authority.
+  function cleanSlug(raw) {
+    var s = String(raw == null ? "" : raw).trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/.test(s)) return "";
+    if (s.indexOf("--") !== -1) return "";
+    return s;
+  }
+
+  function text(value, cap) {
+    return typeof value === "string" ? value.slice(0, cap) : "";
+  }
+
+  // ADR 0004 decision 4: the in-app preview interpolates sl.color straight
+  // into a style attribute, so the public renderer must never assume the
+  // stored value is a color. Anything but a lowercase 6-digit hex is replaced.
+  function safeColor(value) {
+    return typeof value === "string" && /^#[0-9a-f]{6}$/.test(value) ? value : DEFAULT_COLOR;
+  }
+
+  // Only http(s) survives. URL() normalises the scheme before the test, so
+  // javascript:, data:, vbscript: and whitespace/control-character smuggling
+  // all fail here rather than reaching an href.
+  function safeHref(value) {
+    if (typeof value !== "string" || value.length > MAX_URL) return "";
+    var url;
+    try { url = new URL(value); } catch (err) { return ""; }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.href;
+  }
+
+  // Pick ink that stays legible on whatever button color the operator chose.
+  function inkFor(hex) {
+    function channel(i) {
+      var c = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+    var luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+    return luminance > 0.42 ? "#0d1b2a" : "#ffffff";
+  }
+
+  // --- click recording --------------------------------------------------
+
+  // Decision 8, as amended: fetch with keepalive, never the beacon API, which
+  // cannot reliably attach the Supabase headers this RPC needs. Fire and
+  // forget — the anchor's default navigation is never prevented, never
+  // delayed, and never made conditional on this request.
+  function recordClick(slug, linkId) {
+    try {
+      fetch(RPC + "record_smartlink_click", {
+        method: "POST",
+        keepalive: true,
+        headers: headers(),
+        body: JSON.stringify({ p_slug: slug, p_link_id: linkId, p_referrer: referrerHost() })
+      }).catch(function () {});
+    } catch (err) { /* tracking must never surface to the visitor */ }
+  }
+
+  // The single visitor-derived value that leaves the page, reduced to a bare
+  // hostname here so no path or query string is ever transmitted — the server
+  // reduces and validates it again. Same-site referrals are dropped as noise.
+  function referrerHost() {
+    try {
+      if (!document.referrer) return null;
+      var url = new URL(document.referrer);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+      if (url.hostname === location.hostname) return null;
+      return url.hostname.toLowerCase().slice(0, 100);
+    } catch (err) { return null; }
+  }
+
+  // --- rendering --------------------------------------------------------
+
+  function show(which) {
+    byId("state").hidden = which !== "loading";
+    byId("card").hidden = which !== "page";
+    byId("gone").hidden = which !== "gone";
+    if (which === "gone") document.title = "Not available · FablePeak SmartLinks";
+  }
+
+  function render(page, slug) {
+    var color = safeColor(page.color);
+    var ink = inkFor(color);
+
+    var title = text(page.title, MAX_TITLE);
+    var avatar = text(page.avatar, MAX_AVATAR);
+    var bio = text(page.bio, MAX_BIO);
+
+    byId("avatar").textContent = avatar || "⛰️";
+    byId("title").textContent = title || slug;
+    byId("bio").textContent = bio;
+    // Assigning document.title is a string assignment, not markup parsing.
+    document.title = (title || slug) + " · FablePeak SmartLinks";
+
+    var nav = byId("links");
+    var links = Array.isArray(page.links) ? page.links.slice(0, MAX_LINKS) : [];
+
+    links.forEach(function (link) {
+      if (!link || typeof link !== "object") return;
+      var href = safeHref(link.url);
+      if (!href) return;
+
+      var id = text(link.id, 64);
+      var label = text(link.title, MAX_TITLE).trim();
+
+      // Every node is constructed, never parsed. textContent is the only way
+      // tenant-authored text reaches the document.
+      var a = document.createElement("a");
+      a.className = "slink";
+      a.href = href;
+      a.textContent = label || href;
+      // noopener: the destination never gets a handle on this window.
+      // nofollow: a published page is not an endorsement and must not pass
+      // ranking signal to arbitrary tenant-supplied destinations.
+      a.rel = "noopener nofollow";
+      // strict-origin: the destination learns that the visit came from
+      // https://links.fablepeak.com and nothing more — never the slug, so a
+      // page's identity is not leaked to every site it links to.
+      a.referrerPolicy = "strict-origin";
+      // CSSOM, not a style attribute: no string is ever parsed as CSS, so the
+      // hash-based style-src holds without 'unsafe-hashes'.
+      a.style.setProperty("background-color", color);
+      a.style.setProperty("color", ink);
+
+      if (id) {
+        a.addEventListener("click", function () { recordClick(slug, id); });
+      }
+      nav.appendChild(a);
+    });
+
+    show("page");
+  }
+
+  // --- entry ------------------------------------------------------------
+
+  var slug = cleanSlug(new URLSearchParams(location.search).get("b"));
+  if (!slug) {
+    show("gone");
+    return;
+  }
+
+  fetch(RPC + "get_smartlink", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ p_slug: slug })
+  }).then(function (res) {
+    if (!res.ok) throw new Error("get_smartlink " + res.status);
+    return res.json();
+  }).then(function (page) {
+    // '{}' is the backend's single answer for "unknown slug" and "not
+    // published"; anything without links or a title is treated the same way.
+    if (!page || typeof page !== "object" || !page.slug) {
+      show("gone");
+      return;
+    }
+    render(page, slug);
+  }).catch(function () {
+    show("gone");
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  GitHub Pages serves this file, with a real 404 status, for any path other
+  than /. ADR 0004 decision 1 rejected routing slugs through the 404 fallback:
+  the canonical URL is https://links.fablepeak.com/?b=<slug>, which resolves to
+  index.html with a real 200. So this file does one thing — send strays to the
+  root, where the renderer shows its "this page isn't available" state.
+  No script, no network, nothing to render.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'sha256-07C6iDAIELyJrfuI4b7nwSzaT96TzralAXiXeF309zk='; base-uri 'none'; form-action 'none'">
+<meta http-equiv="refresh" content="0;url=/">
+<title>FablePeak SmartLinks</title>
+<style>
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background: #f4f6f9; color: #5d6b7a;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  a { color: inherit; }
+  @media (prefers-color-scheme: dark) { body { background: #0b1420; color: #94a3b4; } }
+</style>
+</head>
+<body>
+<p>Redirecting to <a href="/">FablePeak SmartLinks</a>…</p>
+</body>
+</html>
