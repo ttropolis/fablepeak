@@ -4,7 +4,13 @@
   implemented in `supabase/migrations/20260829090000_public_smartlinks.sql`
   (slug columns and alias retention, `set_smartlink_slug`, `get_smartlink`,
   `smartlink_clicks` + `record_smartlink_click`, `smartlink_click_totals`,
-  90-day purge); the public renderer and editor UI are still outstanding.
+  90-day purge). Renderer (`smartlinks-site/`, deployed to
+  `ttropolis/fablepeak-links` → links.fablepeak.com, HTTPS enforced) and
+  editor wiring shipped 2026-08-29. Decision 1's controlled acceptance run
+  passed the same day on the internal SCH brand: claim `shiloh-creek` →
+  publish → public page rendered → real click navigated and surfaced in the
+  editor as "1 clicks · approx." → unpublish returned `{}` from
+  `get_smartlink` immediately → republish restored the payload.
 - Date: 2026-08-28
 
 ## Context
