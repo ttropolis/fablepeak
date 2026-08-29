@@ -1,6 +1,10 @@
 # ADR 0004: Public SmartLinks pages
 
-- Status: accepted with amendments — see "Decisions (2026-08-29)"
+- Status: accepted with amendments — see "Decisions (2026-08-29)". Backend
+  implemented in `supabase/migrations/20260829090000_public_smartlinks.sql`
+  (slug columns and alias retention, `set_smartlink_slug`, `get_smartlink`,
+  `smartlink_clicks` + `record_smartlink_click`, `smartlink_click_totals`,
+  90-day purge); the public renderer and editor UI are still outstanding.
 - Date: 2026-08-28
 
 ## Context
