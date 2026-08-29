@@ -1,7 +1,8 @@
 /* =============== delegated event handling (ADR 0003 §2a) ===============
    No markup carries an inline on* attribute. A rendered element names an entry
-   in ACTIONS — data-action for click, data-change for change, data-enter for
-   Enter, data-drag / data-drop for HTML5 drag — and carries its arguments in
+   in ACTIONS — data-action for click, data-change for change, data-input for
+   input, data-enter for Enter, data-drag / data-drop for HTML5 drag — and
+   carries its arguments in
    data-arg / data-arg2, escaped with attr(). Record ids therefore never enter
    JavaScript-in-attribute position at all, which retires that risk by
    construction rather than by review discipline.
@@ -21,8 +22,9 @@ import {
   completePasswordReset, enterDemo, exitDemo, requestPasswordReset, wSubmit, wTab,
 } from "./welcome.js";
 import {
-  calMove, deletePost, dragPost, dropPost, dupPost, openPostModal, publishNow,
-  retryPost, savePost, showMediaPreview, uploadPostMedia,
+  calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost, openPostModal,
+  publishNow, retryPost, runAiAssist, savePost, showMediaPreview, syncAiAssist,
+  uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
 import {
@@ -66,7 +68,13 @@ export const ACTIONS = {
   retryPost:             el => retryPost(el.dataset.arg),
   showMediaPreview:      el => showMediaPreview(el.value),
   uploadPostMedia:       el => uploadPostMedia(el),
-  toggleNet:             el => el.parentElement.classList.toggle("on", el.checked),
+  toggleNet:             el => { el.parentElement.classList.toggle("on", el.checked); syncAiAssist(); },
+  /* composer → AI assist. "Rewrite for network" also depends on the picker
+     above, which is why toggleNet re-syncs the row too. */
+  runAiAssist:           el => runAiAssist(el.dataset.arg),
+  useAiSuggestion:       el => useAiSuggestion(el.dataset.arg),
+  clearAiAssist:         () => clearAiAssist(),
+  syncAiAssist:          () => syncAiAssist(),
   /* analytics */
   analyticsNet:          el => { setAnalyticsNet(el.dataset.arg); render(); },
   /* inbox */
@@ -116,6 +124,10 @@ function runAction(ev, name){
 export function installDelegatedHandlers(){
   document.addEventListener("click",  ev => runAction(ev, "action"));
   document.addEventListener("change", ev => runAction(ev, "change"));
+  /* data-input is for controls whose *neighbours* must react while typing —
+     `change` on a textarea only fires on blur, which is too late to enable the
+     AI assist buttons beside it. */
+  document.addEventListener("input",  ev => runAction(ev, "input"));
   document.addEventListener("keydown", ev => {
     if(ev.key !== "Enter") return;                 // Escape and Tab stay with handleModalKeydown
     runAction(ev, "enter");

@@ -4,8 +4,9 @@ import { VIEWS } from "./constants.js";
 import { attr, esc } from "./escape.js";
 import { todayStr, uid } from "./util.js";
 import {
-  composerBaseline, db, mediaUploadActive, previousModalFocus, setAnalyticsNet,
-  setComposerBaseline, setPreviousModalFocus, setSelectedMsg, setView, view,
+  AI_ASSIST_IDLE, composerBaseline, db, mediaUploadActive, previousModalFocus,
+  setAiAssist, setAnalyticsNet, setComposerBaseline, setPreviousModalFocus,
+  setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
 import { defaultBrand, save, tickPublish } from "./workspace.js";
@@ -25,6 +26,7 @@ export function toast(msg){
 export function openModal(html){
   setPreviousModalFocus(document.activeElement);
   setComposerBaseline(null);                   // openPostModal re-arms this
+  setAiAssist(AI_ASSIST_IDLE);                 // no answer outlives its composer
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
   modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
@@ -37,6 +39,7 @@ export function closeModal(){
   if(mediaUploadActive) return toast("Keep this screen open while your media uploads");
   document.getElementById("overlay").classList.remove("open");
   setComposerBaseline(null);
+  setAiAssist(AI_ASSIST_IDLE);
   previousModalFocus?.focus?.(); setPreviousModalFocus(null);
 }
 /* The composer's values as it opened, so a stray Escape or backdrop click

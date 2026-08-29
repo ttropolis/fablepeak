@@ -339,6 +339,32 @@ export const RemoteAdapter = {
   },
   async publishNow(postId){ return this._publishRequest(postId); },
   async retryPost(postId){ return this._publishRequest(postId,true); },
+  /** Composer writing assist (supabase/functions/ai-assist).
+      `request` is the function's own body minus brand_id: {action:"caption",
+      topic, tone?, network?} | {action:"hashtags", text, network?} |
+      {action:"rewrite", text, network}. Resolves to {suggestions, truncated}.
+      A failure throws an Error carrying only the function's already
+      customer-facing message plus `status` and, for a rate limit,
+      `retryAfterSeconds` — the response body itself is never shown. */
+  async aiAssist(brandId, request){
+    const jwt = await this._jwt();
+    if(!jwt) throw new Error("Sign in first");
+    const r = await fetch(`${this._fnBase}/ai-assist`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}`, apikey: window.FABLEPEAK_BACKEND.anonKey,
+                 "Content-Type": "application/json" },
+      body: JSON.stringify({ brand_id: brandId, ...request }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if(!r.ok){
+      const failure = new Error(String(out.error || "AI assist could not answer. Try again shortly."));
+      failure.status = r.status;
+      const retry = Number(out.retry_after_seconds);
+      if(Number.isFinite(retry) && retry > 0) failure.retryAfterSeconds = retry;
+      throw failure;
+    }
+    return { suggestions: out.suggestions || [], truncated: !!out.truncated };
+  },
   /** per-platform delivery records for this brand's posts */
   async listTargets(brandId){
     if(!this.user) return [];

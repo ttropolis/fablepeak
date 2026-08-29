@@ -324,11 +324,11 @@ test("no markup carries an inline event handler, and every action name is regist
   assert.ok(registered.size >= 45, `expected a full action table, got ${registered.size}`);
 
   const used = new Set(Object.values(sources).flatMap(source => [...source.matchAll(
-    /\sdata-(?:action|change|enter|drag|drop)="([^"$]+)"/g)].map(m => m[1])));
+    /\sdata-(?:action|change|input|enter|drag|drop)="([^"$]+)"/g)].map(m => m[1])));
   assert.ok(used.size > 0, "rendered markup should name actions");
   assert.deepEqual([...used].filter(name => !registered.has(name)), [],
-    "every data-action / data-change / data-enter / data-drag / data-drop name " +
-    "must resolve in the ACTIONS table");
+    "every data-action / data-change / data-input / data-enter / data-drag / " +
+    "data-drop name must resolve in the ACTIONS table");
 
   assert.match(actions, /document\.addEventListener\("click",\s*ev => runAction\(ev, "action"\)\)/,
     "the click listener is installed once, on a root that survives render()");

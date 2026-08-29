@@ -413,6 +413,26 @@ async function signIn(api, cloud) {
   store.smartlinkClickTotals = async brandId => { record("smartlinkClickTotals", [brandId]); return api.intoPage(cloud.clickTotals ?? []); };
   store.setSmartlinkSlug = async (brandId, slug) => { record("setSmartlinkSlug", [brandId, slug]); return api.intoPage(cloud.slugResult?.(slug) ?? { ok: true, slug, changed: true }); };
   store.setSmartlinkPublic = async (brandId, isPublic) => { record("setSmartlinkPublic", [brandId, isPublic]); };
+  /* AI assist. `cloud.aiAssist` is either a fixed answer or a function of the
+     request, and either shape may be a failure — {error, status,
+     retry_after_seconds} — which is thrown the way RemoteAdapter.aiAssist
+     throws it, so the composer's typed-error handling is what gets exercised.
+     The recorded request is copied into this realm so tests can compare it
+     against a plain object literal. */
+  store.aiAssist = async (brandId, request) => {
+    record("aiAssist", [brandId, JSON.parse(JSON.stringify(request))]);
+    const answer = (typeof cloud.aiAssist === "function" ? cloud.aiAssist(request) : cloud.aiAssist)
+      ?? { suggestions: ["A first idea", "A second idea", "A third idea"] };
+    if (answer.error) {
+      const failure = new api.window.Error(String(answer.error));
+      failure.status = answer.status ?? 500;
+      if (answer.retry_after_seconds) failure.retryAfterSeconds = answer.retry_after_seconds;
+      throw failure;
+    }
+    return api.intoPage({
+      suggestions: answer.suggestions ?? [], truncated: !!answer.truncated,
+    });
+  };
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 

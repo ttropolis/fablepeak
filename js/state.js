@@ -43,6 +43,13 @@ export let previousModalFocus = null;
 /** the composer's values as it opened, so a stray Escape cannot discard a
     half-written post. Null while no composer is open. */
 export let composerBaseline = null;
+/** AI assist in the open composer: which action is in flight (`busy`), which
+    one produced the suggestions on screen, and the suggestions themselves.
+    Reset whenever a modal opens or closes, so no answer outlives its composer. */
+export const AI_ASSIST_IDLE = Object.freeze({
+  busy: null, action: null, items: Object.freeze([]), truncated: false,
+});
+export let aiAssist = AI_ASSIST_IDLE;
 
 export function setDb(value){ db = value; }
 export function setView(value){ view = value; }
@@ -58,6 +65,7 @@ export function setSlCache(value){ slCache = value; }
 export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
 export function setComposerBaseline(value){ composerBaseline = value; }
+export function setAiAssist(value){ aiAssist = value; }
 
 const SETTERS = {
   db: setDb, view: setView, calCursor: setCalCursor, selectedMsg: setSelectedMsg,
@@ -66,7 +74,7 @@ const SETTERS = {
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
-  composerBaseline: setComposerBaseline,
+  composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
 };
 
 /** Set one field by name. Used by the test seam (js/main.js), which needs to
