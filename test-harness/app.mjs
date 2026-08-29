@@ -347,6 +347,10 @@ async function signIn(api, cloud) {
   store.selectAccount = async id => { record("selectAccount", [id]); };
   store.ensureBrandSynced = async brand => { record("ensureBrandSynced", [brand.id]); };
   store.startOAuth = async (platform, brandId) => { record("startOAuth", [platform, brandId]); return true; };
+  store.smartlinkPublishing = async brandId => { record("smartlinkPublishing", [brandId]); return api.intoPage(cloud.smartlinkPublishing ?? { slug: "", published: false }); };
+  store.smartlinkClickTotals = async brandId => { record("smartlinkClickTotals", [brandId]); return api.intoPage(cloud.clickTotals ?? []); };
+  store.setSmartlinkSlug = async (brandId, slug) => { record("setSmartlinkSlug", [brandId, slug]); return api.intoPage(cloud.slugResult?.(slug) ?? { ok: true, slug, changed: true }); };
+  store.setSmartlinkPublic = async (brandId, isPublic) => { record("setSmartlinkPublic", [brandId, isPublic]); };
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 
