@@ -1,6 +1,6 @@
 # ADR 0004: Public SmartLinks pages
 
-- Status: proposed
+- Status: accepted with amendments — see "Decisions (2026-08-29)"
 - Date: 2026-08-28
 
 ## Context
@@ -214,3 +214,60 @@ Overall: M/L — roughly one focused week including acceptance evidence.
 10. Raw click rows deleted after 90 days, aggregates retained indefinitely? yes/no
 11. Editor shows real aggregates and stops using the jsonb `clicks` field (local/demo mode keeps its fake numbers)? yes/no
 12. privacy.html updated and deployed before the first page can be published? yes/no
+
+## Decisions (2026-08-29)
+
+Answers to "Decisions required", in order. Where an answer amends the body
+above, the amendment governs; the body text is left as written for the record.
+
+1. **Yes, gated.** Ship public SmartLinks during the invite-only beta, but
+   initially only for internal brands or an allowlisted customer. Security tests
+   and a controlled publish/unpublish acceptance run are prerequisites.
+2. **No — amend.** Keep the static-page architecture with no Edge-Function-served
+   HTML, but the canonical URL becomes `https://links.fablepeak.com/?b=<slug>`,
+   *not* the authenticated app's origin. *Amends decision 1 of the body*
+   (`https://fablepeak.com/l/?b=<slug>`) and its implementation notes, which
+   assume a `/l/` path on the app origin. Generic social metadata remains
+   acceptable for v1.
+3. **No.** Reject same origin. Public pages live on `links.fablepeak.com` from
+   the outset. *Amends the "Residual risk to weigh" paragraph in decision 4 of
+   the body,* which recommended same-origin for v1: public, anonymously rendered
+   content is a natural security boundary, and it is far harder to retrofit than
+   to establish now.
+4. **Yes.** Publishing is explicit and off by default per brand. Unpublishing
+   takes effect immediately.
+5. **Yes, with small changes.** One globally unique slug per brand, lowercase
+   normalization. *Amends the slug rules in decision 2 of the body:* minimum
+   length is **three** characters (not two), consecutive hyphens are rejected,
+   and the reserved list is broadened to also include `login`, `signup`,
+   `support`, `help`, `legal`, `security`, `status` and `.well-known`.
+6. **No.** Never release an old slug immediately — another customer could take
+   over links already distributed in the wild. *Amends the "Rename" bullet in
+   decision 2 of the body and the corresponding consequence:* an old slug is
+   retained as an alias for the brand's lifetime, or at minimum reserved through
+   a substantial cooldown and never assigned to another active brand.
+7. **Yes.** Public reads go through an exact-match security-definer RPC. Every
+   reference inside it is schema-qualified, `search_path` is restricted, default
+   execution is revoked, and execute is granted only to the intended roles.
+8. **Yes for v1.** An anon `record_smartlink_click` RPC is proportionate at beta
+   scale. *Amends the click-firing note in decision 3 of the body:* use
+   `fetch(..., { keepalive: true })`, **not** `navigator.sendBeacon` — sendBeacon
+   cannot reliably attach Supabase auth headers. Move the write path behind an
+   Edge Function if abuse or a need for sophisticated filtering appears.
+9. **Yes.** Privacy-first analytics: approximate counts, with no IP addresses,
+   cookies, fingerprinting or persistent identifiers. Counts must be labelled as
+   approximate in the UI.
+10. **No — amend.** 90 days for raw click rows is fine, but aggregates are *not*
+    retained indefinitely. *Amends the retention bullet in decision 3 of the
+    body:* aggregates are retained while the brand exists, then deleted within a
+    documented deletion window.
+11. **Yes.** Cloud mode uses real aggregates and stops treating
+    `brands.smartlink.clicks` as authoritative. Demo/local mode keeps clearly
+    identified simulated data.
+12. **Yes.** The privacy notice update is a release prerequisite, landing and
+    deploying before the first publish toggle is available.
+
+**Closing note.** The two most important amendments are the separate origin
+(decisions 2 and 3) and the slug-retention rule (decision 6). Same-origin XSS
+could expose an authenticated user's Supabase session; immediate slug reuse
+could let a different customer inherit traffic from links already in the wild.

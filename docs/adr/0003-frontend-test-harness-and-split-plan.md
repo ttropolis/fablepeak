@@ -1,6 +1,6 @@
 # ADR 0003: Frontend behavioural test harness before any file split
 
-- Status: proposed — blocked on the human decisions in "Open questions"
+- Status: accepted with amendments — see "Decisions (2026-08-29)"
 - Date: 2026-08-28
 
 ## Context
@@ -261,3 +261,47 @@ user-visible change.
   deferred past that point.
 - The provider-freeze and configuration assertions from ADR 0001 survive
   unchanged. Nothing here weakens a release gate.
+
+## Decisions (2026-08-29)
+
+Answers to "Open questions — human decisions required", in order. Where an
+answer amends the body above, the amendment governs; the body text is left as
+written for the record.
+
+1. **Yes.** Add jsdom as a devDependency. The zero-dependency `npm test` ends
+   here, deliberately.
+2. **Yes.** A separate, narrow Playwright Chromium CI job, kept out of the fast
+   unit suite. Its scope is drag-and-drop, PWA/service-worker, keyboard/focus
+   and offline behaviour — nothing that jsdom can honestly cover belongs in it.
+3. **Yes.** Retire direct `file://` execution, but only after installed-PWA
+   offline behaviour has been proven. Replace the README promise with a
+   documented, simple local HTTP development path.
+4. **Not applicable — no.** Question 4 was conditional on a "no" to 3. There
+   will be no concatenation build: `file://` is being retired, and adding build
+   machinery to prop up a weak distribution mode is not worth the cost. The
+   "no build step" claim survives.
+5. **Yes.** Phase 2a may change rendered DOM structure, including `data-action`
+   and related markup. Tests protect behaviour and accessibility contracts, not
+   incidental HTML structure; markup assertions that only pin structure are
+   expected to be rewritten or deleted.
+6. **Yes, time-boxed.** The freeze covers `index.html` feature changes only, and
+   only while a given 2a/2b migration batch is actually underway. Urgent fixes
+   are always allowed. *Amends the sequencing section:* the freeze attaches to
+   individual batches, not to the whole of Phases 2a and 2b, precisely to avoid
+   one enormous long-lived refactoring branch.
+7. **Yes.** This work may proceed before ADR 0001's Meta App Review gate closes.
+   It is independent of Meta's human acceptance process.
+8. **No as phrased — approved, but not as a single 4–6-week delivery.**
+   *Amends "Sequencing, effort and rollback":* the work lands as small verified
+   increments with a release point after Phase 2a, in this sequence:
+   1. land the behavioural harness;
+   2. add the browser-only acceptance tier;
+   3. eliminate inline handlers and secure rendering plus import validation;
+   4. **pause and release useful product work, including SmartLinks (ADR 0004);**
+   5. complete the physical ES-module split and the legacy-test conversion
+      afterwards.
+
+   Rationale: tests and production callers cross the same seam, so the safety
+   work must come first — but the refactor must not turn into a long beta delay.
+   The "roughly four to six weeks of one person, producing no user-visible
+   change" line in the sequencing section no longer describes the plan of record.
