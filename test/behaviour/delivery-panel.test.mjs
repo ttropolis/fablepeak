@@ -153,3 +153,25 @@ test("retrying asks for confirmation, calls the backend and re-reads the deliver
   assert.equal(app.modalOpen(), false);
   assert.equal(chip(app).className, "post published");
 });
+
+test("a javascript: remote_url renders no link at all", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: fixture([
+      { post_id: "p1", platform: "instagram", status: "published",
+        remote_url: "javascript:alert(document.domain)", failure_kind: null, error: null },
+      { post_id: "p1", platform: "facebook", status: "published",
+        remote_url: "https://facebook.com/123_456", failure_kind: null, error: null },
+    ], "published"),
+  });
+  t.after(() => app.close());
+
+  await openPost(app);
+  const [instagram, facebook] = rows(app);
+  assert.equal(instagram.detail, "Published",
+    "a non-http(s) remote link is dropped, not rendered");
+  assert.equal(facebook.detail, "Published — view post");
+  const links = app.$$(".delivery-panel a");
+  assert.equal(links.length, 1, "only the http(s) link survives");
+  assert.equal(links[0].href, "https://facebook.com/123_456");
+});

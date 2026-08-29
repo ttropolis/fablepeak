@@ -88,28 +88,69 @@ test("a file without a brands array is refused and leaves the workspace alone", 
   assert.equal(app.$("#main input[type=text]").value, "My Brand");
 });
 
-/* ADR 0003 "Current-state risk assessment" §3: importData() checks only
-   Array.isArray(d.brands). This pins the consequence so Phase 2a's schema
-   validation has something to change: a structurally invalid backup is
-   *reported* as invalid, but only because render() threw — by then `db` has
-   already been replaced and queued for persistence. */
-test("a brands array with invalid members replaces the workspace before failing", async t => {
+/* ADR 0003 §2a: importData() now validates the whole parsed file against the
+   workspace schema *before* it assigns `db`. The previous behaviour — reported
+   as invalid only because render() threw, by which point `db` was already
+   replaced and queued for persistence — is what this test used to pin. It now
+   pins the safe behaviour instead. */
+test("a brands array with invalid members is refused and never replaces the workspace", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
   await openSettings(app);
+  await app.waitFor(() => app.window.localStorage.getItem(LS_KEY),
+    { label: "the seeded workspace to persist" });
+  const before = app.window.localStorage.getItem(LS_KEY);
 
   await importBackup(app, JSON.stringify({ brands: [{ id: "x", name: "Broken" }] }));
 
   assert.equal(app.toast(), "Invalid backup file", "the user is told the file was rejected");
-  assert.equal(app.db.brands[0].name, "Broken",
-    "but the previous workspace is already gone from memory");
-  assert.equal(app.db.activeBrand, "x");
+  assert.equal(app.db.brands[0].name, "My Brand", "the workspace in memory is untouched");
+  assert.equal(app.db.activeBrand, app.db.brands[0].id);
+  assert.equal(app.db.brands[0].posts.length, 7);
   assert.equal(app.$("#main input[type=text]").value, "My Brand",
-    "and the screen still shows the workspace that no longer exists");
+    "and the screen still shows the workspace that is still there");
 
-  await app.waitFor(
-    () => JSON.parse(app.window.localStorage.getItem(LS_KEY)).brands[0].name === "Broken",
-    { label: "the rejected backup to be persisted anyway" });
+  // Longer than save()'s 200 ms debounce: a rejected import must never persist.
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(app.window.localStorage.getItem(LS_KEY), before,
+    "a rejected import must not reach storage — from there it reaches Supabase");
+});
+
+test("a backup whose posts are malformed is rejected as a whole", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openSettings(app);
+  const good = JSON.parse((await exportBackup(app)).json);
+
+  const broken = structuredClone(good);
+  broken.brands[0].posts[0].networks = "instagram";   // string, not an array
+  await importBackup(app, JSON.stringify(broken));
+  assert.equal(app.toast(), "Invalid backup file");
+  assert.equal(app.db.brands[0].posts.length, 7);
+
+  const noSmartlink = structuredClone(good);
+  delete noSmartlink.brands[0].smartlink;
+  await importBackup(app, JSON.stringify(noSmartlink));
+  assert.equal(app.toast(), "Invalid backup file");
+  assert.equal(app.db.brands[0].name, "My Brand");
+
+  // ...and the same file, unbroken, is still accepted.
+  await importBackup(app, JSON.stringify(good));
+  assert.equal(app.toast(), "Backup restored ✔");
+  assert.equal(app.db.brands[0].posts.length, 7);
+});
+
+test("an out-of-range SmartLink colour is normalised on import", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openSettings(app);
+  const good = JSON.parse((await exportBackup(app)).json);
+  good.brands[0].smartlink.color = `#fff" onmouseover="alert(1)`;
+
+  await importBackup(app, JSON.stringify(good));
+  assert.equal(app.toast(), "Backup restored ✔");
+  assert.equal(app.db.brands[0].smartlink.color, "#22c1dc",
+    "a colour that is not #rrggbb falls back to the default");
 });
 
 test("resetting to demo data asks first and rebuilds the seeded workspace", async t => {

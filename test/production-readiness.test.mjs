@@ -240,12 +240,42 @@ test("core mobile workflows expose live feedback and keyboard-operable controls"
   assert.match(html, /event\.key==="Escape"/);
   assert.match(html, /event\.key!=="Tab"/);
   assert.match(html, /previousModalFocus\?\.focus/);
-  assert.match(html, /<button type="button" class="post \$\{visibleStatus\}"/);
+  assert.match(html, /<button type="button" class="post \$\{attr\(visibleStatus\)\}"/);
   assert.doesNotMatch(html, /<div class="\$\{cls\}" onclick="openPostModal/);
   assert.match(html, /<button type="button" class="card msg/);
   assert.match(html, /<small class="netreason">Not connected<\/small>/,
     "disabled network explanations must be visible without hover");
   assert.match(html, /:focus-visible/);
+});
+
+/* ADR 0003 §2a. Inline handlers are not a style preference here: an inline
+   onclick resolves against global scope, so every one of them breaks the
+   moment a function moves into a module (Phase 2b). This is the permanent
+   guard that they do not come back — and that no rendered data-* action name
+   can be misspelled into a silently dead control. */
+test("no markup carries an inline event handler, and every action name is registered", async () => {
+  const html = await read("index.html");
+
+  const inline = [...html.matchAll(/\son[a-z]+\s*=\s*["']/gi)].map(m => m[0].trim());
+  assert.deepEqual(inline, [],
+    "index.html must carry no inline on* handler — use data-action + ACTIONS");
+
+  const registry = html.match(/const ACTIONS = \{([\s\S]*?)\n\};/);
+  assert.ok(registry, "the delegated action registry should exist");
+  const registered = new Set(
+    [...registry[1].matchAll(/^\s{2}([A-Za-z]\w*):/gm)].map(m => m[1]));
+  assert.ok(registered.size >= 45, `expected a full action table, got ${registered.size}`);
+
+  const used = new Set([...html.matchAll(
+    /\sdata-(?:action|change|enter|drag|drop)="([^"$]+)"/g)].map(m => m[1]));
+  assert.ok(used.size > 0, "rendered markup should name actions");
+  assert.deepEqual([...used].filter(name => !registered.has(name)), [],
+    "every data-action / data-change / data-enter / data-drag / data-drop name " +
+    "must resolve in the ACTIONS table");
+
+  assert.match(html, /document\.addEventListener\("click",\s*ev => runAction\(ev, "action"\)\)/,
+    "the click listener is installed once, on a root that survives render()");
+  assert.match(html, /function installDelegatedHandlers\(\)/);
 });
 
 test("live customer connections show an honest status for every planned platform", async () => {

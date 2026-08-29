@@ -142,10 +142,69 @@ test("hostile connection metadata from the server is inert", async t => {
   assertContained(app);
 });
 
-/* ADR 0003 "Current-state risk assessment" §1: renderSmartlinks interpolates
+/* ADR 0003 "Current-state risk assessment" §1: renderSmartlinks interpolated
    ${sl.color} unescaped into style="background:…" and value="…". The colour
-   picker cannot produce a hostile value, but importData can. Phase 2a's `attr()`
-   helper is what closes this; until then there is nothing honest to assert. */
-test("a hostile SmartLink colour is inert",
-  { skip: "Phase 2a (ADR 0003 §2a): sl.color is interpolated unescaped into two attributes" },
-  () => {});
+   picker cannot produce a hostile value, but importData and a tampered local
+   cache can. Phase 2a closes it with attr() plus an #rrggbb allowlist. */
+test("a hostile SmartLink colour never reaches style or value", async t => {
+  const app = await boot(t);
+  await go(app, "SmartLinks");
+
+  app.db.brands[0].smartlink.color = `#fff" onmouseover="__pwn()" data-x="`;
+  app.call("render");
+
+  assertContained(app);
+  assert.equal(app.$(".phone .slink").getAttribute("style"), "background:#22c1dc",
+    "an unparseable colour falls back to the default instead of being interpolated");
+  assert.equal(app.$(".sledit input[type=color]").getAttribute("value"), "#22c1dc");
+  assert.equal(app.$(".phone .slink").getAttribute("onmouseover"), null);
+
+  // A legitimate colour still round-trips, so the guard is an allowlist and
+  // not a blanket refusal. (The colour input lower-cases what it is given;
+  // the validator itself is case-insensitive.)
+  await app.fill(app.$(".sledit input[type=color]"), "#AB12CD");
+  assert.equal(app.db.brands[0].smartlink.color, "#ab12cd");
+  assert.equal(app.$(".phone .slink").getAttribute("style"), "background:#ab12cd");
+  assert.equal(app.eval("slColorOf('#AB12CD')"), "#AB12CD");
+});
+
+/* Delegation moved every record id out of JavaScript-in-attribute position and
+   into data-arg. These two prove the new position is escaped *and* still
+   round-trips the id byte-for-byte to the handler. */
+test("a hostile SmartLink id cannot break out of data-arg", async t => {
+  const app = await boot(t);
+  app.db.brands[0].smartlink.links[0].id = PAYLOAD;
+  app.call("render");
+  await go(app, "SmartLinks");
+
+  const remove = app.byText(".slrow button.dangerb", "✕");
+  assert.equal(remove.dataset.arg, PAYLOAD, "the id survives attribute escaping intact");
+  assert.equal(remove.getAttribute("onclick"), null);
+  assert.equal(app.$(".phone .slink").dataset.arg, PAYLOAD);
+  assertContained(app);
+
+  await app.click(remove);
+  assert.equal(app.db.brands[0].smartlink.links.some(l => l.id === PAYLOAD), false,
+    "the delegated handler received the same id back and deleted the right link");
+  assertContained(app);
+});
+
+test("a hostile post id cannot break out of data-arg on the calendar", async t => {
+  const app = await boot(t);
+  const post = app.db.brands[0].posts.find(p => p.status === "draft");
+  post.id = PAYLOAD;
+  app.call("render");
+
+  const chip = app.byText(".calgrid .post", post.text);
+  assert.equal(chip.dataset.arg, PAYLOAD);
+  assert.equal(chip.dataset.action, "openPost");
+  assert.equal(chip.dataset.drag, "dragPost");
+  assert.equal(chip.getAttribute("ondragstart"), null);
+  assertContained(app);
+
+  await app.click(chip);
+  await app.waitFor(() => app.$("#pm_text"));
+  assert.equal(app.$("#pm_text").value, post.text,
+    "the id round-tripped through data-arg and opened the right post");
+  assertContained(app, app.modal());
+});

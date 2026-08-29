@@ -98,6 +98,7 @@ test("delivery panel makes retryable and ambiguous target outcomes actionable", 
   assert.ok(fn, "deliveryPanel should exist beside the post modal interface");
   const context = {
     esc: value => String(value),
+    attr: value => String(value),
     netOf: id => ({ name: id === "x" ? "X / Twitter" : id }),
     retryLabel: target => target.failure_kind,
   };
@@ -109,14 +110,14 @@ test("delivery panel makes retryable and ambiguous target outcomes actionable", 
   }]});
   assert.match(retryable, /X \/ Twitter/);
   assert.match(retryable, /Automatic retry scheduled/);
-  assert.match(retryable, /retryPost\('p1'\)/);
+  assert.match(retryable, /data-action="retryPost" data-arg="p1"/);
 
   const unknown = context.deliveryPanel({ id:"p2", targets:[{
     platform:"x", status:"failed", failure_kind:"unknown", attempts:1,
     error:"Delivery was interrupted",
   }]});
   assert.match(unknown, /Verify on X \/ Twitter before doing anything else/);
-  assert.doesNotMatch(unknown, /retryPost\('p2'\)/);
+  assert.doesNotMatch(unknown, /data-action="retryPost"/);
 });
 
 test("mixed permanent delivery failures remain visible in planner status", async () => {
@@ -254,9 +255,10 @@ test("live published posts cannot be dragged back into the publishing queue", as
     save: () => { context.saved = true; },
     render: () => {},
     toast: message => { context.message = message; },
+    // No currentTarget: the delegated drop listener owns the .dragover class,
+    // so dropPost() now touches only the event's dataTransfer.
     event: {
       preventDefault(){},
-      currentTarget:{classList:{remove(){}}},
       dataTransfer:{getData:()=>"post-1"},
     },
   };

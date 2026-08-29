@@ -258,7 +258,7 @@
   <div class="logo">⛰️ Fable<span>Peak</span><span id="demoBadge"></span></div>
   <div class="brandbox">
     <label>Brand</label>
-    <select id="brandSel" onchange="switchBrand(this.value)"></select>
+    <select id="brandSel" data-change="switchBrand"></select>
   </div>
   <nav id="nav"></nav>
   <div class="sidefoot">FablePeak <span id="verSlot"></span> · local-first</div>
@@ -266,7 +266,7 @@
 
 <main id="main"></main>
 
-<div class="overlay" id="overlay" onclick="if(event.target===this)dismissModal()">
+<div class="overlay" id="overlay">
   <div class="modal" id="modalBody" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
 <div id="welcome" hidden></div>
@@ -995,15 +995,30 @@ function handleModalKeydown(event){
 }
 document.getElementById("overlay").addEventListener("keydown",handleModalKeydown);
 function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+/* Attribute-context escaper (ADR 0003 §2a). esc() is the right escaper for a
+   text node; inside an attribute value the set of characters that can end the
+   value or start a second attribute is wider, so every ${} that lands in
+   attribute position goes through attr() instead. Entity-encoding is decoded
+   by the parser, so the attribute still reads back verbatim. */
+function attr(s){ return String(s??"").replace(/[&<>"'`=\s]/g,c=>"&#"+c.charCodeAt(0)+";"); }
+// Navigation/media URLs must be absolute http(s) — blocks javascript: and data: schemes.
+function safeUrl(s){ try{ const u=new URL(String(s??"")); return (u.protocol==="https:"||u.protocol==="http:")?u.href:""; }catch{ return ""; } }
+/* The SmartLink button colour is interpolated into style="" and value="". The
+   colour input cannot produce anything but #rrggbb — importData and a tampered
+   local cache can. Validated at render and again wherever it is written. */
+const DEFAULT_SL_COLOR = "#22c1dc";
+function slColorOf(value){
+  return /^#[0-9a-f]{6}$/i.test(String(value??"")) ? String(value) : DEFAULT_SL_COLOR;
+}
 
 function renderNav(){
   document.getElementById("demoBadge").innerHTML =
     (store.name==="cloud" && !store.user && demoMode()) ? `<span class="demobadge">DEMO</span>` : "";
   document.getElementById("nav").innerHTML = VIEWS.map(v=>
-    `<button class="${v.id===view?'active':''}" onclick="go('${v.id}')">
+    `<button class="${v.id===view?'active':''}" data-action="go" data-arg="${attr(v.id)}">
        <span class="ic">${v.ic}</span>${v.name}</button>`).join("");
   const sel=document.getElementById("brandSel");
-  sel.innerHTML = db.brands.map(b=>`<option value="${b.id}" ${b.id===db.activeBrand?'selected':''}>${esc(b.name)}</option>`).join("");
+  sel.innerHTML = db.brands.map(b=>`<option value="${attr(b.id)}" ${b.id===db.activeBrand?'selected':''}>${esc(b.name)}</option>`).join("");
 }
 function go(v){ view=v; selectedMsg=null; render(); }
 function switchBrand(id){
@@ -1052,20 +1067,20 @@ function showWelcome(){
     </div>
     <div class="wcard">
       <div class="wtabs">
-        <button class="${wMode==='signin'?'on':''}" onclick="wTab('signin')">Sign in</button>
-        <button class="${wMode==='signup'?'on':''}" onclick="wTab('signup')">Create account</button>
+        <button class="${wMode==='signin'?'on':''}" data-action="wTab" data-arg="signin">Sign in</button>
+        <button class="${wMode==='signup'?'on':''}" data-action="wTab" data-arg="signup">Create account</button>
       </div>
       <label class="f">Email</label>
       <input type="email" id="w_email" placeholder="you@example.com" autocomplete="email">
       <label class="f">Password</label>
       <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 8 characters':'Your password'}"
         autocomplete="${wMode==='signup'?'new-password':'current-password'}"
-        onkeydown="if(event.key==='Enter')wSubmit()">
+        data-enter="wSubmit">
       <div class="werr" id="w_err"></div>
-      <button class="btn wsubmit" onclick="wSubmit()">${wMode==='signin'?'Sign in':'Create my account'}</button>
-      ${wMode==='signin' ? `<button class="btn ghost wdemo" style="margin-top:8px" onclick="requestPasswordReset()">Forgot password?</button>` : ""}
+      <button class="btn wsubmit" data-action="wSubmit">${wMode==='signin'?'Sign in':'Create my account'}</button>
+      ${wMode==='signin' ? `<button class="btn ghost wdemo" style="margin-top:8px" data-action="requestPasswordReset">Forgot password?</button>` : ""}
       <div class="wdivide">or</div>
-      <button class="btn ghost wdemo" onclick="enterDemo()">👀 Explore the demo first</button>
+      <button class="btn ghost wdemo" data-action="enterDemo">👀 Explore the demo first</button>
       <div class="wfoot">Demo runs entirely in your browser with sample data.<br>No account, nothing uploaded.<br>
         <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/data-deletion.html">Data deletion</a></div>
     </div>
@@ -1118,9 +1133,9 @@ function showPasswordReset(){
     <p class="wsmall">Use at least 8 characters.</p>
     <label class="f">New password</label>
     <input type="password" id="reset_pw" autocomplete="new-password" placeholder="Min 8 characters"
-      onkeydown="if(event.key==='Enter')completePasswordReset()">
+      data-enter="completePasswordReset">
     <div class="werr" id="reset_err"></div>
-    <button class="btn wsubmit" onclick="completePasswordReset()">Update password</button>
+    <button class="btn wsubmit" data-action="completePasswordReset">Update password</button>
   </div></div>`;
   if(window.matchMedia("(min-width: 821px)").matches) document.getElementById("reset_pw").focus();
 }
@@ -1154,8 +1169,8 @@ function renderOnboarding(m){
          inbox, links and analytics live inside it. Name your first one to get started.</p>
       <div class="obrow">
         <input type="text" id="ob_name" placeholder="e.g. My Studio" maxlength="40"
-          onkeydown="if(event.key==='Enter')createFirstBrand()">
-        <button class="btn" onclick="createFirstBrand()">Create brand</button>
+          data-enter="createFirstBrand">
+        <button class="btn" data-action="createFirstBrand">Create brand</button>
       </div>
     </div>
   </div>`;
@@ -1193,10 +1208,10 @@ function renderPlanner(m){
     <div class="calhead">
       <h2>${monthName}</h2>
       <div style="display:flex;gap:8px">
-        <button class="btn ghost mini" onclick="calMove(-1)">← Prev</button>
-        <button class="btn ghost mini" onclick="calCursor=new Date();render()">Today</button>
-        <button class="btn ghost mini" onclick="calMove(1)">Next →</button>
-        <button class="btn mini" onclick="openPostModal(null,'${newPostDate}')">+ New post</button>
+        <button class="btn ghost mini" data-action="calPrev">← Prev</button>
+        <button class="btn ghost mini" data-action="calToday">Today</button>
+        <button class="btn ghost mini" data-action="calNext">Next →</button>
+        <button class="btn mini" data-action="newPost" data-arg="${attr(newPostDate)}">+ New post</button>
       </div>
     </div>
     <div class="calgrid">
@@ -1206,18 +1221,14 @@ function renderPlanner(m){
         const cls=["day", d.getMonth()!==mo?"other":"", ds===todayStr()?"today":""].join(" ");
         const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>{
           const visibleStatus=postVisibleStatus(p);
-          return `<button type="button" class="post ${visibleStatus}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${esc(p.text)}"
-                aria-label="${esc(`${p.time||"Any time"}, ${visibleStatus}: ${p.text}`)}"
-                ondragstart="dragPost(event,'${p.id}')"
-                onclick="event.stopPropagation();openPostModal('${p.id}')">
+          return `<button type="button" class="post ${attr(visibleStatus)}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${attr(p.text)}"
+                aria-label="${attr(`${p.time||"Any time"}, ${visibleStatus}: ${p.text}`)}"
+                data-action="openPost" data-drag="dragPost" data-arg="${attr(p.id)}">
              <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</button>`;
         }).join("");
-        return `<div class="${cls}"
-                  ondragover="event.preventDefault();this.classList.add('dragover')"
-                  ondragleave="this.classList.remove('dragover')"
-                  ondrop="dropPost(event,'${ds}')">
-                  <button type="button" class="dnum" aria-label="Schedule a post on ${ds}"
-                    onclick="openPostModal(null,'${ds}')">${d.getDate()}</button>${chips}</div>`;
+        return `<div class="${attr(cls)}" data-drop="dropPost" data-arg="${attr(ds)}">
+                  <button type="button" class="dnum" aria-label="Schedule a post on ${attr(ds)}"
+                    data-action="newPost" data-arg="${attr(ds)}">${d.getDate()}</button>${chips}</div>`;
       }).join("")}
     </div>
     <div class="legend">
@@ -1233,7 +1244,7 @@ function renderPlanner(m){
         const dateLabel=date.toLocaleDateString("en",{weekday:"short",day:"numeric"});
         const nets=p.networks.map(n=>netOf(n)?.short||n).join(" · ");
         const visibleStatus=postVisibleStatus(p);
-        return `<button type="button" class="agenda-post" onclick="openPostModal('${p.id}')">
+        return `<button type="button" class="agenda-post" data-action="openPost" data-arg="${attr(p.id)}">
           <span class="agenda-date">${dateLabel}</span>
           <span class="agenda-copy"><strong>${esc(p.text)}</strong>
             <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(visibleStatus)}</span></span>
@@ -1245,7 +1256,7 @@ function renderPlanner(m){
 function calMove(n){ calCursor.setMonth(calCursor.getMonth()+n); render(); }
 function dragPost(ev,id){ ev.dataTransfer.setData("text/plain",id); }
 function dropPost(ev,ds){
-  ev.preventDefault(); ev.currentTarget.classList.remove("dragover");
+  ev.preventDefault();                           // the delegated drop listener clears .dragover
   const id=ev.dataTransfer.getData("text/plain");
   const p=brand().posts.find(p=>p.id===id);
   if(!p) return;
@@ -1263,18 +1274,18 @@ function deliveryPanel(p){
     ${targets.map(t=>{
       const name=netOf(t.platform)?.name||t.platform;
       const detail=t.status==="published"
-        ? t.remote_url ? `<a href="${esc(t.remote_url)}" target="_blank" rel="noopener">Published — view post</a>` : "Published"
+        ? safeUrl(t.remote_url) ? `<a href="${attr(safeUrl(t.remote_url))}" target="_blank" rel="noopener">Published — view post</a>` : "Published"
         : t.failure_kind==="retryable"
           ? `Automatic retry scheduled${t.next_retry_at?` for ${new Date(t.next_retry_at).toLocaleString()}`:""}`
           : t.failure_kind==="unknown"
             ? `Verify on ${esc(name)} before doing anything else — delivery may have succeeded.`
             : t.error||t.status;
-      return `<div class="delivery-row ${esc(t.status)}">
+      return `<div class="delivery-row ${attr(t.status)}">
         <strong>${esc(name)}</strong><span>${detail}</span>
         ${t.error&&t.status!=="published"?`<small>${esc(t.error)}</small>`:""}
       </div>`;
     }).join("")}
-    ${canRetry?`<button class="btn ghost mini" onclick="retryPost('${p.id}')">Retry failed targets now</button>`:""}
+    ${canRetry?`<button class="btn ghost mini" data-action="retryPost" data-arg="${attr(p.id)}">Retry failed targets now</button>`:""}
   </section>`;
 }
 function postVisibleStatus(p){
@@ -1304,18 +1315,18 @@ function openPostModal(id, dateStr){
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}>${esc(p?.text||"")}</textarea>
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
-    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${esc(p?.media_url||"")}" ${locked?"disabled":""} onchange="showMediaPreview(this.value)">
+    <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${attr(p?.media_url||"")}" ${locked?"disabled":""} data-change="showMediaPreview">
     <div class="media-preview" id="pm_media_preview"></div>
     ${liveMode() && !locked ? `<div class="upload-actions">
       <label class="filebtn ghost">📱 Choose photo or video
         <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif,video/mp4,video/quicktime,video/webm,.m4v"
-          onchange="uploadPostMedia(this)">
+          data-change="uploadPostMedia">
       </label>
       <label class="filebtn ghost mobile-only">📷 Take photo
-        <input type="file" accept="image/*" capture="environment" onchange="uploadPostMedia(this)">
+        <input type="file" accept="image/*" capture="environment" data-change="uploadPostMedia">
       </label>
       <label class="filebtn ghost mobile-only">🎥 Record video
-        <input type="file" accept="video/*" capture="environment" onchange="uploadPostMedia(this)">
+        <input type="file" accept="video/*" capture="environment" data-change="uploadPostMedia">
       </label>
       <span id="pm_upload_status" class="upload-status">Phone gallery and camera supported · 50 MB maximum.</span>
     </div>` : ""}
@@ -1326,28 +1337,28 @@ function openPostModal(id, dateStr){
         const conn = liveMode() ? live : !!b.connections[n.id];
         const on=nets.includes(n.id);
         return `<label class="${on?'on':''}" style="${conn?'':'opacity:.4'}" title="${conn?'':'Not connected'}">
-          <input type="checkbox" value="${n.id}" ${on?'checked':''} ${conn&&!locked?'':'disabled'}
-            onchange="this.parentElement.classList.toggle('on',this.checked)">
+          <input type="checkbox" value="${attr(n.id)}" ${on?'checked':''} ${conn&&!locked?'':'disabled'}
+            data-change="toggleNet">
           <span style="color:${n.color};font-weight:700">${n.short}</span> ${n.name}
           ${conn?"":`<small class="netreason">Not connected</small>`}</label>`;
       }).join("")}
     </div>
     <div class="fieldrow">
-      <div style="flex:1;min-width:120px"><label class="f">Date</label><input type="date" id="pm_date" value="${p?.date||dateStr||todayStr()}" ${locked?"disabled":""}></div>
-      <div style="flex:1;min-width:110px"><label class="f">Time${liveMode()?` <span style="text-transform:none;font-weight:400">(${esc(SCHEDULE_TZ)})</span>`:""}</label><input type="time" id="pm_time" value="${p?.time||"10:00"}" ${locked?"disabled":""}></div>
+      <div style="flex:1;min-width:120px"><label class="f">Date</label><input type="date" id="pm_date" value="${attr(p?.date||dateStr||todayStr())}" ${locked?"disabled":""}></div>
+      <div style="flex:1;min-width:110px"><label class="f">Time${liveMode()?` <span style="text-transform:none;font-weight:400">(${esc(SCHEDULE_TZ)})</span>`:""}</label><input type="time" id="pm_time" value="${attr(p?.time||"10:00")}" ${locked?"disabled":""}></div>
       <div style="flex:1;min-width:110px"><label class="f">Status</label>
         <select class="inp" id="pm_status" ${locked?"disabled":""}>
           ${statusOptions.map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
         </select></div>
     </div>
     <div class="modalfoot">
-      <div>${p?`${p.status!=="publishing"?`<button class="btn dangerb mini" onclick="deletePost('${p.id}')">Delete</button>`:""}
-               ${p.status!=="publishing"?`<button class="btn ghost mini" onclick="dupPost('${p.id}')">Duplicate</button>`:""}
+      <div>${p?`${p.status!=="publishing"?`<button class="btn dangerb mini" data-action="deletePost" data-arg="${attr(p.id)}">Delete</button>`:""}
+               ${p.status!=="publishing"?`<button class="btn ghost mini" data-action="dupPost" data-arg="${attr(p.id)}">Duplicate</button>`:""}
                ${liveMode() && !["publishing","published"].includes(p.status)
-                 ? `<button class="btn mini" onclick="publishNow('${p.id}')">🚀 Publish now</button>` : ""}`:""}</div>
+                 ? `<button class="btn mini" data-action="publishNow" data-arg="${attr(p.id)}">🚀 Publish now</button>` : ""}`:""}</div>
       <div class="right">
-        <button class="btn ghost" onclick="dismissModal()">${locked?"Close":"Cancel"}</button>
-        ${locked?"":`<button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>`}
+        <button class="btn ghost" data-action="dismissModal">${locked?"Close":"Cancel"}</button>
+        ${locked?"":`<button class="btn" data-action="savePost" data-arg="${attr(p?.id||"")}">${p?"Save":"Schedule"}</button>`}
       </div>
     </div>`);
   if(p?.media_url) showMediaPreview(p.media_url);
@@ -1534,7 +1545,7 @@ function lineChart(series, key, color){
   const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
   const area=path+` L${pts[pts.length-1][0]},${H-P} L${pts[0][0]},${H-P} Z`;
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">
-    <path d="${area}" fill="${color}22"/><path d="${path}" fill="none" stroke="${color}" stroke-width="2.5"/>
+    <path d="${area}" fill="${attr(color)}22"/><path d="${path}" fill="none" stroke="${attr(color)}" stroke-width="2.5"/>
     <text x="${P}" y="14" font-size="11" fill="#6b7c8d">${max.toLocaleString()}</text>
     <text x="${P}" y="${H-8}" font-size="11" fill="#6b7c8d">${min.toLocaleString()}</text>
     <text x="${W-P}" y="${H-8}" font-size="11" text-anchor="end" fill="#6b7c8d">${series[series.length-1].date.slice(5)}</text>
@@ -1547,7 +1558,7 @@ function barChart(series, key, color){
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">
     ${series.map((s,i)=>{
       const h=(s[key]/max)*(H-2*P);
-      return `<rect x="${(P+i*bw+1).toFixed(1)}" y="${(H-P-h).toFixed(1)}" width="${Math.max(bw-2,1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color}"/>`;
+      return `<rect x="${(P+i*bw+1).toFixed(1)}" y="${(H-P-h).toFixed(1)}" width="${Math.max(bw-2,1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${attr(color)}"/>`;
     }).join("")}
     <text x="${P}" y="14" font-size="11" fill="#6b7c8d">max ${max.toLocaleString()}</text>
   </svg>`;
@@ -1599,8 +1610,8 @@ function renderAnalytics(m){
           : "Real analytics start filling in after a connected platform completes its first daily metrics run. Until then, generated sample data demonstrates the layout."}</div>
   </div>
   <div class="tabbar noprint">
-    <button class="${analyticsNet==="all"?"active":""}" onclick="analyticsNet='all';render()">All networks</button>
-    ${connectedNets().map(n=>`<button class="${analyticsNet===n.id?"active":""}" onclick="analyticsNet='${n.id}';render()">${n.name}</button>`).join("")}
+    <button class="${analyticsNet==="all"?"active":""}" data-action="analyticsNet" data-arg="all">All networks</button>
+    ${connectedNets().map(n=>`<button class="${analyticsNet===n.id?"active":""}" data-action="analyticsNet" data-arg="${attr(n.id)}">${n.name}</button>`).join("")}
   </div>
   <div class="kpis">
     <div class="card kpi"><div class="n">${last.followers.toLocaleString()}</div><div class="l">Followers</div>
@@ -1638,17 +1649,17 @@ function renderInbox(m){
   </div>
   <div class="tabbar">
     ${["all","unread","resolved"].map(f=>`<button class="${inboxFilter===f?"active":""}"
-        onclick="inboxFilter='${f}';selectedMsg=null;render()">${f[0].toUpperCase()+f.slice(1)}</button>`).join("")}
-    <button style="margin-left:auto" onclick="fakeIncoming()">＋ Simulate incoming</button>
+        data-action="inboxFilter" data-arg="${attr(f)}">${f[0].toUpperCase()+f.slice(1)}</button>`).join("")}
+    <button style="margin-left:auto" data-action="fakeIncoming">＋ Simulate incoming</button>
   </div>
   <div class="inboxwrap">
     <div class="msglist">
       ${list.length? list.map(c=>{
         const n=netOf(c.net);
         return `<button type="button" class="card msg ${c.unread?"unread":""} ${sel&&sel.id===c.id?"sel":""}"
-          aria-pressed="${sel&&sel.id===c.id?"true":"false"}" onclick="openMsg('${c.id}')">
+          aria-pressed="${sel&&sel.id===c.id?"true":"false"}" data-action="openMsg" data-arg="${attr(c.id)}">
           <div class="from"><span>${esc(c.from)}</span>
-            <span class="nico" style="background:${n.color};width:22px;height:22px;font-size:9px;border-radius:6px">${n.short}</span></div>
+            <span class="nico" style="background:${attr(n.color)};width:22px;height:22px;font-size:9px;border-radius:6px">${n.short}</span></div>
           <div class="prev">${esc(c.msgs[c.msgs.length-1].text)}</div></button>`;
       }).join("") : `<div class="empty">Nothing here 🎉</div>`}
     </div>
@@ -1656,12 +1667,12 @@ function renderInbox(m){
       ${sel? `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <strong>${esc(sel.from)} · ${netOf(sel.net).name}</strong>
-          <button class="btn ghost mini" onclick="toggleResolved('${sel.id}')">${sel.resolved?"Reopen":"Mark resolved ✓"}</button>
+          <button class="btn ghost mini" data-action="toggleResolved" data-arg="${attr(sel.id)}">${sel.resolved?"Reopen":"Mark resolved ✓"}</button>
         </div>
-        <div class="bubbles">${sel.msgs.map(x=>`<div class="bub ${x.who}">${esc(x.text)}</div>`).join("")}</div>
+        <div class="bubbles">${sel.msgs.map(x=>`<div class="bub ${attr(x.who)}">${esc(x.text)}</div>`).join("")}</div>
         <div class="replyrow">
-          <input type="text" id="replyInp" placeholder="Type a reply…" onkeydown="if(event.key==='Enter')sendReply('${sel.id}')">
-          <button class="btn" onclick="sendReply('${sel.id}')">Send</button>
+          <input type="text" id="replyInp" placeholder="Type a reply…" data-enter="sendReply" data-arg="${attr(sel.id)}">
+          <button class="btn" data-action="sendReply" data-arg="${attr(sel.id)}">Send</button>
         </div>`
       : `<div class="empty">Select a conversation</div>`}
     </div>
@@ -1688,39 +1699,40 @@ function fakeIncoming(){
 /* =============== SMARTLINKS =============== */
 function renderSmartlinks(m){
   const sl=brand().smartlink;
+  const color=slColorOf(sl.color);
   m.innerHTML=`
   <h1>SmartLinks</h1>
   <div class="sub">Your link-in-bio page. Edit on the left, live preview on the right.</div>
   <div class="slwrap">
     <div class="card sledit">
-      <label class="f">Page title</label><input type="text" value="${esc(sl.title)}" onchange="slSet('title',this.value)">
-      <label class="f">Bio</label><input type="text" value="${esc(sl.bio)}" onchange="slSet('bio',this.value)">
+      <label class="f">Page title</label><input type="text" value="${attr(sl.title)}" data-change="slSet" data-arg="title">
+      <label class="f">Bio</label><input type="text" value="${attr(sl.bio)}" data-change="slSet" data-arg="bio">
       <div style="display:flex;gap:10px">
-        <div style="flex:1"><label class="f">Avatar (emoji)</label><input type="text" value="${esc(sl.avatar)}" maxlength="4" onchange="slSet('avatar',this.value)"></div>
-        <div style="flex:1"><label class="f">Button color</label><input type="color" value="${sl.color}" style="width:100%;height:36px;border:1px solid var(--line);border-radius:8px" onchange="slSet('color',this.value)"></div>
+        <div style="flex:1"><label class="f">Avatar (emoji)</label><input type="text" value="${attr(sl.avatar)}" maxlength="4" data-change="slSet" data-arg="avatar"></div>
+        <div style="flex:1"><label class="f">Button color</label><input type="color" value="${attr(color)}" style="width:100%;height:36px;border:1px solid var(--line);border-radius:8px" data-change="slSet" data-arg="color"></div>
       </div>
       <label class="f">Links</label>
       ${sl.links.map((l,i)=>`
         <div class="slrow">
-          <input type="text" value="${esc(l.title)}" placeholder="Label" onchange="slLink('${l.id}','title',this.value)">
-          <input type="url" value="${esc(l.url)}" placeholder="https://…" onchange="slLink('${l.id}','url',this.value)">
+          <input type="text" value="${attr(l.title)}" placeholder="Label" data-change="slLink" data-arg="${attr(l.id)}" data-arg2="title">
+          <input type="url" value="${attr(l.url)}" placeholder="https://…" data-change="slLink" data-arg="${attr(l.id)}" data-arg2="url">
           <span class="clicks">${l.clicks} clicks</span>
-          <button class="btn ghost mini" ${i===0?"disabled":""} onclick="slMove('${l.id}',-1)">↑</button>
-          <button class="btn ghost mini" ${i===sl.links.length-1?"disabled":""} onclick="slMove('${l.id}',1)">↓</button>
-          <button class="btn dangerb mini" onclick="slDel('${l.id}')">✕</button>
+          <button class="btn ghost mini" ${i===0?"disabled":""} data-action="slMove" data-arg="${attr(l.id)}" data-arg2="-1">↑</button>
+          <button class="btn ghost mini" ${i===sl.links.length-1?"disabled":""} data-action="slMove" data-arg="${attr(l.id)}" data-arg2="1">↓</button>
+          <button class="btn dangerb mini" data-action="slDel" data-arg="${attr(l.id)}">✕</button>
         </div>`).join("")}
-      <button class="btn ghost mini" style="margin-top:6px" onclick="slAdd()">+ Add link</button>
+      <button class="btn ghost mini" style="margin-top:6px" data-action="slAdd">+ Add link</button>
     </div>
     <div class="phone">
       <div class="av">${esc(sl.avatar)}</div>
       <h5>${esc(sl.title)}</h5>
       <div class="bio">${esc(sl.bio)}</div>
-      ${sl.links.map(l=>`<a class="slink" style="background:${sl.color}" onclick="slClick('${l.id}')">${esc(l.title)}</a>`).join("")}
+      ${sl.links.map(l=>`<a class="slink" style="background:${attr(color)}" data-action="slClick" data-arg="${attr(l.id)}">${esc(l.title)}</a>`).join("")}
       <div style="text-align:center;color:var(--muted);font-size:10px;margin-top:14px">⛰️ FablePeak Link</div>
     </div>
   </div>`;
 }
-function slSet(k,v){ brand().smartlink[k]=v; save(); render(); }
+function slSet(k,v){ brand().smartlink[k]= k==="color" ? slColorOf(v) : v; save(); render(); }
 function slLink(id,k,v){ const l=brand().smartlink.links.find(x=>x.id===id); l[k]=v; save(); render(); }
 function slAdd(){ brand().smartlink.links.push({id:uid(),title:"New link",url:"https://",clicks:0}); save(); render(); }
 function slDel(id){ const sl=brand().smartlink; sl.links=sl.links.filter(x=>x.id!==id); save(); render(); }
@@ -1755,7 +1767,7 @@ function renderReports(m){
   m.innerHTML=`
   <h1>Report — ${esc(b.name)}</h1>
   <div class="sub">Last 30 days · ${usingReal?"real platform metrics":"simulated metrics"} · generated ${new Date().toLocaleDateString()}
-    <button class="btn mini noprint" style="margin-left:10px" onclick="window.print()">🖨 Print / Save as PDF</button></div>
+    <button class="btn mini noprint" style="margin-left:10px" data-action="printReport">🖨 Print / Save as PDF</button></div>
   <div class="kpis">
     <div class="card kpi"><div class="n">${s[s.length-1].followers.toLocaleString()}</div><div class="l">Total followers</div></div>
     <div class="card kpi"><div class="n">${totImp.toLocaleString()}</div><div class="l">Impressions</div></div>
@@ -1767,7 +1779,7 @@ function renderReports(m){
     <table class="rep">
       <tr><th>Network</th><th>Followers</th><th>Impressions</th><th>Engagements</th><th>Posts</th></tr>
       ${perNet.map(r=>`<tr>
-        <td><span style="color:${r.n.color};font-weight:700">${r.n.short}</span> ${r.n.name}</td>
+        <td><span style="color:${attr(r.n.color)};font-weight:700">${r.n.short}</span> ${r.n.name}</td>
         <td>${r.followers.toLocaleString()}</td><td>${r.imp.toLocaleString()}</td>
         <td>${r.eng.toLocaleString()}</td><td>${usingReal?r.measuredPosts:r.posts}</td></tr>`).join("")}
     </table>
@@ -1829,13 +1841,13 @@ function renderConnections(m){
       ${NETWORKS.map(n=>{
         const handle=b.connections[n.id];
         return `<div class="card conn">
-          <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
+          <div class="top"><div class="nico" style="background:${attr(n.color)}">${n.short}</div>
             <div><strong>${n.name}</strong><div class="st ${handle?"on":""}">${handle?("Simulated · "+esc(handle)):"Not connected"}</div></div></div>
           ${handle
-            ? `<button class="btn ghost mini" onclick="disconnectNet('${n.id}')">Remove</button>`
+            ? `<button class="btn ghost mini" data-action="disconnectNet" data-arg="${attr(n.id)}">Remove</button>`
             : `<div style="display:flex;gap:6px">
-                 <input type="text" id="h_${n.id}" placeholder="@handle">
-                 <button class="btn ghost mini" onclick="connectNet('${n.id}')">Simulate</button></div>`}
+                 <input type="text" id="h_${attr(n.id)}" placeholder="@handle">
+                 <button class="btn ghost mini" data-action="connectNet" data-arg="${attr(n.id)}">Simulate</button></div>`}
         </div>`;
       }).join("")}
     </div>`;
@@ -1869,7 +1881,7 @@ function renderConnections(m){
       const ready = connCache.available.includes(n.id);
       const pendingStatus = PLATFORM_PENDING_STATUS[n.id] || "Setup pending";
       return `<div class="card conn">
-        <div class="top"><div class="nico" style="background:${n.color}">${n.short}</div>
+        <div class="top"><div class="nico" style="background:${attr(n.color)}">${n.short}</div>
           <div style="min-width:0">
             <strong>${n.name}</strong>
             <div class="st ${accounts.some(a=>a.status==="active")?"on":""}">
@@ -1880,27 +1892,27 @@ function renderConnections(m){
         <div style="color:var(--muted);font-size:11.5px;line-height:1.5">${PLATFORM_NOTES[n.id]}</div>
         ${accounts.map(a => `
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px">
-            ${a.avatar_url ? `<img src="${esc(a.avatar_url)}" alt="" style="width:25px;height:25px;border-radius:50%;object-fit:cover">` : ""}
+            ${safeUrl(a.avatar_url) ? `<img src="${attr(safeUrl(a.avatar_url))}" alt="" style="width:25px;height:25px;border-radius:50%;object-fit:cover">` : ""}
             <strong style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name || "Connected account")}</strong>
             ${a.is_default && a.status==="active"
               ? `<span style="color:var(--chip-pub);font-size:11px">✓ Publishing account</span>`
               : a.status==="active"
-                ? `<button class="btn ghost mini" onclick="selectReal('${a.id}')">Use for publishing</button>`
+                ? `<button class="btn ghost mini" data-action="selectReal" data-arg="${attr(a.id)}">Use for publishing</button>`
                 : ""}
             ${a.last_verified_at && a.status==="active"
-              ? `<span style="color:var(--muted);font-size:10px" title="${esc(a.last_verified_at)}">Verified</span>` : ""}
+              ? `<span style="color:var(--muted);font-size:10px" title="${attr(a.last_verified_at)}">Verified</span>` : ""}
             ${a.needs_reauth || ["expired","revoked"].includes(a.status)
               ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>`
               : a.status==="error"
                 ? `<span style="color:var(--danger);font-size:12px">⚠️ Connection check failed</span>` : ""}
-            <button class="btn ghost mini" onclick="disconnectReal('${a.id}')">Disconnect</button>
+            <button class="btn ghost mini" data-action="disconnectReal" data-arg="${attr(a.id)}">Disconnect</button>
           </div>
           ${a.last_error ? `<div style="color:var(--danger);font-size:11px">${esc(a.last_error)}</div>` : ""}`).join("")}
         ${ready && !accounts.length
-          ? `<button class="btn mini" onclick="connectReal('${n.id}')">Connect</button>`
+          ? `<button class="btn mini" data-action="connectReal" data-arg="${attr(n.id)}">Connect</button>`
           : ready && accounts.length
-            ? `<button class="btn ghost mini" onclick="connectReal('${n.id}')">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":n.id==="pinterest"?"Refresh boards":"Connect another"}</button>`
-          : `<button class="btn ghost mini" disabled title="${esc(pendingStatus)}">Connect</button>`}
+            ? `<button class="btn ghost mini" data-action="connectReal" data-arg="${attr(n.id)}">${accounts.some(a=>a.status!=="active")?"Reconnect":n.id==="facebook"?"Refresh Pages":n.id==="pinterest"?"Refresh boards":"Connect another"}</button>`
+          : `<button class="btn ghost mini" disabled title="${attr(pendingStatus)}">Connect</button>`}
       </div>`;
     }).join("")}
   </div>
@@ -1976,7 +1988,7 @@ function mobileInstallCard(){
   const ios=/iPad|iPhone|iPod/.test(navigator.userAgent);
   if(installedApp()) return `<p style="color:#3d9b63;font-size:13px">Installed ✔ Open FablePeak from your Home Screen for the app experience.</p>`;
   if(deferredInstallPrompt) return `<p style="color:var(--muted);font-size:13px;margin-bottom:12px">Install FablePeak for a full-screen app that opens directly to your workspace.</p>
-    <button class="btn" onclick="installPhoneApp()">📲 Install FablePeak</button>`;
+    <button class="btn" data-action="installPhoneApp">📲 Install FablePeak</button>`;
   return `<p style="color:var(--muted);font-size:13px;line-height:1.6">
     ${ios ? `On iPhone or iPad, open FablePeak in <strong>Safari</strong>, tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.`
       : `On Android, open the browser menu and choose <strong>Install app</strong> or <strong>Add to Home Screen</strong>.`}
@@ -1991,12 +2003,12 @@ function renderSettings(m){
       <h4 style="margin-bottom:10px">Brands</h4>
       ${db.brands.map(b=>`
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-          <input type="text" value="${esc(b.name)}" onchange="renameBrand('${b.id}',this.value)">
-          <button class="btn dangerb mini" ${db.brands.length<2?"disabled":""} onclick="deleteBrand('${b.id}')">✕</button>
+          <input type="text" value="${attr(b.name)}" data-change="renameBrand" data-arg="${attr(b.id)}">
+          <button class="btn dangerb mini" ${db.brands.length<2?"disabled":""} data-action="deleteBrand" data-arg="${attr(b.id)}">✕</button>
         </div>`).join("")}
       <div style="display:flex;gap:8px;margin-top:10px">
         <input type="text" id="newBrand" placeholder="New brand name">
-        <button class="btn mini" onclick="addBrand()">Add</button>
+        <button class="btn mini" data-action="addBrand">Add</button>
       </div>
     </div>
     <div class="card" style="flex:1;min-width:280px">
@@ -2006,11 +2018,11 @@ function renderSettings(m){
           : store.user ? "☁️ Cloud · synced" : "👀 Demo (sample data, this device only)"}</strong>
         ${store.user ? " · signed in as "+esc(store.user.email) : ""}</p>
       ${store.name==="cloud" ? (store.user
-        ? `<button class="btn ghost" onclick="cloudSignOut()">Sign out</button>`
+        ? `<button class="btn ghost" data-action="cloudSignOut">Sign out</button>`
         : `<p style="color:var(--muted);font-size:13px;margin-bottom:10px">You're exploring with
              sample data. Create a free account to get a real workspace that syncs across
              your devices.</p>
-           <button class="btn" onclick="exitDemo()">Sign in / Create account</button>`) : `
+           <button class="btn" data-action="exitDemo">Sign in / Create account</button>`) : `
         <p style="color:var(--muted);font-size:13px">This deployment has no
         <code>backend-config.js</code>, so it intentionally runs without accounts or cloud sync.</p>`}
     </div>
@@ -2018,10 +2030,10 @@ function renderSettings(m){
       <h4 style="margin-bottom:10px">Your data</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Back up everything to a JSON file, restore it later, or start fresh with demo data.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" onclick="exportData()">⬇ Export backup</button>
-        <button class="btn ghost" onclick="document.getElementById('impFile').click()">⬆ Import backup</button>
-        <input type="file" id="impFile" accept=".json" style="display:none" onchange="importData(this)">
-        <button class="btn dangerb" onclick="resetData()">Reset to demo</button>
+        <button class="btn" data-action="exportData">⬇ Export backup</button>
+        <button class="btn ghost" data-action="pickImportFile">⬆ Import backup</button>
+        <input type="file" id="impFile" accept=".json" style="display:none" data-change="importData">
+        <button class="btn dangerb" data-action="resetData">Reset to demo</button>
       </div>
     </div>
     <div class="card" style="flex:1;min-width:280px">
@@ -2045,7 +2057,7 @@ function renderSettings(m){
   ${store.user?`<div class="card" style="margin-top:14px;border-color:#e7b6b6">
     <h4 style="margin-bottom:8px;color:var(--danger)">Delete account</h4>
     <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Permanently remove your FablePeak account, your provider credentials, and workspaces owned only by you. Shared workspaces remain available to their other members.</p>
-    <button class="btn dangerb" onclick="deleteCloudAccount()">Delete my account</button>
+    <button class="btn dangerb" data-action="deleteCloudAccount">Delete my account</button>
   </div>`:""}`;
 }
 function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
@@ -2065,14 +2077,62 @@ function exportData(){
   a.href="data:application/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(db,null,2));
   a.download="fablepeak-backup-"+todayStr()+".json"; a.click(); toast("Backup downloaded");
 }
+/* Settings → Import backup is a first-class untrusted input path: whatever it
+   accepts is rendered, and on the next persistNow() it reaches Supabase. The
+   whole file is therefore validated against the workspace schema *before* `db`
+   is touched, so a rejected import changes nothing in memory or in storage
+   (ADR 0003 §2a). Returns the accepted workspace, or null. */
+const POST_STATUSES = ["draft","scheduled","publishing","published","failed"];
+const isText = v => typeof v === "string";
+const isId = v => typeof v === "string" && v.length > 0 && v.length <= 200;
+const isPlainObject = v => !!v && typeof v === "object" && !Array.isArray(v);
+function validBackupPost(p){
+  return isPlainObject(p) && isId(p.id) && isText(p.text) && isText(p.date)
+    && (p.time===undefined || isText(p.time))
+    && (p.media_url===undefined || p.media_url===null || isText(p.media_url))
+    && Array.isArray(p.networks) && p.networks.every(isText)
+    && POST_STATUSES.includes(p.status)
+    && (p.targets===undefined || Array.isArray(p.targets));
+}
+function validBackupThread(t){
+  return isPlainObject(t) && isId(t.id) && isText(t.net) && isText(t.from)
+    && Array.isArray(t.msgs)
+    && t.msgs.every(msg => isPlainObject(msg) && isText(msg.who) && isText(msg.text));
+}
+function validBackupSmartlink(sl){
+  return isPlainObject(sl) && isText(sl.title) && isText(sl.bio) && isText(sl.avatar)
+    && Array.isArray(sl.links)
+    && sl.links.every(l => isPlainObject(l) && isId(l.id) && isText(l.title)
+      && isText(l.url) && (l.clicks===undefined || typeof l.clicks === "number"));
+}
+function validBackupBrand(b){
+  return isPlainObject(b) && isId(b.id) && isText(b.name)
+    && (b.seed===undefined || typeof b.seed === "number")
+    && isPlainObject(b.connections || {})
+    && Array.isArray(b.posts) && b.posts.every(validBackupPost)
+    && Array.isArray(b.inbox) && b.inbox.every(validBackupThread)
+    && validBackupSmartlink(b.smartlink);
+}
+function acceptBackup(d){
+  if(!isPlainObject(d)) return null;
+  if(!Array.isArray(d.brands) || !d.brands.length) return null;
+  if(!d.brands.every(validBackupBrand)) return null;
+  const ids = d.brands.map(b=>b.id);
+  if(new Set(ids).size !== ids.length) return null;
+  d.brands.forEach(b=>{ b.smartlink.color = slColorOf(b.smartlink.color); });
+  d.activeBrand = d.brands[0].id;
+  return d;
+}
 function importData(inp){
   const f=inp.files[0]; if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{ try{
-      const d=JSON.parse(r.result);
-      if(!d.brands||!Array.isArray(d.brands))throw 0;
-      db=d; db.activeBrand=db.brands[0].id; save(); render(); toast("Backup restored ✔");
-    }catch(e){ toast("Invalid backup file"); } };
+  r.onload=()=>{
+    let parsed=null;
+    try{ parsed=JSON.parse(r.result); }catch(e){ return toast("Invalid backup file"); }
+    const accepted=acceptBackup(parsed);
+    if(!accepted) return toast("Invalid backup file");   // db is untouched, nothing persists
+    db=accepted; save(); render(); toast("Backup restored ✔");
+  };
   r.readAsText(f); inp.value="";
 }
 function resetData(){
@@ -2096,6 +2156,120 @@ async function deleteCloudAccount(){
     location.reload();
   }catch(e){ toast("Account deletion failed: "+String(e.message||e).slice(0,100)); }
 }
+
+/* =============== delegated event handling (ADR 0003 §2a) ===============
+   No markup carries an inline on* attribute. A rendered element names an entry
+   in ACTIONS — data-action for click, data-change for change, data-enter for
+   Enter, data-drag / data-drop for HTML5 drag — and carries its arguments in
+   data-arg / data-arg2, escaped with attr(). Record ids therefore never enter
+   JavaScript-in-attribute position at all, which retires that risk by
+   construction rather than by review discipline.
+
+   The listeners are installed once, at boot, on `document`: it is the one
+   ancestor that survives render()'s full innerHTML rebuild of #main, #nav,
+   #welcome and #modalBody. The functions themselves are unchanged; every entry
+   below is a thin adapter that reads its arguments off the element. */
+const ACTIONS = {
+  /* shell + navigation */
+  go:                    el => go(el.dataset.arg),
+  switchBrand:           el => switchBrand(el.value),
+  dismissModal:          () => dismissModal(),
+  /* welcome gate */
+  wTab:                  el => wTab(el.dataset.arg),
+  wSubmit:               () => wSubmit(),
+  requestPasswordReset:  () => requestPasswordReset(),
+  completePasswordReset: () => completePasswordReset(),
+  enterDemo:             () => enterDemo(),
+  exitDemo:              () => exitDemo(),
+  createFirstBrand:      () => createFirstBrand(),
+  /* planner */
+  calPrev:               () => calMove(-1),
+  calToday:              () => { calCursor=new Date(); render(); },
+  calNext:               () => calMove(1),
+  newPost:               el => openPostModal(null, el.dataset.arg),
+  openPost:              el => openPostModal(el.dataset.arg),
+  dragPost:              (el,ev) => dragPost(ev, el.dataset.arg),
+  dropPost:              (el,ev) => dropPost(ev, el.dataset.arg),
+  /* composer */
+  savePost:              el => savePost(el.dataset.arg),
+  deletePost:            el => deletePost(el.dataset.arg),
+  dupPost:               el => dupPost(el.dataset.arg),
+  publishNow:            el => publishNow(el.dataset.arg),
+  retryPost:             el => retryPost(el.dataset.arg),
+  showMediaPreview:      el => showMediaPreview(el.value),
+  uploadPostMedia:       el => uploadPostMedia(el),
+  toggleNet:             el => el.parentElement.classList.toggle("on", el.checked),
+  /* analytics */
+  analyticsNet:          el => { analyticsNet=el.dataset.arg; render(); },
+  /* inbox */
+  inboxFilter:           el => { inboxFilter=el.dataset.arg; selectedMsg=null; render(); },
+  openMsg:               el => openMsg(el.dataset.arg),
+  sendReply:             el => sendReply(el.dataset.arg),
+  toggleResolved:        el => toggleResolved(el.dataset.arg),
+  fakeIncoming:          () => fakeIncoming(),
+  /* smartlinks */
+  slSet:                 el => slSet(el.dataset.arg, el.value),
+  slLink:                el => slLink(el.dataset.arg, el.dataset.arg2, el.value),
+  slAdd:                 () => slAdd(),
+  slDel:                 el => slDel(el.dataset.arg),
+  slMove:                el => slMove(el.dataset.arg, Number(el.dataset.arg2)),
+  slClick:               el => slClick(el.dataset.arg),
+  /* reports */
+  printReport:           () => window.print(),
+  /* connections */
+  connectNet:            el => connectNet(el.dataset.arg),
+  disconnectNet:         el => disconnectNet(el.dataset.arg),
+  connectReal:           el => connectReal(el.dataset.arg),
+  disconnectReal:        el => disconnectReal(el.dataset.arg),
+  selectReal:            el => selectReal(el.dataset.arg),
+  /* settings */
+  renameBrand:           el => renameBrand(el.dataset.arg, el.value),
+  addBrand:              () => addBrand(),
+  deleteBrand:           el => deleteBrand(el.dataset.arg),
+  exportData:            () => exportData(),
+  pickImportFile:        () => document.getElementById("impFile").click(),
+  importData:            el => importData(el),
+  resetData:             () => resetData(),
+  cloudSignOut:          () => cloudSignOut(),
+  deleteCloudAccount:    () => deleteCloudAccount(),
+  installPhoneApp:       () => installPhoneApp(),
+};
+function actionTarget(ev, name){ return ev.target?.closest?.(`[data-${name}]`) || null; }
+function runAction(ev, name){
+  const el = actionTarget(ev, name);
+  if(!el) return;
+  const run = ACTIONS[el.dataset[name]];
+  if(run) run(el, ev);
+}
+function installDelegatedHandlers(){
+  document.addEventListener("click",  ev => runAction(ev, "action"));
+  document.addEventListener("change", ev => runAction(ev, "change"));
+  document.addEventListener("keydown", ev => {
+    if(ev.key !== "Enter") return;                 // Escape and Tab stay with handleModalKeydown
+    runAction(ev, "enter");
+  });
+  document.addEventListener("dragstart", ev => runAction(ev, "drag"));
+  document.addEventListener("dragover", ev => {
+    const cell = actionTarget(ev, "drop");
+    if(!cell) return;
+    ev.preventDefault(); cell.classList.add("dragover");
+  });
+  document.addEventListener("dragleave", ev => {
+    actionTarget(ev, "drop")?.classList.remove("dragover");
+  });
+  document.addEventListener("drop", ev => {
+    const cell = actionTarget(ev, "drop");
+    if(!cell) return;
+    cell.classList.remove("dragover");
+    runAction(ev, "drop");
+  });
+  /* Backdrop dismiss: only a click on the overlay itself, never one that
+     bubbled out of the dialog inside it. */
+  document.getElementById("overlay").addEventListener("click", ev => {
+    if(ev.target === ev.currentTarget) dismissModal();
+  });
+}
+installDelegatedHandlers();
 
 /* =============== boot =============== */
 function handleLaunchAction(){

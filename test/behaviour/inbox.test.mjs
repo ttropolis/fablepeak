@@ -118,8 +118,10 @@ test("an empty filter shows the empty state rather than a broken list", async t 
   t.after(() => app.close());
   await openInbox(app);
 
-  for (const message of app.$$(".msglist .msg")) {
-    await app.click(message);
+  // Re-query each time: every resolve rebuilds #main, so a list captured before
+  // the loop holds detached nodes that no delegated listener can ever see.
+  while (app.$$(".msglist .msg").length) {
+    await app.click(app.$$(".msglist .msg")[0]);
     await app.click(app.byText(".thread button", "Mark resolved"));
   }
   assert.deepEqual(senders(app), []);
