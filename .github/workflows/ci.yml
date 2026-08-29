@@ -17,6 +17,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      # jsdom is the repo's only frontend devDependency (ADR 0003 decision 1);
+      # the behavioural suite in test/behaviour/ needs it installed.
+      - run: npm ci
       - run: npm run check
 
   database:
