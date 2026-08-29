@@ -356,6 +356,43 @@ the job definitions.
 
 ---
 
+## 8. AI writing assist (optional)
+
+The `ai-assist` Edge Function writes caption options, suggests hashtags, and
+rewrites a post for one network's conventions. It is entirely optional: leave
+the secret unset and the endpoint answers `503 AI assist is not configured on
+the server`, and nothing else in FablePeak changes.
+
+```
+ANTHROPIC_API_KEY=sk-ant-...        # from console.anthropic.com → API keys
+```
+
+The key is only ever read inside the Edge Function. The browser calls
+`/functions/v1/ai-assist` with the signed-in customer's own Supabase session;
+the function checks that session, checks workspace membership, and never
+returns the provider's raw response.
+
+**Rate limit.** Each signed-in user gets **20 assist requests an hour**,
+counted in `ai_assist_requests` (see
+`supabase/migrations/20260829120000_ai_assist_requests.sql`, which also folds a
+30-day sweep into the existing `fablepeak-prune-job-runs` job). Over the
+ceiling the endpoint returns a 429 asking the customer to try again later. To
+change the ceiling, edit `HOURLY_LIMIT` in
+`supabase/functions/ai-assist/index.ts` and redeploy.
+
+**Cost.** Requests use `claude-opus-5` at $5 per million input tokens and $25
+per million output tokens, capped at 1024 output tokens each. A typical assist
+request is around a thousand tokens all in — roughly a cent. At the default
+ceiling, one very heavy user costs about 20c an hour; a hundred customers doing
+a handful of requests a day is a few dollars a month. Watch actual spend in the
+Anthropic console and set a billing limit there if you want a hard stop.
+
+**Composer UI.** The buttons that call this endpoint ship with the frontend
+batch; until then the function is deployable and testable on its own with a
+signed-in session token.
+
+---
+
 ## Testing it end to end
 
 1. In FablePeak → **Connections**, the platforms you configured become
