@@ -14,8 +14,8 @@ import { getUser, isMember, sbCount, sbInsert } from "../_shared/db.ts";
 
 const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
-// Opus 5 with low effort: these are short, well-specified rewrites, not
-// reasoning work, and low effort keeps a composer suggestion feeling instant.
+// Short, well-specified rewrites: default adaptive thinking is fine and
+// 1024 output tokens keeps a composer suggestion quick.
 const MODEL = "claude-opus-5";
 const MAX_TOKENS = 1024;
 const EFFORT = "low";
@@ -208,6 +208,12 @@ function providerError(status: number, body: string): AssistError {
   }
   if (status === 429) {
     return new AssistError(429, "AI assist is busy right now. Try again in a few minutes.");
+  }
+  if (status === 400 && body.includes("credit balance")) {
+    // The key is valid but the workspace has no API credits — an operator
+    // problem, not a caller problem, and not a bug in this function.
+    console.error("ai-assist provider account has no credits");
+    return new AssistError(503, "AI assist is out of credits on the server.");
   }
   if (status === 400) {
     // Our own request was malformed — a bug in this function, not the caller's
