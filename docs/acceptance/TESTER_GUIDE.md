@@ -174,6 +174,12 @@ Both testers do this. Script 1 continues straight on from here.
   disappear after a few seconds, so screenshot them quickly.
 - On the **Connections** screen each social network has its own card, showing
   the network name, a short note about what it can do, and a **Connect** button.
+- **Do not press the Escape key while the New post window is open.** It closes
+  the window immediately and throws away everything you typed, with no warning.
+  Click outside a dropdown to close it instead.
+- The Planner may show a "⚠️ No profiles connected yet" note even when your
+  accounts are connected. Ignore it — check the **Connections** screen for the
+  true state. (Known display bug at the time of writing.)
 
 ---
 
@@ -580,15 +586,12 @@ from now, and write down both the time you typed and your own local clock time.
 (Business profile). Both must show green **✓ Publishing account**. Screenshot
 this starting state.
 
-**Make one network fail on purpose.** Use method A; use method B only if A does
-not produce a failure.
+**Make one network fail on purpose.** Use this method — it is the only
+verified one. (A PNG-format trick was tested internally on 2026-08-29 and does
+NOT work: Instagram's publishing service accepted the PNG and published it.)
 
-- **Method A — a picture format Instagram will not accept.** Use a **PNG**
-  image. Instagram's publishing service accepts JPEG images only, while Facebook
-  accepts PNG happily. Upload a `.png` file through **📱 Choose photo or video**,
-  or paste a public `https://` link ending in `.png`.
-- **Method B — remove Instagram's permission after scheduling.** Schedule the
-  post first (steps 1–6 below), then immediately go to the Instagram app →
+- **Remove Instagram's permission after scheduling.** Schedule the post first
+  (steps 1–6 below), then immediately go to the Instagram app →
   **Settings and privacy → Website permissions → Apps and websites** and remove
   FablePeak, before the scheduled time arrives.
 
@@ -597,13 +600,13 @@ Now:
 1. Open **Planner** and click **+ New post**.
 2. **Content:** `FablePeak acceptance test - mixed delivery - please ignore` and
    the date.
-3. **Image / video:** add your PNG (method A) or your JPEG (method B).
+3. **Image / video:** add your JPEG image.
 4. **Networks:** tick **FB Facebook** *and* **IG Instagram**. Both, together.
 5. **Date / Time:** set the time about 15 minutes ahead as agreed above.
 6. **Status:** `scheduled`. Click **Schedule**. A message reads
    *"Post scheduled ✔"*. Screenshot the composer before you click, and the
    calendar afterwards showing the light-blue **Scheduled** chip.
-7. If using method B, remove FablePeak's Instagram permission now, and note the
+7. Remove FablePeak's Instagram permission now, and note the
    time.
 8. Wait until the scheduled time passes, then wait another 5 minutes. Reload the
    page.
