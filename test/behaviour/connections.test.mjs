@@ -189,6 +189,23 @@ test("account changes fan out to the planner and the composer, not just Connecti
     "an expired account stops counting as connected everywhere");
 });
 
+test("the planner never claims nothing is connected while connections are still loading", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: { db, available: ["instagram"], accounts: [account()] },
+  });
+  t.after(() => app.close());
+  assert.doesNotMatch(app.text(".sub"), /No profiles connected yet/,
+    "a loaded cache with a live account is not a warning");
+
+  // Exactly the state right after sign-in or a brand switch: the accounts are
+  // real and connected, the cache simply has not come back yet.
+  app.eval("connCache = { brandId:null, available:[], accounts:[], loaded:false }");
+  await app.call("render");
+  assert.doesNotMatch(app.text(".sub"), /No profiles connected yet/,
+    "an unloaded cache means unknown, not empty");
+});
+
 test("local mode renders simulated connections and never claims they are real", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());

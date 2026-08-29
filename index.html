@@ -266,7 +266,7 @@
 
 <main id="main"></main>
 
-<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+<div class="overlay" id="overlay" onclick="if(event.target===this)dismissModal()">
   <div class="modal" id="modalBody" role="dialog" aria-modal="true" tabindex="-1"></div>
 </div>
 <div id="welcome" hidden></div>
@@ -753,6 +753,12 @@ const RemoteAdapter = {
 
 const store = window.FABLEPEAK_BACKEND ? RemoteAdapter : LocalAdapter;
 
+/* Cloud posts are published server-side by the publish Edge Function, which
+   reads each post's date/time as wall-clock time in APP_TIMEZONE. Deployments
+   set it in backend-config.js; the fallback matches the Edge Function default.
+   Local/demo publishing is simulated in the browser, so it uses browser time. */
+const SCHEDULE_TZ = window.FABLEPEAK_BACKEND?.scheduleTimezone || "Australia/Perth";
+
 const DEMO_KEY = "fablepeak_demo";
 const demoMode = () => localStorage.getItem(DEMO_KEY) === "1";
 
@@ -812,6 +818,12 @@ function connectedNets(){
     return NETWORKS.filter(n => connCache.accounts.some(a => a.platform === n.id && a.status === "active"));
   }
   return NETWORKS.filter(n=>brand().connections[n.id]);
+}
+/* In live mode the real accounts arrive asynchronously, and connectedNets()
+   falls back to the simulated ones until they do. An unloaded cache means
+   "not known yet", not "nothing connected" — never warn on it. */
+function connectionsKnown(){
+  return !liveMode() || (connCache.loaded && connCache.brandId === brand().id);
 }
 
 /* Simulated auto-publish is local/demo-only.
@@ -939,6 +951,7 @@ function toast(msg){
 let previousModalFocus=null;
 function openModal(html){
   previousModalFocus=document.activeElement;
+  composerBaseline=null;                       // openPostModal re-arms this
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
   modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
@@ -950,12 +963,27 @@ function openModal(html){
 function closeModal(){
   if(mediaUploadActive) return toast("Keep this screen open while your media uploads");
   document.getElementById("overlay").classList.remove("open");
+  composerBaseline=null;
   previousModalFocus?.focus?.(); previousModalFocus=null;
+}
+/* The composer's values as it opened, so a stray Escape or backdrop click
+   cannot silently throw away a half-written post. Null while no composer is open. */
+let composerBaseline=null;
+function composerSnapshot(){
+  return document.getElementById("pm_text") ? JSON.stringify(readPostForm()) : null;
+}
+/* Every user-initiated dismiss: Escape, the backdrop and Cancel. Saving,
+   deleting, duplicating and publishing call closeModal() — those are not discards. */
+function dismissModal(){
+  if(mediaUploadActive) return closeModal();   // keeps the upload-in-progress guard
+  if(composerBaseline!==null && composerSnapshot()!==composerBaseline
+     && !confirm("Discard this post?")) return;
+  closeModal();
 }
 function handleModalKeydown(event){
   const overlay=document.getElementById("overlay");
   if(!overlay.classList.contains("open")) return;
-  if(event.key==="Escape"){ event.preventDefault(); closeModal(); return; }
+  if(event.key==="Escape"){ event.preventDefault(); dismissModal(); return; }
   if(event.key!=="Tab") return;
   const modal=document.getElementById("modalBody");
   const focusable=[...modal.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])")]
@@ -1160,7 +1188,7 @@ function renderPlanner(m){
 
   m.innerHTML = `
   <h1>Content Planner</h1>
-  <div class="sub">Click a day to schedule. Drag posts between days. ${connectedNets().length? "" : "⚠️ No profiles connected yet — go to Connections."}</div>
+  <div class="sub">Click a day to schedule. Drag posts between days. ${connectionsKnown() && !connectedNets().length ? "⚠️ No profiles connected yet — go to Connections." : ""}</div>
   <div class="card">
     <div class="calhead">
       <h2>${monthName}</h2>
@@ -1306,7 +1334,7 @@ function openPostModal(id, dateStr){
     </div>
     <div class="fieldrow">
       <div style="flex:1;min-width:120px"><label class="f">Date</label><input type="date" id="pm_date" value="${p?.date||dateStr||todayStr()}" ${locked?"disabled":""}></div>
-      <div style="flex:1;min-width:110px"><label class="f">Time</label><input type="time" id="pm_time" value="${p?.time||"10:00"}" ${locked?"disabled":""}></div>
+      <div style="flex:1;min-width:110px"><label class="f">Time${liveMode()?` <span style="text-transform:none;font-weight:400">(${esc(SCHEDULE_TZ)})</span>`:""}</label><input type="time" id="pm_time" value="${p?.time||"10:00"}" ${locked?"disabled":""}></div>
       <div style="flex:1;min-width:110px"><label class="f">Status</label>
         <select class="inp" id="pm_status" ${locked?"disabled":""}>
           ${statusOptions.map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
@@ -1318,11 +1346,12 @@ function openPostModal(id, dateStr){
                ${liveMode() && !["publishing","published"].includes(p.status)
                  ? `<button class="btn mini" onclick="publishNow('${p.id}')">🚀 Publish now</button>` : ""}`:""}</div>
       <div class="right">
-        <button class="btn ghost" onclick="closeModal()">${locked?"Close":"Cancel"}</button>
+        <button class="btn ghost" onclick="dismissModal()">${locked?"Close":"Cancel"}</button>
         ${locked?"":`<button class="btn" onclick="savePost('${p?.id||""}')">${p?"Save":"Schedule"}</button>`}
       </div>
     </div>`);
   if(p?.media_url) showMediaPreview(p.media_url);
+  composerBaseline=composerSnapshot();         // arms the unsaved-changes guard
 }
 function readPostForm(){
   const text=document.getElementById("pm_text").value.trim();

@@ -7,4 +7,5 @@ window.FABLEPEAK_BACKEND = {
   provider: "supabase",                        // or "insforge", "firebase", "custom"
   url: "https://YOUR-PROJECT.supabase.co",
   anonKey: "PUBLIC-ANON-KEY",
+  scheduleTimezone: "Australia/Perth",         // must match the backend's APP_TIMEZONE
 };

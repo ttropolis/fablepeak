@@ -333,6 +333,10 @@ APP_TIMEZONE=Australia/Perth             # IANA timezone for scheduled post time
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by Supabase
 automatically — don't add them by hand.
 
+If you change `APP_TIMEZONE`, change `scheduleTimezone` in `backend-config.js`
+to match: that is the zone the composer names on its Time field, so a mismatch
+would show signed-in users the wrong publishing time.
+
 ### Reproducing the scheduled jobs
 
 The Edge Function secret and database scheduler cannot read each other's

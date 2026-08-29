@@ -25,6 +25,47 @@ async function compose(app, { date, text, networks, status, media = "", time = "
   await app.click(saveButton(app));
 }
 
+/* A signed-in cloud workspace: its posts are published server-side, in the
+   backend's APP_TIMEZONE, not in the browser's own zone. */
+const cloudDb = {
+  activeBrand: "b1",
+  brands: [{
+    id: "b1", name: "Acme", seed: 5, connections: {}, inbox: [],
+    smartlink: { title: "Acme", bio: "", avatar: "🚀", color: "#22c1dc", links: [] },
+    posts: [],
+  }],
+};
+const timeLabel = app => app.$("#pm_time").previousElementSibling
+  .textContent.replace(/\s+/g, " ").trim();
+
+test("the cloud composer names the timezone its schedule is interpreted in", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: { db: cloudDb, available: ["instagram"], accounts: [] },
+  });
+  t.after(() => app.close());
+
+  await openDay(app, "2026-06-22");
+  assert.equal(timeLabel(app), "Time (Australia/Perth)",
+    "a cloud schedule is published in the backend's timezone, so the field must say which");
+});
+
+test("the local composer leaves the time unqualified, because it simulates in browser time", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+
+  await openDay(app, "2026-06-22");
+  assert.equal(timeLabel(app), "Time");
+});
+
+test("the signed-out demo composer keeps browser time too", async t => {
+  const app = await bootApp({ mode: "demo" });
+  t.after(() => app.close());
+
+  await openDay(app, "2026-06-22");
+  assert.equal(timeLabel(app), "Time", "demo publishing is simulated in the browser");
+});
+
 test("the day cell opens a composer prefilled with that day", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
