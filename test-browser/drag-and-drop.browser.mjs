@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
 import {
-  LS_KEY, chip, closeBrowser, dayCell, fixtureDb, installDb, newContext,
+  LS_KEY, appCall, chip, closeBrowser, dayCell, fixtureDb, installDb, newContext,
   readDb, startServer, toastText, waitForApp,
 } from "../test-harness/browser.mjs";
 
@@ -49,7 +49,7 @@ async function bootLive(t) {
   t.after(() => app.close());
   await app.page.goto(cloudServer.origin + "/", { waitUntil: "load" });
   await waitForApp(app.page);
-  assert.equal(await app.page.evaluate(() => liveMode()), true,
+  assert.equal(await appCall(app.page, "liveMode"), true,
     "the fixture must actually reach live mode, or the refusal branch is unreachable");
   await installDb(app.page, fixtureDb());
   return app;

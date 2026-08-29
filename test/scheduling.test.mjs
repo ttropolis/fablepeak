@@ -1,24 +1,40 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
-test("browser JavaScript parses", async () => {
+/* ADR 0003 Phase 2b. index.html is markup and CSS again: the application is
+   native ES modules under js/, loaded through one entry. This is the layout
+   contract — every module is reachable from that entry, parses as a module, and
+   no application JavaScript has crept back into the page. */
+test("the app is one ES module entry, and every js/ module parses", async () => {
   const html = await read("index.html");
-  const inline = html.match(/<script>\s*([\s\S]*?)<\/script>/);
-  assert.ok(inline, "expected one inline application script");
-  assert.doesNotThrow(() => new Function(inline[1]));
-});
+  assert.match(html, /<script type="module" src="\.\/js\/main\.js"><\/script>/,
+    "index.html must load the app through js/main.js");
+  assert.doesNotMatch(html, /<script>[\s\S]*?<\/script>/,
+    "no inline application script may come back — module scope is not global");
 
-test("signed-in cloud mode never marks scheduled posts published locally", async () => {
-  const html = await read("index.html");
-  const tick = html.match(/function tickPublish\(\)\{([\s\S]*?)\n\}/);
-  assert.ok(tick, "tickPublish should exist");
-  assert.match(tick[1], /if\(store\.name === "cloud" && store\.user\) return;/);
-  assert.match(tick[1], /p\.status="published"/, "local demo publishing should remain available");
+  const files = (await readdir(new URL("js/", root))).filter(name => name.endsWith(".js")).sort();
+  assert.ok(files.includes("main.js") && files.length > 5,
+    `expected the js/ module directory, found ${files.join(", ")}`);
+  for (const name of files) {
+    const source = await read(`js/${name}`);
+    assert.doesNotThrow(() => new vm.SourceTextModule(source, { identifier: name }),
+      `js/${name} must parse as an ES module`);
+  }
+
+  /* Reachability: following every static import from the entry has to arrive at
+     all of them, or a file is dead code — or, worse, precached and never run. */
+  const seen = new Set(["main.js"]);
+  for (const name of seen) {
+    const source = await read(`js/${name}`);
+    for (const [, specifier] of source.matchAll(/from\s+"\.\/([\w.-]+\.js)"/g)) seen.add(specifier);
+  }
+  assert.deepEqual([...seen].sort(), files,
+    "every js/ module must be reachable from js/main.js");
 });
 
 test("Edge Function claims posts before publishing", async () => {
@@ -92,53 +108,6 @@ test("authenticated delivery retries use the dedicated safe-retry claim", async 
   assert.match(source, /No retryable delivery targets are available/);
 });
 
-test("delivery panel makes retryable and ambiguous target outcomes actionable", async () => {
-  const html = await read("index.html");
-  const fn = html.match(/(function deliveryPanel\(p\)\{[\s\S]*?\n\})\nfunction postVisibleStatus/);
-  assert.ok(fn, "deliveryPanel should exist beside the post modal interface");
-  const context = {
-    esc: value => String(value),
-    attr: value => String(value),
-    netOf: id => ({ name: id === "x" ? "X / Twitter" : id }),
-    retryLabel: target => target.failure_kind,
-  };
-  vm.runInNewContext(fn[1], context);
-
-  const retryable = context.deliveryPanel({ id:"p1", targets:[{
-    platform:"x", status:"failed", failure_kind:"retryable", attempts:1,
-    next_retry_at:"2026-08-09T00:05:00.000Z", error:"503 unavailable",
-  }]});
-  assert.match(retryable, /X \/ Twitter/);
-  assert.match(retryable, /Automatic retry scheduled/);
-  assert.match(retryable, /data-action="retryPost" data-arg="p1"/);
-
-  const unknown = context.deliveryPanel({ id:"p2", targets:[{
-    platform:"x", status:"failed", failure_kind:"unknown", attempts:1,
-    error:"Delivery was interrupted",
-  }]});
-  assert.match(unknown, /Verify on X \/ Twitter before doing anything else/);
-  assert.doesNotMatch(unknown, /data-action="retryPost"/);
-});
-
-test("mixed permanent delivery failures remain visible in planner status", async () => {
-  const html = await read("index.html");
-  const visible = html.match(
-    /(function postVisibleStatus\(p\)\{[\s\S]*?\n\})\nfunction postStatusFromResults/,
-  );
-  const aggregate = html.match(
-    /(function postStatusFromResults\(results\)\{[\s\S]*?\n\})\nfunction openPostModal/,
-  );
-  assert.ok(visible && aggregate, "delivery status helpers should be centrally defined");
-  const context = {};
-  vm.runInNewContext(`${visible[1]}\n${aggregate[1]}`, context);
-  const mixed = [
-    { status:"published", platform:"facebook" },
-    { status:"failed", platform:"instagram", failure_kind:"permanent" },
-  ];
-  assert.equal(context.postStatusFromResults(mixed), "failed");
-  assert.equal(context.postVisibleStatus({ status:"published", targets:mixed }), "failed");
-});
-
 test("connected-account view can read protected rows without exposing tokens", async () => {
   const schema = await read("supabase/schema_social.sql");
   const view = schema.match(
@@ -161,213 +130,6 @@ test("connected-account view can read protected rows without exposing tokens", a
   );
 });
 
-test("account refresh rerenders every view that consumes connection state", async () => {
-  const html = await read("index.html");
-  const refresh = html.match(
-    /async function refreshConnections\(brandId\)\{([\s\S]*?)\n\}/,
-  );
-  assert.ok(refresh, "refreshConnections should exist");
-  for (const view of ["connections", "planner", "analytics", "reports"]) {
-    assert.match(
-      refresh[1],
-      new RegExp(`(?:^|["'])${view}(?:["']|$)`),
-      `${view} should rerender after connected accounts load`,
-    );
-  }
-});
-
-test("cloud data rejects a stale preferred brand before loading accounts", async () => {
-  const html = await read("index.html");
-  const method = html.match(
-    /_rowsToDb\(brands, posts, inbox, targets=\[\]\)\{([\s\S]*?)\n  \},\n  _dbToRows/,
-  );
-  assert.ok(method, "RemoteAdapter._rowsToDb should exist");
-  const context = {
-    localStorage: { getItem: () => "deleted-brand" },
-  };
-  vm.runInNewContext(
-    `result = ({ _rowsToDb(brands, posts, inbox) {${method[1]}\n} })` +
-    `._rowsToDb([{id:"brand-1",name:"SCH",seed:1}], [], [], []);`,
-    context,
-  );
-  assert.equal(context.result.activeBrand, "brand-1");
-});
-
-test("real metrics derive daily deltas from cumulative platform snapshots", async () => {
-  const html = await read("index.html");
-  const fn = html.match(
-    /(function realMetricSeries\(days, netId\)\{[\s\S]*?\n\})\n\nfunction ensureMetricsLoaded/,
-  );
-  assert.ok(fn, "realMetricSeries should exist");
-
-  const fmtDate = d =>
-    d.getFullYear() + "-" +
-    String(d.getMonth()+1).padStart(2, "0") + "-" +
-    String(d.getDate()).padStart(2, "0");
-  const date = daysAgo => {
-    const d = new Date();
-    d.setDate(d.getDate()-daysAgo);
-    return fmtDate(d);
-  };
-  const context = {
-    liveMode: () => true,
-    brand: () => ({id: "brand-1"}),
-    fmtDate,
-    metricsCache: {
-      brandId: "brand-1",
-      loaded: true,
-      error: null,
-      rows: [
-        {date:date(3), platform:"youtube", followers:90, impressions:200, engagements:50, posts:0},
-        {date:date(2), platform:"youtube", followers:100, impressions:210, engagements:52, posts:1},
-        {date:date(1), platform:"youtube", followers:110, impressions:230, engagements:55, posts:1},
-        {date:date(1), platform:"instagram", followers:50, impressions:100, engagements:20, posts:2},
-        {date:date(0), platform:"instagram", followers:55, impressions:140, engagements:25, posts:1},
-      ],
-    },
-  };
-  vm.runInNewContext(`${fn[1]}; result = realMetricSeries(3, "all");`, context);
-
-  assert.deepEqual(
-    Array.from(context.result, row => ({
-      followers: row.followers,
-      impressions: row.impressions,
-      engagement: row.engagement,
-      posts: row.posts,
-    })),
-    [
-      {followers:100, impressions:10, engagement:2, posts:1},
-      {followers:160, impressions:20, engagement:3, posts:3},
-      {followers:165, impressions:40, engagement:5, posts:1},
-    ],
-  );
-});
-
-test("live published posts cannot be dragged back into the publishing queue", async () => {
-  const html = await read("index.html");
-  const fn = html.match(/(function dropPost\(ev,ds\)\{[\s\S]*?\n\})\nfunction openPostModal/);
-  assert.ok(fn, "dropPost should exist");
-
-  const post = {id:"post-1", date:"2026-08-01", status:"published"};
-  const context = {
-    liveMode: () => true,
-    brand: () => ({posts:[post]}),
-    save: () => { context.saved = true; },
-    render: () => {},
-    toast: message => { context.message = message; },
-    // No currentTarget: the delegated drop listener owns the .dragover class,
-    // so dropPost() now touches only the event's dataTransfer.
-    event: {
-      preventDefault(){},
-      dataTransfer:{getData:()=>"post-1"},
-    },
-  };
-  vm.runInNewContext(`${fn[1]}; dropPost(event,"2026-08-10");`, context);
-
-  assert.equal(post.date, "2026-08-01");
-  assert.equal(post.status, "published");
-  assert.equal(context.saved, undefined);
-  assert.match(context.message, /can't be rescheduled/);
-});
-
-test("post validation rejects watch pages and insecure media sources", async () => {
-  const html = await read("index.html");
-  const fn = html.match(
-    /(function validatePostForm\(\{text,nets,date,time,media_url\}\)\{[\s\S]*?\n\})\nfunction savePost/,
-  );
-  assert.ok(fn, "validatePostForm should exist");
-  const context = {
-    URL,
-    toast: message => { context.message = message; },
-    netOf: id => ({name:id}),
-  };
-  vm.runInNewContext(fn[1], context);
-
-  const base = {text:"Episode", nets:["youtube"], date:"2026-08-02", time:"10:00"};
-  assert.equal(context.validatePostForm({...base, media_url:"https://youtube.com/watch?v=x"}), undefined);
-  assert.match(context.message, /direct video file URL/);
-  assert.equal(context.validatePostForm({...base, media_url:"http://cdn.example/video.mp4"}), undefined);
-  assert.match(context.message, /https:\/\//);
-  assert.equal(context.validatePostForm({...base, media_url:"https://cdn.example/video.mp4"}), true);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["x"], media_url:"https://cdn.example/launch.png",
-  }), true);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["linkedin"], media_url:"https://cdn.example/launch.png",
-  }), true);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["linkedin"], media_url:"https://cdn.example/launch.mp4",
-  }), undefined);
-  assert.match(context.message, /image attachments only/);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["pinterest"], media_url:"",
-  }), undefined);
-  assert.match(context.message, /need an image\/video URL/);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["pinterest"], media_url:"https://cdn.example/launch.mp4",
-  }), undefined);
-  assert.match(context.message, /video Pins are not supported/);
-  assert.equal(context.validatePostForm({
-    ...base, nets:["pinterest"], media_url:"https://cdn.example/launch.png",
-  }), true);
-});
-
-test("publish now persists the visible modal values before calling the backend", async () => {
-  const html = await read("index.html");
-  const fn = html.match(/(async function publishNow\(id\)\{[\s\S]*?\n\})\nasync function refreshPostTargets/);
-  assert.ok(fn, "publishNow should exist");
-  const post = {id:"post-1", text:"Old text", networks:["youtube"], status:"draft"};
-  const order = [];
-  const values = {
-    text:"Updated text", nets:["youtube"], date:"2026-08-03", time:"11:00",
-    status:"draft", media_url:"https://cdn.example/video.mp4",
-  };
-  const context = {
-    mediaUploadActive: false,
-    brand: () => ({posts:[post]}),
-    readPostForm: () => values,
-    validatePostForm: () => true,
-    confirm: () => true,
-    toast: () => {},
-    netOf: () => ({name:"YouTube"}),
-    persistNow: async () => { order.push("persist"); },
-    store: {publishNow: async () => {
-      order.push("publish");
-      assert.equal(post.text, "Updated text");
-      return [];
-    }},
-    postStatusFromResults: () => "failed",
-    refreshPostTargets: async () => {},
-    save: () => { order.push("save"); },
-    closeModal: () => {},
-    render: () => {},
-    console,
-  };
-  await vm.runInNewContext(`${fn[1]}; publishNow("post-1");`, context);
-  assert.deepEqual(order, ["persist","publish","save"]);
-  assert.deepEqual(post.networks, ["youtube"]);
-  assert.equal("nets" in post, false);
-});
-
-test("cached cloud edits automatically retry when the browser reconnects", async () => {
-  const html = await read("index.html");
-  const listener = html.match(
-    /(window\.addEventListener\("online", async \(\) => \{[\s\S]*?\n\}\);)/,
-  );
-  assert.ok(listener, "online sync listener should exist");
-  const context = {
-    window: {addEventListener: (_name, callback) => { context.online = callback; }},
-    store: {name:"cloud", user:{id:"user-1"}},
-    db: {brands:[{id:"brand-1"}]},
-    persistNow: async () => { context.persisted = true; },
-    toast: message => { context.message = message; },
-  };
-  vm.runInNewContext(listener[1], context);
-  await context.online();
-  assert.equal(context.persisted, true);
-  assert.match(context.message, /changes synced/);
-});
-
 test("backend token-refresh failures require an explicit reconnect", async () => {
   const source = await read("supabase/functions/_shared/token-manager.ts");
   assert.match(source, /catch \(e\) \{[\s\S]*?await expire\(/);
@@ -376,10 +138,14 @@ test("backend token-refresh failures require an explicit reconnect", async () =>
   assert.match(source, /last_error: null/);
 });
 
+/* The release-coupling contract: bumping the app without bumping the service
+   worker's cache name would leave returning users on the old bundle forever.
+   test-browser/service-worker.browser.mjs asserts the runtime half — that the
+   cache Chromium actually created is the one this version names. */
 test("PWA cache version matches the visible app release", async () => {
-  const html = await read("index.html");
+  const constants = await read("js/constants.js");
   const worker = await read("sw.js");
-  const appVersion = html.match(/const APP_VERSION = "([^"]+)"/)?.[1];
+  const appVersion = constants.match(/const APP_VERSION = "([^"]+)"/)?.[1];
   const cacheVersion = worker.match(/const CACHE = "fablepeak-v([^"]+)"/)?.[1];
   assert.ok(appVersion, "APP_VERSION should exist");
   assert.equal(cacheVersion, appVersion);
@@ -396,25 +162,16 @@ test("PWA never caches authenticated API responses or serves app HTML for assets
   assert.match(worker, /status: 503/);
 });
 
+/* Source-text by design: an exact-version pin and a cross-origin check are
+   assertions about what must *not* change. The auth-event wiring is here for
+   the same reason — reaching it needs a real Supabase client, which no tier
+   has; test/frontend-units.test.mjs owns the parts of init() that can run. */
 test("browser SDK is pinned and OAuth completion messages are source-checked", async () => {
-  const html = await read("index.html");
-  assert.match(html, /@supabase\/supabase-js@\d+\.\d+\.\d+/);
-  assert.doesNotMatch(html, /@supabase\/supabase-js@2["']/);
-  assert.match(html, /e\.origin !== location\.origin \|\| e\.source !== popup/);
-});
-
-test("cloud initialization is idempotent across auth and demo transitions", async () => {
-  const html = await read("index.html");
-  const init = html.match(/async init\(\)\{([\s\S]*?)\n  \},\n\n  _rowsToDb/);
-  assert.ok(init, "RemoteAdapter.init should exist");
-  assert.match(init[1], /if\(this\._sb\) return/);
-  assert.match(init[1], /catch\(e\)\{ this\._sb=null; throw e; \}/);
-  assert.match(init[1], /event === "SIGNED_OUT"/);
-});
-
-test("real follower growth starts at the first measured baseline", async () => {
-  const html = await read("index.html");
-  assert.match(html, /const followerSeries = usingReal \? s\.filter\(x=>x\.followersMeasured\) : s;/);
-  assert.match(html, /const firstFollowers = followerSeries\[0\]\?\.followers \?\? last\.followers;/);
-  assert.match(html, /const fDelta=last\.followers-firstFollowers;/);
+  const remote = await read("js/remote-store.js");
+  assert.match(remote, /@supabase\/supabase-js@\d+\.\d+\.\d+/);
+  assert.doesNotMatch(remote, /@supabase\/supabase-js@2["']/);
+  assert.match(remote, /e\.origin !== location\.origin \|\| e\.source !== popup/);
+  assert.match(remote, /event === "SIGNED_OUT"/,
+    "a sign-out anywhere must clear the cached user");
+  assert.match(remote, /event === "PASSWORD_RECOVERY"/);
 });

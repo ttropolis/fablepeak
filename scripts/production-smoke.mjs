@@ -4,12 +4,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const configSource = await readFile(new URL("../backend-config.js", import.meta.url), "utf8");
-const appSource = await readFile(new URL("../index.html", import.meta.url), "utf8");
+// APP_VERSION lives in js/constants.js since the ADR 0003 Phase 2b module split.
+const appSource = await readFile(new URL("../js/constants.js", import.meta.url), "utf8");
 const supabaseUrl = configSource.match(/url:\s*["']([^"']+)["']/)?.[1];
 const anonKey = configSource.match(/anonKey:\s*["']([^"']+)["']/)?.[1];
 const expectedVersion = appSource.match(/const APP_VERSION = "([^"]+)"/)?.[1];
 assert.ok(supabaseUrl && anonKey, "backend-config.js must contain the public Supabase URL and anon key");
-assert.ok(expectedVersion, "index.html must declare APP_VERSION");
+assert.ok(expectedVersion, "js/constants.js must declare APP_VERSION");
 
 const productionOrigin = "https://fablepeak.com";
 const fetchFresh = (path, init = {}) => fetch(`${productionOrigin}${path}`, {
@@ -28,8 +29,15 @@ async function check(name, action) {
 }
 
 await check(`FablePeak v${expectedVersion} is live`, async () => {
-  const response = await fetchFresh("/", { redirect: "follow" });
+  const page = await fetchFresh("/", { redirect: "follow" });
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<script type="module" src="\.\/js\/main\.js"><\/script>/,
+    "the deployed page must still load the app through its ES module entry");
+  // The version is in a module now, so read it from the module GitHub Pages serves.
+  const response = await fetchFresh("/js/constants.js");
   assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /javascript/,
+    "a module served with the wrong MIME type is refused by the browser");
   const deployedVersion = (await response.text()).match(/const APP_VERSION = "([^"]+)"/)?.[1];
   assert.equal(deployedVersion, expectedVersion,
     `expected v${expectedVersion}, found ${deployedVersion ?? "no version"}`);

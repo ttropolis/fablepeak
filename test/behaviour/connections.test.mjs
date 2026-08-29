@@ -189,6 +189,38 @@ test("account changes fan out to the planner and the composer, not just Connecti
     "an expired account stops counting as connected everywhere");
 });
 
+/* The other half of the same fan-out: Analytics and Reports both size
+   themselves off connectedNets(), so a refresh has to reach them too even
+   though neither is the view the account list came back for. */
+test("account changes fan out to analytics and reports as well", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: { db, available: ["instagram"], accounts: [], metrics: [] },
+  });
+  t.after(() => app.close());
+
+  await app.click(app.byText("#nav button", "Analytics"));
+  await app.waitFor(() => app.text("h1") === "Analytics", { label: "the analytics view" });
+  assert.deepEqual(app.$$(".tabbar button").map(b => b.textContent), ["All networks"],
+    "no connected account, so no per-network tab");
+
+  await reloadAccounts(app, [account()]);
+  assert.equal(app.view, "analytics");
+  assert.deepEqual(app.$$(".tabbar button").map(b => b.textContent),
+    ["All networks", "Instagram"], "the refresh re-rendered analytics");
+
+  await app.click(app.byText("#nav button", "Reports"));
+  await app.waitFor(() => app.text("h1").startsWith("Report"), { label: "the reports view" });
+  const networksOf = () => app.$$("table.rep tr td:first-child").map(td =>
+    td.textContent.replace(/\s+/g, " ").trim());
+  assert.ok(networksOf().some(name => name.includes("Instagram")));
+
+  await reloadAccounts(app, []);
+  assert.equal(app.view, "reports");
+  assert.deepEqual(networksOf(), [],
+    "disconnecting the last account empties the per-network table too");
+});
+
 test("the planner never claims nothing is connected while connections are still loading", async t => {
   const app = await bootApp({
     mode: "cloud",
@@ -200,7 +232,7 @@ test("the planner never claims nothing is connected while connections are still 
 
   // Exactly the state right after sign-in or a brand switch: the accounts are
   // real and connected, the cache simply has not come back yet.
-  app.eval("connCache = { brandId:null, available:[], accounts:[], loaded:false }");
+  app.setState("connCache", app.intoPage({ brandId:null, available:[], accounts:[], loaded:false }));
   await app.call("render");
   assert.doesNotMatch(app.text(".sub"), /No profiles connected yet/,
     "an unloaded cache means unknown, not empty");

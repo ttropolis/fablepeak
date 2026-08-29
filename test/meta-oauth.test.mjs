@@ -170,7 +170,8 @@ test("selected social account is tenant-checked and used for publishing", async 
   );
   const publish = await read("supabase/functions/publish/index.ts");
   const metrics = await read("supabase/functions/ingest-metrics/index.ts");
-  const html = await read("index.html");
+  // The Connections view moved to js/connections.js in the Phase 2b split.
+  const html = await read("js/connections.js");
 
   assert.match(migration, /create or replace function public\.select_social_account/);
   assert.match(migration, /if not public\.is_member\(b\)/);
@@ -200,7 +201,7 @@ test("public account view migrations only append columns", async () => {
 test("connection health verifies the exact provider identity behind tenant auth", async () => {
   const health = await read("supabase/functions/connection-health/index.ts");
   const callback = await read("supabase/functions/oauth-callback/index.ts");
-  const html = await read("index.html");
+  const html = await read("js/connections.js");
   const migration = await read(
     "supabase/migrations/20260802130000_connection_health.sql",
   );

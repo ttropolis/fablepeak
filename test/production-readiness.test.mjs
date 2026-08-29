@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
 test("public review URLs exist and are linked from customer onboarding", async () => {
-  const index = await read("index.html");
+  // The links live in the signed-out welcome gate, which is js/welcome.js since
+  // the Phase 2b split; index.html is markup and CSS only.
+  const index = await read("js/welcome.js");
   const worker = await read("sw.js");
   for (const file of ["privacy.html", "terms.html", "data-deletion.html"]) {
     const page = await read(file);
@@ -33,7 +35,8 @@ test("self-service deletion removes credentials and preserves shared workspaces"
   const migration = await read(
     "supabase/migrations/20260802150000_account_deletion.sql",
   );
-  const html = await read("index.html");
+  const html = await read("js/settings.js");
+  const adapter = await read("js/remote-store.js");
   const deletion = await read("data-deletion.html");
   assert.match(source, /getUser\(jwt\)/);
   assert.match(source, /body\.confirm !== "DELETE"/);
@@ -51,7 +54,7 @@ test("self-service deletion removes credentials and preserves shared workspaces"
   assert.match(source, /auth\/v1\/admin\/users\/\$\{user\.id\}/);
   assert.match(html, /async function deleteCloudAccount/);
   assert.match(html, /Type DELETE to continue/);
-  assert.match(html, /JSON\.stringify\(\{confirm:"DELETE",password\}\)/);
+  assert.match(adapter, /JSON\.stringify\(\{confirm:"DELETE",password\}\)/);
   assert.match(deletion, /Under <strong>Delete account<\/strong>/);
 });
 
@@ -106,15 +109,16 @@ test("production checklist matches implemented Meta and Google scopes", async ()
 });
 
 test("general signup includes confirmation-grade passwords and recovery", async () => {
-  const html = await read("index.html");
+  const adapter = await read("js/remote-store.js");
+  const gate = await read("js/welcome.js");
   const config = await read("supabase/config.toml");
   assert.match(config, /minimum_password_length = 8/);
   assert.match(config, /enable_confirmations = true/);
   assert.match(config, /secure_password_change = true/);
-  assert.match(html, /resetPasswordForEmail/);
-  assert.match(html, /event === "PASSWORD_RECOVERY"/);
-  assert.match(html, /async function completePasswordReset/);
-  assert.match(html, /pw\.length<8/);
+  assert.match(adapter, /resetPasswordForEmail/);
+  assert.match(adapter, /event === "PASSWORD_RECOVERY"/);
+  assert.match(gate, /async function completePasswordReset/);
+  assert.match(gate, /pw\.length<8/);
 });
 
 test("Edge Function gateway settings preserve callback and cron authentication", async () => {
@@ -180,9 +184,44 @@ test("scheduled production smoke alerts on authenticated cron health", async () 
     "CI must fail rather than silently skip when its monitoring secret is absent");
 });
 
+test("AI assist keeps the provider key server-side and meters every customer", async () => {
+  const config = await read("supabase/config.toml");
+  const pkg = JSON.parse(await read("package.json"));
+  const source = await read("supabase/functions/ai-assist/index.ts");
+  const migration = await read(
+    "supabase/migrations/20260829120000_ai_assist_requests.sql",
+  );
+  const setup = await read("PLATFORM_SETUP.md");
+
+  assert.match(config, /\[functions\.ai-assist\]\nverify_jwt = false/);
+  assert.match(pkg.scripts["check:functions"], /ai-assist\/index\.ts/);
+  assert.match(pkg.scripts["test:functions"], /ai-assist\/index\.deno\.ts/);
+
+  // The function does its own authentication, exactly like connection-health.
+  assert.match(source, /dependencies\.authenticate\(jwt\)/);
+  assert.match(source, /dependencies\.isMember\(brandId, user\.id\)/);
+  // The key is read from the environment, never logged, never returned.
+  assert.match(source, /dependencies\.env\("ANTHROPIC_API_KEY"\)/);
+  assert.doesNotMatch(source, /console\.(log|error)\([^)]*apiKey/);
+  assert.match(source, /AI assist is not configured on the server/);
+  // A declined request returns HTTP 200 — stop_reason is checked before content.
+  assert.ok(
+    source.indexOf('stop_reason === "refusal"') < source.indexOf("payload?.content ?? []"),
+    "the refusal stop reason must be handled before the content blocks are read",
+  );
+  // Sampling and thinking parameters are rejected by this model.
+  assert.doesNotMatch(source, /temperature|budget_tokens/);
+
+  assert.match(migration, /create table if not exists public\.ai_assist_requests/);
+  assert.match(migration, /alter table public\.ai_assist_requests enable row level security/);
+  assert.match(migration, /grant all on public\.ai_assist_requests to service_role/);
+  assert.match(setup, /ANTHROPIC_API_KEY/);
+});
+
 test("Edge Function mutation endpoints reject unsupported HTTP methods", async () => {
   for (const fn of [
     "oauth-start", "connection-health", "publish", "ingest-metrics", "delete-account",
+    "ai-assist",
   ]) {
     const source = await read(`supabase/functions/${fn}/index.ts`);
     assert.match(source, /req\.method !== "POST"/,
@@ -194,7 +233,8 @@ test("Edge Function mutation endpoints reject unsupported HTTP methods", async (
 });
 
 test("signed-in customers can upload provider-fetchable media within their workspace", async () => {
-  const html = await read("index.html");
+  const adapter = await read("js/remote-store.js");
+  const composer = await read("js/planner.js");
   const migration = await read(
     "supabase/migrations/20260802140000_workspace_media.sql",
   );
@@ -202,84 +242,120 @@ test("signed-in customers can upload provider-fetchable media within their works
   assert.match(migration, /public\.is_member\(\(storage\.foldername\(name\)\)\[1\]\)/);
   assert.match(migration, /for insert to authenticated/);
   assert.match(migration, /for delete to authenticated/);
-  assert.match(html, /async uploadMedia\(file, brandId, onProgress=\(\)=>\{\}\)/);
-  assert.match(html, /storage\.from\("social-media"\)\.upload/);
-  assert.match(html, /async function uploadPostMedia/);
-  assert.match(html, /file\.size>50\*1024\*1024/);
-  assert.match(html, /tus-js-client@4\.3\.1/);
-  assert.match(html, /storage\.supabase\.co\/storage\/v1\/upload\/resumable/);
-  assert.match(html, /chunkSize:6\*1024\*1024/);
-  assert.match(html, /capture="environment"/);
-  assert.match(html, /Preparing iPhone photo/);
-  assert.match(html, /Wait for the media upload to finish/);
+  assert.match(adapter, /async uploadMedia\(file, brandId, onProgress=\(\)=>\{\}\)/);
+  assert.match(adapter, /storage\.from\("social-media"\)\.upload/);
+  assert.match(composer, /async function uploadPostMedia/);
+  assert.match(composer, /file\.size>50\*1024\*1024/);
+  assert.match(adapter, /tus-js-client@4\.3\.1/);
+  assert.match(adapter, /storage\.supabase\.co\/storage\/v1\/upload\/resumable/);
+  assert.match(adapter, /chunkSize:6\*1024\*1024/);
+  assert.match(composer, /capture="environment"/);
+  assert.match(composer, /Preparing iPhone photo/);
+  assert.match(composer, /Wait for the media upload to finish/);
 });
 
 test("the installable phone experience has launch shortcuts and a mobile planner", async () => {
-  const html = await read("index.html");
+  const boot = await read("js/main.js");
+  const shell = await read("js/shell.js");
+  const composer = await read("js/planner.js");
+  const settings = await read("js/settings.js");
+  const gate = await read("js/welcome.js");
   const manifest = JSON.parse(await read("manifest.json"));
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.orientation, "any");
   assert.deepEqual(manifest.shortcuts.map(shortcut => shortcut.url), [
     "./?action=new-post", "./?action=planner", "./?action=connections",
   ]);
-  assert.match(html, /function handleLaunchAction/);
-  assert.match(html, /beforeinstallprompt/);
-  assert.match(html, /Use FablePeak on your phone/);
-  assert.match(html, /class="mobile-agenda"/);
-  assert.match(html, /class="agenda-post"/);
-  assert.match(html, /beforeunload/);
-  assert.match(html, /matchMedia\("\(min-width: 821px\)"\)\.matches/,
+  assert.match(shell, /function handleLaunchAction/);
+  assert.match(boot, /beforeinstallprompt/);
+  assert.match(settings, /Use FablePeak on your phone/);
+  assert.match(composer, /class="mobile-agenda"/);
+  assert.match(composer, /class="agenda-post"/);
+  assert.match(boot, /beforeunload/);
+  assert.match(gate, /matchMedia\("\(min-width: 821px\)"\)\.matches/,
     "phone auth screens should not summon the software keyboard automatically");
 });
 
 test("core mobile workflows expose live feedback and keyboard-operable controls", async () => {
   const html = await read("index.html");
+  const shell = await read("js/shell.js");
+  const composer = await read("js/planner.js");
+  const inbox = await read("js/inbox.js");
   assert.match(html, /id="toast"[^>]+role="status"[^>]+aria-live="polite"/);
   assert.match(html, /id="modalBody"[^>]+role="dialog"[^>]+aria-modal="true"/);
-  assert.match(html, /function handleModalKeydown\(event\)/);
-  assert.match(html, /event\.key==="Escape"/);
-  assert.match(html, /event\.key!=="Tab"/);
-  assert.match(html, /previousModalFocus\?\.focus/);
-  assert.match(html, /<button type="button" class="post \$\{attr\(visibleStatus\)\}"/);
-  assert.doesNotMatch(html, /<div class="\$\{cls\}" onclick="openPostModal/);
-  assert.match(html, /<button type="button" class="card msg/);
-  assert.match(html, /<small class="netreason">Not connected<\/small>/,
+  assert.match(shell, /function handleModalKeydown\(event\)/);
+  assert.match(shell, /event\.key==="Escape"/);
+  assert.match(shell, /event\.key!=="Tab"/);
+  assert.match(shell, /previousModalFocus\?\.focus/);
+  assert.match(composer, /<button type="button" class="post \$\{attr\(visibleStatus\)\}"/);
+  assert.match(inbox, /<button type="button" class="card msg/);
+  assert.match(composer, /<small class="netreason">Not connected<\/small>/,
     "disabled network explanations must be visible without hover");
   assert.match(html, /:focus-visible/);
 });
 
-/* ADR 0003 §2a. Inline handlers are not a style preference here: an inline
-   onclick resolves against global scope, so every one of them breaks the
-   moment a function moves into a module (Phase 2b). This is the permanent
+/** index.html plus every js/ module, keyed by path. */
+async function appSources() {
+  const names = (await readdir(new URL("js/", root))).filter(name => name.endsWith(".js"));
+  const entries = await Promise.all(names.map(async name => [`js/${name}`, await read(`js/${name}`)]));
+  return { "index.html": await read("index.html"), ...Object.fromEntries(entries) };
+}
+
+/* ADR 0003 §2a, now load-bearing. An inline onclick resolves against global
+   scope, and since Phase 2b the app lives in module scope, so a single inline
+   handler is a dead control rather than a style lapse. This is the permanent
    guard that they do not come back — and that no rendered data-* action name
-   can be misspelled into a silently dead control. */
+   can be misspelled into a silently dead control either. It scans the rendered
+   markup wherever it now lives: the page and every module that builds HTML. */
 test("no markup carries an inline event handler, and every action name is registered", async () => {
-  const html = await read("index.html");
+  const sources = await appSources();
+  const actions = sources["js/actions.js"];
 
-  const inline = [...html.matchAll(/\son[a-z]+\s*=\s*["']/gi)].map(m => m[0].trim());
-  assert.deepEqual(inline, [],
-    "index.html must carry no inline on* handler — use data-action + ACTIONS");
+  for (const [name, source] of Object.entries(sources)) {
+    const inline = [...source.matchAll(/\son[a-z]+\s*=\s*["']/gi)].map(m => m[0].trim());
+    assert.deepEqual(inline, [],
+      `${name} must carry no inline on* handler — use data-action + ACTIONS`);
+  }
 
-  const registry = html.match(/const ACTIONS = \{([\s\S]*?)\n\};/);
+  const registry = actions.match(/export const ACTIONS = \{([\s\S]*?)\n\};/);
   assert.ok(registry, "the delegated action registry should exist");
   const registered = new Set(
     [...registry[1].matchAll(/^\s{2}([A-Za-z]\w*):/gm)].map(m => m[1]));
   assert.ok(registered.size >= 45, `expected a full action table, got ${registered.size}`);
 
-  const used = new Set([...html.matchAll(
-    /\sdata-(?:action|change|enter|drag|drop)="([^"$]+)"/g)].map(m => m[1]));
+  const used = new Set(Object.values(sources).flatMap(source => [...source.matchAll(
+    /\sdata-(?:action|change|enter|drag|drop)="([^"$]+)"/g)].map(m => m[1])));
   assert.ok(used.size > 0, "rendered markup should name actions");
   assert.deepEqual([...used].filter(name => !registered.has(name)), [],
     "every data-action / data-change / data-enter / data-drag / data-drop name " +
     "must resolve in the ACTIONS table");
 
-  assert.match(html, /document\.addEventListener\("click",\s*ev => runAction\(ev, "action"\)\)/,
+  assert.match(actions, /document\.addEventListener\("click",\s*ev => runAction\(ev, "action"\)\)/,
     "the click listener is installed once, on a root that survives render()");
-  assert.match(html, /function installDelegatedHandlers\(\)/);
+  assert.match(actions, /export function installDelegatedHandlers\(\)/);
+  assert.match(sources["js/main.js"], /installDelegatedHandlers\(\);/,
+    "…and the entry module actually installs it");
+});
+
+/* ADR 0003 decision 3 retired file:// in favour of the installed PWA, which
+   makes sw.js the offline story. The app is now twenty ES modules, so one
+   missing from the precache list is a blank page offline, not a degraded one. */
+test("the service worker precaches every module the app is built from", async () => {
+  const worker = await read("sw.js");
+  const modules = (await readdir(new URL("js/", root)))
+    .filter(name => name.endsWith(".js")).map(name => `./js/${name}`).sort();
+  const assets = worker.match(/const ASSETS = \[([\s\S]*?)\];/);
+  assert.ok(assets, "sw.js should declare its precache list");
+  const listed = [...assets[1].matchAll(/"(\.\/js\/[\w.-]+\.js)"/g)].map(m => m[1]).sort();
+  assert.deepEqual(listed, modules,
+    "js/ and the sw.js precache list must name exactly the same modules");
+  assert.match(assets[1], /"\.\/index\.html"/);
+  assert.doesNotMatch(assets[1], /backend-config/,
+    "backend-config.js is absent by design on local deployments and must stay uncached");
 });
 
 test("live customer connections show an honest status for every planned platform", async () => {
-  const html = await read("index.html");
+  const html = await read("js/connections.js");
   assert.doesNotMatch(html, /LAUNCH_PLATFORMS/);
   assert.match(html, /const PLATFORM_PENDING_STATUS =/);
   assert.match(html, /NETWORKS\.map\(n => \{/);
@@ -360,7 +436,7 @@ test("Pinterest requires explicit board selection and remains production-gated",
 });
 
 test("media-capable adapters never silently discard an attachment", async () => {
-  const html = await read("index.html");
+  const html = await read("js/planner.js");
   const platforms = await read("supabase/functions/_shared/platforms.ts");
   const publish = await read("supabase/functions/publish/index.ts");
   const x = platforms.match(/const x: PlatformAdapter = \{([\s\S]*?)\n\};\n\n\/\* ---------------------------------------------------------------- Meta base/);
@@ -377,7 +453,7 @@ test("media-capable adapters never silently discard an attachment", async () => 
 });
 
 test("mixed-network failures identify the failed platform and reason", async () => {
-  const html = await read("index.html");
+  const html = await read("js/planner.js");
   assert.match(html, /const failures = bad\.map\(r=>/);
   assert.match(html, /\$\{netOf\(r\.platform\)\.name\}: \$\{r\.error\|\|r\.status\}/);
   assert.doesNotMatch(html, /\$\{bad\.length\} failed/);
@@ -414,12 +490,13 @@ test("CI type-checks functions and rebuilds the database from migrations", async
 });
 
 test("cloud startup failures do not promise an unsafe local sync fallback", async () => {
-  const html = await read("index.html");
-  assert.match(html, /Cloud unavailable — reconnect to sign in, or explore the demo/);
-  assert.doesNotMatch(html, /Cloud unavailable — running locally/);
-  assert.match(html, /document\.querySelector\("aside"\)\.inert = true/);
-  assert.match(html, /document\.getElementById\("main"\)\.inert = true/);
-  assert.match(html, /document\.getElementById\("main"\)\.replaceChildren\(\)/);
-  assert.match(html, /document\.getElementById\("nav"\)\.replaceChildren\(\)/);
-  assert.match(html, /document\.querySelector\("aside"\)\.inert = false/);
+  const workspace = await read("js/workspace.js");
+  const gate = await read("js/welcome.js");
+  assert.match(workspace, /Cloud unavailable — reconnect to sign in, or explore the demo/);
+  assert.doesNotMatch(workspace, /Cloud unavailable — running locally/);
+  assert.match(gate, /document\.querySelector\("aside"\)\.inert = true/);
+  assert.match(gate, /document\.getElementById\("main"\)\.inert = true/);
+  assert.match(gate, /document\.getElementById\("main"\)\.replaceChildren\(\)/);
+  assert.match(gate, /document\.getElementById\("nav"\)\.replaceChildren\(\)/);
+  assert.match(gate, /document\.querySelector\("aside"\)\.inert = false/);
 });

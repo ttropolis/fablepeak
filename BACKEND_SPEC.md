@@ -4,14 +4,16 @@
 > social OAuth/publishing was added in a later phase. Use `README.md` and
 > `PLATFORM_SETUP.md` for the current production state.
 
-Implementation brief for turning FablePeak (static single-file app at
-fablepeak.com, repo `ttropolis/fablepeak`) into a 3-user shared-data app.
+Implementation brief for turning FablePeak (static app at fablepeak.com,
+repo `ttropolis/fablepeak`) into a 3-user shared-data app.
 The frontend seam is already built — **you only implement `RemoteAdapter`
 plus the backend it talks to.** Do not restructure the UI.
 
 ## 1. Context and hard constraints
 
-- App: `index.html`, vanilla JS, no build step. Keep it that way.
+- App: `index.html` plus native ES modules in `js/`, vanilla JS, no build
+  step. Keep it that way. (`RemoteAdapter` is `js/remote-store.js`; before the
+  ADR 0003 Phase 2b split everything below lived inline in `index.html`.)
 - Hosting: GitHub Pages (static only). The backend must be an external
   hosted service (Supabase recommended; InsForge/Firebase acceptable).
 - Users: exactly 3 trusted teammates for now. No public signup — accounts
@@ -28,7 +30,7 @@ plus the backend it talks to.** Do not restructure the UI.
   paid service or any additional vendor. The only recurring project cost
   stays the yearly domain renewal (already owned).
 
-## 2. What's already in place (index.html)
+## 2. What's already in place (`js/`)
 
 - `store` — all persistence flows through one object chosen at boot:
   `window.FABLEPEAK_BACKEND ? RemoteAdapter : LocalAdapter`.

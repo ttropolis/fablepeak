@@ -1,4 +1,5 @@
-/* Behavioural test harness for index.html — ADR 0003 Phase 1a.
+/* Behavioural test harness for index.html — ADR 0003 Phase 1a, reworked for
+ * the Phase 2b module split.
  *
  * Loads the real, unmodified index.html off disk into jsdom. Same-origin
  * subresources resolve to repo files through a request interceptor, so no test
@@ -6,16 +7,29 @@
  * app rendered; they never read index.html as text and never reach into jsdom
  * directly.
  *
- * index.html declares `db`, `store`, `view` and `connCache` with let/const at
- * the top level of a classic script, so they live in the global *lexical*
- * environment and are not properties of `window`. An indirect `window.eval()`
- * runs in that same scope, which is how `window.__bridge` below reaches them —
- * no product code change is needed to make the app observable.
+ * Two things changed when the app became `<script type="module">`:
+ *
+ * 1. **jsdom does not execute module scripts at all** (it never has; its README
+ *    points at `getInternalVMContext()` for exactly this). So the harness loads
+ *    the graph itself: `vm.SourceTextModule` compiled *into jsdom's own vm
+ *    context*, linked by resolving each specifier against the repo. The modules
+ *    therefore run in the page's realm, against the page's `document`,
+ *    `localStorage` and frozen clock — the same code the browser tier loads the
+ *    real way. It needs Node's `--experimental-vm-modules`, which is why
+ *    `npm test` passes that flag.
+ * 2. **Module scope is not global**, so the old `window.eval()` bridge over the
+ *    classic script's lexical `db`/`store`/`view` is gone. js/main.js publishes
+ *    `window.__fablepeak` instead — a deliberate, documented seam, installed
+ *    only when `__FABLEPEAK_TEST__` was set before any app code ran, which
+ *    beforeParse below does and a production page never does.
+ *
+ * The `bootApp()` return shape is unchanged.
  *
  * Lives outside test/ on purpose: `node --test` treats every *.mjs under test/
  * as a test file, and a helper module is not a test file.
  */
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { JSDOM, VirtualConsole, requestInterceptor } from "jsdom";
 
 const ROOT = new URL("../", import.meta.url);
@@ -124,16 +138,48 @@ function installStubs(window, state) {
   };
 }
 
-const TEST_BRIDGE = `window.__bridge = {
-  get db(){ return db; },
-  set db(value){ db = value; },
-  get store(){ return store; },
-  get view(){ return view; },
-  get connCache(){ return connCache; },
-  set connCache(value){ connCache = value; },
-  call(name, ...args){ return window[name](...args); },
-  parse(json){ return JSON.parse(json); },
-};`;
+/* The module entry index.html names. Everything else is reached from here by
+   following relative specifiers, so a new module needs no harness change. */
+const ENTRY = ORIGIN + "/js/main.js";
+
+/**
+ * Evaluate the app's ES module graph inside jsdom's own vm context.
+ *
+ * jsdom ignores `<script type="module">`, so nothing has run this graph by the
+ * time we get here. Specifiers are resolved against the importing module's URL
+ * and read from the repo — the same files the browser tier is served.
+ * `import("https://esm.sh/…")` is on the cloud path only and is refused before
+ * a request is ever made, which is why it does not appear in `blockedRequests`:
+ * nothing reached the network to block. RemoteAdapter.init() already handles the
+ * rejection by toasting "Cloud unavailable", exactly as it does offline.
+ */
+async function evaluateModules(dom) {
+  if (typeof vm.SourceTextModule !== "function") {
+    throw new Error(
+      "the behavioural harness needs Node's --experimental-vm-modules flag to " +
+      "load the app's ES modules into jsdom (jsdom does not run module scripts " +
+      "itself). Run the suite through `npm test`, which passes it.");
+  }
+  const context = dom.getInternalVMContext();
+  const cache = new Map();
+  const dynamic = specifier => {
+    throw new Error("dynamic import blocked by the test harness: " + specifier);
+  };
+  const moduleFor = url => {
+    if (cache.has(url)) return cache.get(url);
+    const relative = new URL(url).pathname.replace(/^\/+/, "");
+    const source = readFileSync(new URL(relative, ROOT), "utf8");
+    const module = new vm.SourceTextModule(source, {
+      context, identifier: url, importModuleDynamically: dynamic,
+    });
+    cache.set(url, module);
+    return module;
+  };
+  const entry = moduleFor(ENTRY);
+  await entry.link((specifier, referencing) =>
+    moduleFor(new URL(specifier, referencing.identifier).href));
+  await entry.evaluate();
+}
 
 /**
  * Boot index.html in jsdom.
@@ -175,6 +221,9 @@ export async function bootApp(options = {}) {
     virtualConsole,
     storageQuota: 10_000_000,
     beforeParse(window) {
+      // Asks js/main.js for its test seam. Set before any app code runs, which
+      // is the whole contract: a page that did not opt in never gets one.
+      window.__FABLEPEAK_TEST__ = true;
       freezeClock(window, now);
       seedRandom(window, seed);
       installStubs(window, state);
@@ -199,13 +248,21 @@ export async function bootApp(options = {}) {
     /** answer the next window.confirm() calls with `value` */
     answerConfirm(value) { state.confirmAnswer = value; },
 
-    get db() { return window.__bridge.db; },
-    get store() { return window.__bridge.store; },
-    get view() { return window.__bridge.view; },
+    /** js/main.js's test seam (see its header). */
+    get seam() { return window.__fablepeak; },
+    get db() { return window.__fablepeak.state.db; },
+    get store() { return window.__fablepeak.store; },
+    get view() { return window.__fablepeak.state.view; },
+    /** live view of js/state.js — api.state.connCache, api.state.slCache, … */
+    get state() { return window.__fablepeak.state; },
+    /** put the app into a state no fixture can reach, e.g. an unloaded cache */
+    setState(name, value) { window.__fablepeak.state.set(name, value); },
     /** clone a plain object into the page realm */
-    intoPage(value) { return window.__bridge.parse(JSON.stringify(value)); },
-    /** call a global app function, e.g. api.call("render") */
-    call(name, ...args) { return window.__bridge.call(name, ...args); },
+    intoPage(value) { return window.JSON.parse(JSON.stringify(value)); },
+    /** call any app function by its export name, e.g. api.call("render") */
+    call(name, ...args) { return window.__fablepeak.call(name, ...args); },
+    /** evaluate in the page's *global* scope. App internals are no longer
+     *  there — use call()/state instead; this is for window-level fixtures. */
     eval(code) { return window.eval(code); },
 
     $(selector, root = document) { return root.querySelector(selector); },
@@ -296,9 +353,14 @@ export async function bootApp(options = {}) {
     close() { window.close(); },
   };
 
-  await api.waitFor(() => window.__appReady === true || document.getElementById("verSlot").textContent,
-    { label: "index.html script execution" });
-  window.eval(TEST_BRIDGE);
+  // Classic scripts first: backend-config.js decides local vs cloud mode and is
+  // fetched through the interceptor, so it has to have run before the app does.
+  // Real browsers order it the same way — module scripts are deferred.
+  await api.waitFor(() => document.readyState === "complete",
+    { label: "index.html and backend-config.js to finish parsing" });
+  await evaluateModules(dom);
+  await api.waitFor(() => document.getElementById("verSlot").textContent,
+    { label: "js/main.js execution" });
 
   if (mode === "signedOut" || mode === "cloud") {
     await api.waitFor(() => document.getElementById("welcome").hidden === false
@@ -314,8 +376,8 @@ export async function bootApp(options = {}) {
 
 /* Cloud mode without Supabase: the real welcome form drives the real sign-in
    path, but `store` is patched so every backend call is answered locally. The
-   two `await import("https://esm.sh/…")` calls in index.html are on the cloud
-   path only and already failed harmlessly during boot. */
+   two `await import("https://esm.sh/…")` calls in js/remote-store.js are on the
+   cloud path only and already failed harmlessly during boot. */
 async function signIn(api, cloud) {
   const {
     user = { id: "user-1", email: "owner@example.com" },
@@ -370,7 +432,8 @@ export async function reloadAccounts(api, accounts) {
     api.storeCalls.push({ name: "listAccounts", args: [brandId] });
     return api.intoPage(accounts);
   };
-  api.eval("connCache = { brandId:null, available:connCache.available, accounts:[], loaded:false }");
+  api.setState("connCache", api.intoPage(
+    { brandId: null, available: api.state.connCache.available, accounts: [], loaded: false }));
   await api.call("refreshConnections", api.db.activeBrand);
   await api.flush();
 }

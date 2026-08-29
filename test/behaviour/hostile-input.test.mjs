@@ -165,7 +165,7 @@ test("a hostile SmartLink colour never reaches style or value", async t => {
   await app.fill(app.$(".sledit input[type=color]"), "#AB12CD");
   assert.equal(app.db.brands[0].smartlink.color, "#ab12cd");
   assert.equal(app.$(".phone .slink").getAttribute("style"), "background:#ab12cd");
-  assert.equal(app.eval("slColorOf('#AB12CD')"), "#AB12CD");
+  assert.equal(app.call("slColorOf", "#AB12CD"), "#AB12CD");
 });
 
 /* Delegation moved every record id out of JavaScript-in-attribute position and

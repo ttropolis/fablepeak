@@ -127,6 +127,31 @@ test("a valid Instagram post with https media is accepted", async t => {
   assert.deepEqual([...saved.networks], ["instagram"]);
 });
 
+/* The mirror image of the LinkedIn and Pinterest refusals above: the guards are
+   about the *kind* of attachment, so an image on the same network is accepted. */
+test("an image attachment is accepted by the networks that refuse video", async t => {
+  for (const network of ["linkedin", "pinterest"]) {
+    const app = await bootApp({ mode: "local" });
+    t.after(() => app.close());
+    if (network === "pinterest") await simulate(app, "pinterest");
+    const before = await attempt(app, {
+      networks: [network], media: "https://cdn.example.com/launch.png",
+    });
+    assert.equal(app.toast(), "Draft saved", `${network} should accept an image`);
+    assert.equal(app.db.brands[0].posts.length, before + 1);
+    assert.equal(app.db.brands[0].posts.at(-1).media_url, "https://cdn.example.com/launch.png");
+  }
+});
+
+test("a text-only network needs no media at all", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  const before = await attempt(app, { networks: ["x"], media: "" });
+  assert.equal(app.toast(), "Draft saved");
+  assert.equal(app.db.brands[0].posts.length, before + 1);
+  assert.equal(app.db.brands[0].posts.at(-1).media_url, "");
+});
+
 test("networks the brand has not connected cannot be selected at all", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());

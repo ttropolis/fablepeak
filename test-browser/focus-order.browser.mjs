@@ -75,7 +75,7 @@ test("a real click focuses the opener, and the dialog takes focus from there", a
   assert.equal((await focused(page)).name, "pm_text",
     "focus lands on the first control in the dialog");
   assert.equal(await page.evaluate(() =>
-    previousModalFocus?.textContent?.replace(/\s+/g, " ").trim()), "+ New post",
+    __fablepeak.state.previousModalFocus?.textContent?.replace(/\s+/g, " ").trim()), "+ New post",
     "the browser focused the button on click, so the app captured a real opener");
 });
 

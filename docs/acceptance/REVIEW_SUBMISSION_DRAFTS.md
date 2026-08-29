@@ -13,7 +13,7 @@ clears.
   (`supabase/functions/_shared/platforms.ts`, `supabase/functions/oauth-start`,
   `supabase/functions/oauth-callback`, `supabase/functions/publish`,
   `supabase/functions/connection-health`, `supabase/functions/delete-account`,
-  `index.html`) and the published pages (`privacy.html`, `terms.html`,
+  `index.html` and `js/`) and the published pages (`privacy.html`, `terms.html`,
   `data-deletion.html`).
 - Anything that could **not** be verified from the repository is marked
   **NEEDS-HUMAN-CONFIRM** inline. Do not submit a NEEDS-HUMAN-CONFIRM line
@@ -30,8 +30,8 @@ clears.
 | Provider tokens are AES-GCM encrypted before database storage (`fp1.<iv>.<ciphertext>`, base64url, 32-byte key from `SOCIAL_TOKEN_ENCRYPTION_KEY`) | `_shared/token-crypto.ts`; `oauth-callback` calls `encryptToken()` on both access and refresh tokens |
 | The browser never receives tokens — it reads the token-free `social_accounts_public` view | `supabase/migrations/20260802130000_connection_health.sql` |
 | Disconnect deletes the stored credential row outright | `disconnect_account` RPC, `supabase/migrations/20260802120000_social_account_selection.sql` |
-| Publishing only happens for networks the user ticked on a post they created | `index.html` `readPostForm()` → `publishNow()` → `publish/index.ts` iterating `post.networks` |
-| Instagram/YouTube posts are blocked in the composer without media | `index.html` `validatePostForm()` |
+| Publishing only happens for networks the user ticked on a post they created | `js/planner.js` `readPostForm()` → `publishNow()` → `publish/index.ts` iterating `post.networks` |
+| Instagram/YouTube posts are blocked in the composer without media | `js/planner.js` `validatePostForm()` |
 
 ---
 
@@ -640,7 +640,7 @@ shows **Verified** in the Meta dashboard.
 | 1 | Meta app ID `1357166765978737` | Does not appear anywhere in the repository |
 | 2 | Meta business portfolio `2572542696500072` | Does not appear anywhere in the repository |
 | 3 | Legal entity / portfolio name ("Techpolity" vs "FablePeak" vs "Shiloh Creek") | No entity name is recorded in the repo; the only related string is `PLATFORM_SETUP.md:158` "FablePeak/Shiloh Creek" |
-| 4 | Reviewer FablePeak account exists and is email-confirmed | Sign-up requires email confirmation (`index.html` `wSubmit`); cannot be checked from the repo |
+| 4 | Reviewer FablePeak account exists and is email-confirmed | Sign-up requires email confirmation (`js/welcome.js` `wSubmit`); cannot be checked from the repo |
 | 5 | Meta "Data Deletion Callback URL" | No deletion *callback* endpoint exists in the codebase; only the published instructions page |
 | 6 | Analytics shot showing a **real** follower/impression figure | The UI falls back to labelled simulated data until `ingest-metrics` has written a row for that connection |
 | 7 | Facebook Login configuration (`META_CONFIG_ID`) actually carries all three Page permissions | `oauth-start` sends `config_id` and omits `scope`, so the permission set lives in the Meta dashboard, not in code |

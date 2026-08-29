@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
 import {
-  LS_KEY, closeBrowser, fixtureDb, newContext, startServer, waitForApp,
+  LS_KEY, appVersion, closeBrowser, fixtureDb, newContext, startServer, waitForApp,
 } from "../test-harness/browser.mjs";
 
 let server;
@@ -64,7 +64,7 @@ test("the cache the browser created is the one APP_VERSION names", async t => {
     null, { timeout: 15_000 });
 
   const { keys, version } = await app.page.evaluate(async () => ({
-    keys: await caches.keys(), version: APP_VERSION,
+    keys: await caches.keys(), version: __fablepeak.version,
   }));
 
   assert.deepEqual(keys, [`fablepeak-v${version}`],
@@ -77,11 +77,16 @@ test("the install step precaches the app shell", async t => {
   await waitUntilControlling(app.page);
 
   const cached = await app.page.evaluate(async () => {
-    const cache = await caches.open(`fablepeak-v${APP_VERSION}`);
+    const cache = await caches.open(`fablepeak-v${__fablepeak.version}`);
     return (await cache.keys()).map(request => new URL(request.url).pathname).sort();
   });
 
   for (const path of ["/", "/index.html", "/manifest.json", "/icon-192.png", "/privacy.html"]) {
+    assert.ok(cached.includes(path), `${path} should be precached, got ${cached.join(", ")}`);
+  }
+  // Since the ADR 0003 Phase 2b split the shell is not one file: every module
+  // has to be in the cache, or an offline reload renders nothing at all.
+  for (const path of ["/js/main.js", "/js/shell.js", "/js/planner.js", "/js/state.js"]) {
     assert.ok(cached.includes(path), `${path} should be precached, got ${cached.join(", ")}`);
   }
 });
@@ -124,7 +129,7 @@ test("the service worker refuses to cache an authenticated response", async t =>
   await waitUntilControlling(app.page);
 
   const entries = () => app.page.evaluate(async () => (await (await caches.open(
-    `fablepeak-v${APP_VERSION}`)).keys()).length);
+    `fablepeak-v${__fablepeak.version}`)).keys()).length);
 
   const cachedBefore = await entries();
   await app.page.evaluate(() => fetch("./manifest.json", {

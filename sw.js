@@ -1,8 +1,17 @@
-const CACHE = "fablepeak-v1.4.0";
+const CACHE = "fablepeak-v1.5.0";
+// Every js/ module is precached: since ADR 0003 Phase 2b the app is native ES
+// modules, so a missing one is a blank page rather than a degraded one. The
+// installed PWA is the offline story (decision 3), which makes this list part
+// of it. test/production-readiness.test.mjs fails if js/ and this list drift.
 const ASSETS = [
   "./", "./index.html", "./oauth-complete.html", "./privacy.html", "./terms.html",
   "./data-deletion.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
   "./apple-touch-icon.png",
+  "./js/main.js", "./js/actions.js", "./js/analytics.js", "./js/connections.js",
+  "./js/constants.js", "./js/escape.js", "./js/inbox.js", "./js/local-store.js",
+  "./js/metrics.js", "./js/planner.js", "./js/remote-store.js", "./js/reports.js",
+  "./js/settings.js", "./js/shell.js", "./js/smartlinks.js", "./js/state.js",
+  "./js/store.js", "./js/util.js", "./js/welcome.js", "./js/workspace.js",
 ];
 
 self.addEventListener("install", e => {

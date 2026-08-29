@@ -41,7 +41,7 @@ test("live published posts are rendered undraggable while drafts stay draggable"
   const app = await bootApp({ mode: "cloud", cloud: cloudFixture });
   t.after(() => app.close());
 
-  assert.equal(app.eval("liveMode()"), true);
+  assert.equal(app.call("liveMode"), true);
   assert.equal(chipsOn(app, "2026-06-10")[0].getAttribute("draggable"), "false",
     "a published post must not be draggable in live mode");
   assert.equal(chipsOn(app, "2026-06-18")[0].getAttribute("draggable"), "true");

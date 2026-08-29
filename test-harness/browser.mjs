@@ -11,13 +11,19 @@
  * Anything jsdom can assert belongs in test/behaviour/, not here. This tier is
  * kept out of `npm run check`; it has its own npm script and its own CI job.
  *
- * Offline by construction. index.html is served from a throwaway node:https
- * server over 127.0.0.1 (https, because the app only registers sw.js when
- * `location.protocol === "https:"`), and every context installs a route handler
- * that answers same-origin requests from the server and refuses everything else.
- * The two `await import("https://esm.sh/…")` calls are on the cloud path only:
- * local-mode tests assert they never fire, and cloud-mode tests fulfil them with
- * a local stub module rather than reaching the CDN.
+ * Offline by construction. index.html and the js/ modules it imports are served
+ * from a throwaway node:https server over 127.0.0.1 (https, because the app only
+ * registers sw.js when `location.protocol === "https:"`), and every context
+ * installs a route handler that answers same-origin requests from the server and
+ * refuses everything else. The two `await import("https://esm.sh/…")` calls in
+ * js/remote-store.js are on the cloud path only: local-mode tests assert they
+ * never fire, and cloud-mode tests fulfil them with a local stub module rather
+ * than reaching the CDN.
+ *
+ * Unlike the jsdom tier, this one loads the module graph the real way — Chromium
+ * fetches `<script type="module" src="./js/main.js">` and every specifier under
+ * it — which is the point of having it. App internals are reached through
+ * js/main.js's documented `__fablepeak` seam, armed by the init script below.
  *
  * Lives outside test/ for the same reason test-harness/app.mjs does: a helper
  * module is not a test file.
@@ -198,6 +204,9 @@ const DEFAULT_NOW = [2026, 5, 15, 12, 0, 0]; // Mon 15 June 2026, 12:00 local
    and pre-seeds localStorage, so a fixture can arrive through the app's real
    load() path instead of being poked into place afterwards. */
 function initScript({ parts, storage }) {
+  // Asks js/main.js for its test seam. Runs before any app code, which is the
+  // contract: a page that did not opt in never gets one.
+  globalThis.__FABLEPEAK_TEST__ = true;
   const Real = Date;
   const fixed = new Real(...parts).getTime();
   class FrozenDate extends Real {
@@ -285,14 +294,22 @@ export const toastText = page => page.evaluate(() => {
   return el.classList.contains("show") ? el.textContent : "";
 });
 
-/** The page's live `db` (a top-level `let`, so reachable from evaluate). */
-export const readDb = page => page.evaluate(() => JSON.parse(JSON.stringify(db)));
+/** The page's live `db`, through js/main.js's test seam. */
+export const readDb = page =>
+  page.evaluate(() => JSON.parse(JSON.stringify(__fablepeak.state.db)));
 
 /** Replace `db` wholesale and re-render, for states the fixture cannot seed. */
 export const installDb = (page, value) => page.evaluate(next => {
-  db = next;
-  render();
+  __fablepeak.state.set("db", next);
+  __fablepeak.fn.render();
 }, value);
+
+/** The running APP_VERSION, as the page itself reports it. */
+export const appVersion = page => page.evaluate(() => __fablepeak.version);
+
+/** Call any app function by its export name, e.g. appCall(page, "liveMode"). */
+export const appCall = (page, name, ...args) =>
+  page.evaluate(([n, a]) => __fablepeak.call(n, ...a), [name, args]);
 
 /** A one-brand workspace with a published post and a scheduled one. */
 export function fixtureDb() {
