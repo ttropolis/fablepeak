@@ -23,6 +23,27 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  # ADR 0003 decision 2: the browser acceptance tier is a separate job on
+  # purpose. It downloads a Chromium build, so it must never be part of the
+  # `test` job above — nothing depends on it and it cannot delay `npm run check`.
+  # Scope is fixed by the ADR: drag-and-drop, service worker / PWA offline,
+  # real focus order, and the file:// deprecation canary.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # playwright-core has no postinstall browser download (which is why the
+      # `test` job's `npm ci` stays fast); the browser is fetched here instead,
+      # through the pinned playwright-core so the revision matches the library.
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run test:browser
+
   database:
     runs-on: ubuntu-latest
     timeout-minutes: 10

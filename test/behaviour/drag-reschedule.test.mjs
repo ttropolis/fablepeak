@@ -49,20 +49,17 @@ test("live published posts are rendered undraggable while drafts stay draggable"
 
 /* jsdom implements neither DataTransfer nor DragEvent (both are `undefined` on
    the window), so a drop can only be produced by hand-building a fake event
-   object and calling the handler directly. That would assert the harness, not
-   the app. ADR 0003 decision 2 puts real HTML5 drag-and-drop in the Playwright
-   tier; this is the marker for it.
-   Still covered elsewhere: dropPost()'s guard is exercised by the existing
-   vm-based test in test/scheduling.test.mjs, and the rendered drag contract is
-   asserted above. */
-test("dropping a post on another day reschedules it", { skip: "Playwright tier (ADR 0003 §1b): jsdom has no DataTransfer/DragEvent" }, () => {});
-test("dropping a live published post refuses with a toast", { skip: "Playwright tier (ADR 0003 §1b): jsdom has no DataTransfer/DragEvent" }, () => {});
+   object and calling the handler directly — that asserts the harness, not the
+   app. The drop itself therefore lives in the browser tier (ADR 0003 §1b):
+   test-browser/drag-and-drop.browser.mjs performs a real Chromium drag and a
+   real DataTransfer for both the reschedule and the published-post refusal.
+   This file keeps the rendered drag *contract*, asserted above. */
 
 test("jsdom really does lack the drag-and-drop platform APIs", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
-  // Guard the skip above: if a future jsdom ships these, this fails and the two
-  // skipped flows can move back into this tier.
+  // Guard the split above: if a future jsdom ships these, this fails loudly and
+  // the two browser-tier flows can move back into the fast suite.
   assert.equal(typeof app.window.DataTransfer, "undefined");
   assert.equal(typeof app.window.DragEvent, "undefined");
 });
