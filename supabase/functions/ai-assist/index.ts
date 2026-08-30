@@ -269,6 +269,9 @@ type Adapter = (dependencies: ProviderDependencies) => ModelRunner;
  * and internal detail that no browser needs. */
 function providerError(status: number, body: string): AssistError {
   if (status === 401 || status === 403) {
+    // The provider rejected our credential. Status only — the body can echo
+    // request detail, and the client message stays generic either way.
+    console.error(`ai-assist provider rejected the server credential: HTTP ${status}`);
     return new AssistError(503, NOT_CONFIGURED);
   }
   if (status === 429) {

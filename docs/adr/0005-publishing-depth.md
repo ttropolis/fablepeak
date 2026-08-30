@@ -309,9 +309,13 @@ for the record.
   `platforms.ts` line in decision 6's effort table, the X reply assertion in
   decision 7's test plan, and the fourth consequence ("X reply-to-self ships
   dormant").* Unshippable code is unverifiable code; build it when X unfreezes.
-- **Facebook may ship on held permissions (see 6).** A successful probe on
-  permissions already held releases Facebook first comments without a further
-  Meta review. Instagram first comments remain gated on a later submission.
+- **Facebook may ship on held permissions (see 6) — clarified 2026-08-30.**
+  A successful live probe using permissions **already granted to and approved
+  for the app**, with no additional scopes requested, releases Facebook first
+  comments for **controlled internal use only**. This must not delay or alter
+  the current Meta submission in any way. External-beta release of the feature
+  remains gated on the relevant Meta approval and acceptance testing.
+  Instagram first comments remain deferred.
 
 **Closing rationale.** The governing constraint is protecting the current Meta
 submission. Nothing in this ADR may put core publishing approval at risk, so
