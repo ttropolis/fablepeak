@@ -325,6 +325,27 @@ for the record.
   remains gated on the relevant Meta approval and acceptance testing.
   Instagram first comments remain deferred.
 
+- **Carousels are delivered after v1 (2026-08-31).** *Amends decision 14 and the
+  first bullet of "Out of scope for v1"* — which cut carousels because they need
+  "a media *array* plus an N-container Instagram upload flow". Both are now
+  built, and neither costs a Meta permission: `instagram_business_content_publish`
+  already covers a CAROUSEL container, so this ships alongside variants without
+  touching the submission that decision 6 exists to protect.
+  - Storage is `posts.media_urls jsonb` (nullable), an ordered array of 2..10
+    https URLs, validated by `posts_media_urls_valid` — the same
+    CHECK-via-IMMUTABLE-function seam `posts.variants` established and
+    `posts.tiktok_options` reused.
+  - **`posts.media_url` is untouched and stays the contract for every other
+    network**, so the "per-network media" cut in the same list still stands: the
+    carousel is `[media_url, ...extras]`, one post, one cover, and the other
+    seven networks publish the first item exactly as they do today. The composer
+    says so where the items are added.
+  - A carousel is all-or-nothing. One rejected item container means no CAROUSEL
+    container is created and `media_publish` is never called, so the
+    partial-outcome state this ADR introduced for comments has no analogue here:
+    a carousel either publishes whole or fails whole, and the failure names the
+    item by number and the provider by status without forwarding its body.
+
 **Closing rationale.** The governing constraint is protecting the current Meta
 submission. Nothing in this ADR may put core publishing approval at risk, so
 scope that needs a new Meta permission is deferred to a later submission, and

@@ -47,6 +47,12 @@ export const RemoteAdapter = {
         posts: posts.filter(p => p.brand_id===b.id).map(p => ({
           id: p.id, date: p.date, time: p.time, text: p.text,
           networks: p.networks || [], status: p.status, media_url: p.media_url || "",
+          // ADR 0005 publishing depth — the Instagram carousel. Same three-edit
+          // rule as `variants`, and nullable for the same reason `tiktok_options`
+          // is: "this post has no carousel" is every post but a handful, and an
+          // empty array is not a carousel Instagram would accept.
+          media_urls: Array.isArray(p.media_urls) && p.media_urls.length > 1
+            ? p.media_urls : null,
           // ADR 0006 decision 11: the one overwritten rejection note. Normalised
           // to "" so an app post and the row it round-trips to compare equal.
           approval_note: p.approval_note || "",
@@ -85,6 +91,13 @@ export const RemoteAdapter = {
            stale object forward would be a claim about an audience nobody
            picked for this post — so the column is cleared with the target. */
         tiktok_options:(p.networks || []).includes("tiktok") ? (p.tiktok_options || null) : null,
+        /* Written only for a post that actually targets Instagram *and* carries
+           more than one item. A post that no longer names instagram has no
+           carousel, and a one-entry array is an ordinary single-media post said
+           twice — posts_media_urls_valid refuses it, and so does this. */
+        media_urls:(p.networks || []).includes("instagram")
+          && Array.isArray(p.media_urls) && p.media_urls.length > 1
+          ? p.media_urls : null,
         client_id:this._clientId });
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
@@ -139,7 +152,7 @@ export const RemoteAdapter = {
          status trigger writes them from auth.uid() and now(), and a column this
          list does not name is one no client payload can carry — which is what
          keeps an approval attributable to the account that made it. */
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note","tiktok_options"],
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));

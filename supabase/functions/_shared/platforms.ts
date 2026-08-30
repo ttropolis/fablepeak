@@ -38,6 +38,14 @@ export interface PublishInput {
    * adapter the finished value, so no adapter has to know what a post row looks
    * like. Only the TikTok adapter reads it; every other adapter ignores it. */
   tiktokOptions?: unknown;
+  /** `posts.media_urls` for this post, or null — the ordered carousel the
+   * customer arranged, `[mediaUrl, ...extras]`. Threaded through exactly the way
+   * `tiktokOptions` is: the publish loop reads the column off the claimed post
+   * row (the claim RPCs already return `p.*`) and hands the adapter a finished
+   * value. Only the Instagram adapter reads it, and only when it holds two or
+   * more entries; every other adapter publishes from `mediaUrl` alone, which is
+   * why the first carousel item and `mediaUrl` are the same URL. */
+  mediaUrls?: unknown;
 }
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
@@ -818,10 +826,19 @@ const instagram: PlatformAdapter = {
   },
 
   // IG publishing is two-step: create a media container, then publish it.
-  async publish({ text, mediaUrl, accessToken, connection }) {
+  // A carousel is those same two steps with one layer in front: an item
+  // container per child, then a CAROUSEL container that names them all, then the
+  // one publish. The container that reaches media_publish is the only thing that
+  // differs, which is why both paths converge on publishInstagramContainer().
+  async publish({ text, mediaUrl, mediaUrls, accessToken, connection }) {
     if (!mediaUrl) throw new Error("Instagram requires an image or video URL — it has no text-only post.");
-    const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
     const igId = connection.external_id;
+    const carousel = instagramCarouselItems(mediaUrls);
+    if (carousel) {
+      return await publishInstagramContainer(
+        igId, await createInstagramCarousel(igId, carousel, text, accessToken), accessToken);
+    }
+    const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
     const video = mediaKind(safeMediaUrl) === "video";
     const createParams: Record<string, string> = video
       ? { media_type: "REELS", video_url: safeMediaUrl, caption: text, access_token: accessToken }
@@ -836,35 +853,7 @@ const instagram: PlatformAdapter = {
     // before Meta reports FINISHED intermittently fails with OAuth code 9007
     // ("Media ID is not available").
     await waitForInstagramContainer(container.id, accessToken);
-    let publishResponse: Response;
-    try {
-      publishResponse = await fetch(
-        `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ creation_id: container.id, access_token: accessToken }),
-      });
-    } catch {
-      throw new PublishOutcomeUnknownError(
-        "Instagram may have accepted this post. Verify the profile before retrying.");
-    }
-    let published: any;
-    try {
-      published = await j(publishResponse, "instagram publish");
-    } catch (error) {
-      rethrowFinalPublishFailure(error, publishResponse,
-        "Instagram may have accepted this post. Verify the profile before retrying.");
-    }
-    if (!published.id) throw new PublishOutcomeUnknownError(
-      "Instagram may have accepted this post. Verify the profile before retrying.");
-    let permalink: string | undefined;
-    try {
-      const link = await fetch(
-        `https://graph.instagram.com/${META_VERSION}/${published.id}` +
-        `?fields=permalink&access_token=${encodeURIComponent(accessToken)}`);
-      if (link.ok) permalink = (await link.json()).permalink;
-    } catch { /* publishing succeeded; a missing convenience link must not retry it */ }
-    return { remote_id: published.id, remote_url: permalink };
+    return await publishInstagramContainer(igId, container.id, accessToken);
   },
 
   async metrics({ accessToken, connection }) {
@@ -889,6 +878,143 @@ async function waitForInstagramContainer(containerId: string, accessToken: strin
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   throw new Error("Instagram is still processing this media. Try publishing again shortly.");
+}
+
+const INSTAGRAM_PUBLISH_UNKNOWN =
+  "Instagram may have accepted this post. Verify the profile before retrying.";
+
+/** Instagram's own carousel bounds. Two is its minimum — a single item is an
+ *  ordinary post, and `media_urls` must not become a second way to say that —
+ *  and ten is its maximum. `posts_media_urls_valid` in
+ *  20260831110000_carousel_media.sql states the same two numbers where the data
+ *  lands, and js/planner.js states them where the customer is choosing. */
+export const INSTAGRAM_CAROUSEL_MIN = 2;
+export const INSTAGRAM_CAROUSEL_MAX = 10;
+
+/** The carousel children this post actually has, or null when it has none.
+ *
+ *  Null is the contract that keeps every Instagram post that predates carousels
+ *  publishing byte-identically: an absent `media_urls`, a value that is not an
+ *  array, and an array with fewer than two usable entries all take the
+ *  single-media path exactly as it shipped. Only a real carousel diverges.
+ *
+ *  Over the maximum throws instead of truncating. Dropping the customer's
+ *  eleventh image without telling them is the same mistake ADR 0005 decision 12
+ *  refused for X's 280 characters, and nothing has been published yet, so the
+ *  refusal costs a failed target rather than a wrong post. */
+export function instagramCarouselItems(mediaUrls: unknown): string[] | null {
+  if (!Array.isArray(mediaUrls)) return null;
+  const items = mediaUrls.filter((item): item is string =>
+    typeof item === "string" && item.trim() !== "");
+  if (items.length < INSTAGRAM_CAROUSEL_MIN) return null;
+  if (items.length > INSTAGRAM_CAROUSEL_MAX) {
+    throw new Error(`Instagram carousels hold up to ${INSTAGRAM_CAROUSEL_MAX} items — ` +
+      `this post has ${items.length}.`);
+  }
+  return items;
+}
+
+/** The carousel container: one item container per child, then the CAROUSEL that
+ *  names them.
+ *
+ *  Sequential on purpose. A carousel is all-or-nothing, so the only thing worth
+ *  optimising is attributability — "item 3 was rejected" is the sentence the
+ *  customer can act on, and ten concurrent requests would turn one permanent
+ *  problem into a race for which rejection is reported. The item containers
+ *  already created when item N fails are simply never used; Instagram expires an
+ *  unpublished container after 24 hours, so an abandoned one costs nothing and
+ *  publishes nothing.
+ *
+ *  The caption rides on the CAROUSEL container alone. A child container carries
+ *  no caption of its own, and `is_carousel_item=true` is what makes Meta treat
+ *  it as a child rather than as a post waiting to be published. */
+async function createInstagramCarousel(
+  igId: string, items: string[], text: string, accessToken: string,
+): Promise<string> {
+  const children: string[] = [];
+  for (const [index, item] of items.entries()) {
+    try {
+      const safeItemUrl = publicMediaUrl(item, "Instagram");
+      // A video child is media_type=VIDEO, never REELS: REELS is a standalone
+      // format and Meta rejects it as a carousel child.
+      const params: Record<string, string> = mediaKind(safeItemUrl) === "video"
+        ? { media_type: "VIDEO", video_url: safeItemUrl,
+            is_carousel_item: "true", access_token: accessToken }
+        : { image_url: safeItemUrl, is_carousel_item: "true", access_token: accessToken };
+      const child = await j(await fetch(
+        `https://graph.instagram.com/${META_VERSION}/${igId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(params),
+        }), "instagram carousel item");
+      if (!child.id) throw new Error("Instagram returned no container id for this item.");
+      await waitForInstagramContainer(String(child.id), accessToken);
+      children.push(String(child.id));
+    } catch (error) {
+      throw instagramCarouselItemFailure(error, index, items.length);
+    }
+  }
+  const container = await j(await fetch(
+    `https://graph.instagram.com/${META_VERSION}/${igId}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        media_type: "CAROUSEL", children: children.join(","),
+        caption: text, access_token: accessToken,
+      }),
+    }), "instagram carousel container");
+  await waitForInstagramContainer(container.id, accessToken);
+  return container.id;
+}
+
+/** Why the carousel failed, said once and safely.
+ *
+ *  Every failure here happens *before* media_publish, so nothing is
+ *  half-published and the outcome is never ambiguous — which is exactly why the
+ *  provider's response body is not forwarded. A rejected item is reported by
+ *  which item it was and what the provider answered: a status, not Graph's
+ *  prose. Rebuilding the same error class with the same status preserves the
+ *  retry classification `publishPost` reads, so a 5xx on item three is still
+ *  retryable, and it is safe to retry precisely because no post exists yet. */
+function instagramCarouselItemFailure(error: unknown, index: number, total: number): Error {
+  const where = `Instagram could not prepare carousel item ${index + 1} of ${total}`;
+  if (error instanceof ProviderRequestError) return new ProviderRequestError(where, error.status);
+  return new Error(`${where}: ${String((error as Error)?.message ?? error).slice(0, 200)}`);
+}
+
+/** The one publish request, and the permalink lookup after it. Shared by the
+ *  single-media and carousel paths: whichever container was prepared, this is
+ *  the only request that can create public content, so it is the only place
+ *  PublishOutcomeUnknownError belongs. */
+async function publishInstagramContainer(
+  igId: string, creationId: string, accessToken: string,
+): Promise<PublishResult> {
+  let publishResponse: Response;
+  try {
+    publishResponse = await fetch(
+      `https://graph.instagram.com/${META_VERSION}/${igId}/media_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ creation_id: creationId, access_token: accessToken }),
+    });
+  } catch {
+    throw new PublishOutcomeUnknownError(INSTAGRAM_PUBLISH_UNKNOWN);
+  }
+  let published: any;
+  try {
+    published = await j(publishResponse, "instagram publish");
+  } catch (error) {
+    rethrowFinalPublishFailure(error, publishResponse, INSTAGRAM_PUBLISH_UNKNOWN);
+  }
+  if (!published.id) throw new PublishOutcomeUnknownError(INSTAGRAM_PUBLISH_UNKNOWN);
+  let permalink: string | undefined;
+  try {
+    const link = await fetch(
+      `https://graph.instagram.com/${META_VERSION}/${published.id}` +
+      `?fields=permalink&access_token=${encodeURIComponent(accessToken)}`);
+    if (link.ok) permalink = (await link.json()).permalink;
+  } catch { /* publishing succeeded; a missing convenience link must not retry it */ }
+  return { remote_id: published.id, remote_url: permalink };
 }
 
 /* ----------------------------------------------------------------- LinkedIn */

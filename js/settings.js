@@ -201,10 +201,25 @@ export function validBackupTikTokOptions(o){
     && (!o.disclose_commercial || !!o.brand_organic || !!o.brand_content)
     && !(o.brand_content && o.privacy_level==="SELF_ONLY");
 }
+/* The Instagram carousel, checked against the same three limits
+   posts_media_urls_valid enforces: 2..10 entries, each an https:// string of at
+   most 2048 characters. Absent and null both mean "this post has no carousel",
+   which is nearly every post. */
+const CAROUSEL_MIN = 2, CAROUSEL_MAX = 10;
+const isCarouselItem = v => isText(v) && v.length <= 2048 && v.startsWith("https://");
+export function validBackupMediaUrls(v){
+  return Array.isArray(v) && v.length >= CAROUSEL_MIN && v.length <= CAROUSEL_MAX
+    && v.every(isCarouselItem);
+}
 export function validBackupPost(p){
   return isPlainObject(p) && isId(p.id) && isText(p.text) && isText(p.date)
     && (p.time===undefined || isText(p.time))
     && (p.media_url===undefined || p.media_url===null || isText(p.media_url))
+    // The carousel is an ordered array of public URLs that this app will hand
+    // straight to Meta, so a backup carrying one that Instagram could never
+    // accept — a single item, an eleventh, an http:// URL — is refused here,
+    // before it can reach `db` and be queued for sync.
+    && (p.media_urls===undefined || p.media_urls===null || validBackupMediaUrls(p.media_urls))
     && Array.isArray(p.networks) && p.networks.every(isText)
     && POST_STATUSES.includes(p.status)
     // ADR 0005 decision 2: per-network copy. An imported file is as untrusted

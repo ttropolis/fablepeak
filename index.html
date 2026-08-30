@@ -140,6 +140,19 @@
   .variant-state{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
   .variants textarea{margin-top:8px;min-height:60px}
   .variant-empty{font-size:12px;color:var(--muted);margin-top:8px}
+  /* Instagram carousel — the extra media items, shown only while Instagram is
+     a selected network (ADR 0005 publishing depth). */
+  .carousel-panel{border:1px solid var(--line);border-left:4px solid #d6437f;border-radius:10px;padding:12px;margin:10px 0;background:#fdf7fa}
+  .carousel-panel h4{font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .carousel-note{font-size:12px;color:var(--muted);line-height:1.6;margin:6px 0}
+  .carousel-list{list-style:none;margin:8px 0;display:flex;flex-direction:column;gap:8px}
+  .carousel-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .carousel-item input{flex:1;min-width:160px}
+  .carousel-index{width:20px;height:20px;border-radius:50%;background:#d6437f;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:none}
+  .carousel-cover-note{font-size:12px;color:var(--muted)}
+  .media-preview.carousel-thumb{margin:0;max-height:48px;flex:none}
+  .carousel-thumb.on img,.carousel-thumb.on video{max-height:48px;border-radius:6px}
+  .carousel-count{font-size:11px;color:var(--muted);margin-top:6px}
   /* TikTok Direct Post options — the account-driven form the Content Posting
      API guidelines require, and the consent line that sits beside Save. */
   .tiktok-panel{border:1px solid var(--line);border-left:4px solid #00b7b0;border-radius:10px;padding:12px;margin:12px 0;background:#f6fbfb}

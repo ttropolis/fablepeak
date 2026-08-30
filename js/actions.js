@@ -22,10 +22,11 @@ import {
   completePasswordReset, enterDemo, exitDemo, requestPasswordReset, wSubmit, wTab,
 } from "./welcome.js";
 import {
-  approvePost, calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost,
-  focusVariant, openPostModal, publishNow, rejectPost, renderTikTokPanel,
-  renderVariantSections, retryPost, runAiAssist, savePost, setApprovalScope,
-  setTikTokOption, showMediaPreview, syncAiAssist, syncComposer, syncVariant,
+  addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
+  dropPost, dupPost, focusVariant, openPostModal, publishNow, rejectPost,
+  removeCarouselItem, renderCarousel, renderTikTokPanel, renderVariantSections,
+  retryPost, runAiAssist, savePost, setApprovalScope, setTikTokOption,
+  showMediaPreview, syncAiAssist, syncCarouselItem, syncComposer, syncVariant,
   togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
@@ -82,9 +83,16 @@ export const ACTIONS = {
   toggleNet:             el => {
     el.parentElement.classList.toggle("on", el.checked);
     renderVariantSections();                   // one section per selected network
+    renderCarousel();                          // …the carousel, or none
     renderTikTokPanel();                       // …and TikTok's own form, or none
     syncAiAssist();
   },
+  /* composer -> Instagram carousel. The list is rebuilt on add and remove and
+     deliberately NOT on typing: rebuilding mid-URL would drop the caret, so
+     syncCarouselItem records the value and repaints only that row's thumbnail. */
+  addCarouselItem:       () => addCarouselItem(),
+  removeCarouselItem:    el => removeCarouselItem(el.dataset.arg),
+  syncCarouselItem:      el => syncCarouselItem(el),
   /* composer → TikTok Direct Post options. One entry for every control in the
      panel; which one is being changed travels in data-arg, so the conditional
      rules the guidelines impose live in one function instead of six. */

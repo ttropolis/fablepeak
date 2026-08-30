@@ -710,7 +710,7 @@ test("a column the sync whitelist does not name is invisible, so variants is nam
      widening of what the browser may write, and it should have to be stated
      here as well as there. `tiktok_options` is the second such widening. */
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note","tiktok_options"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter, /variants: p\.variants \|\| \{\}/, "server row -> app post");
   assert.match(adapter, /variants:p\.variants \|\| \{\}/, "app post -> server row");

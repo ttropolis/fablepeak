@@ -6,9 +6,10 @@ import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
   AI_ASSIST_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist, approvalFilter, calCursor,
-  composerTikTok, composerVariantFocus, composerVariants, mediaUploadActive,
-  setAiAssist, setApprovalFilter, setComposerBaseline, setComposerTikTok,
-  setComposerVariantFocus, setComposerVariants, setMediaUploadActive,
+  composerCarousel, composerTikTok, composerVariantFocus, composerVariants,
+  mediaUploadActive, setAiAssist, setApprovalFilter, setComposerBaseline,
+  setComposerCarousel, setComposerTikTok, setComposerVariantFocus,
+  setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
 import {
@@ -223,6 +224,7 @@ export function openPostModal(id, dateStr){
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${attr(p?.media_url||"")}" ${locked?"disabled":""} data-change="showMediaPreview">
     <div class="media-preview" id="pm_media_preview"></div>
+    ${carouselHost(locked)}
     ${liveMode() && !locked ? `<div class="upload-actions">
       <label class="filebtn ghost">📱 Choose photo or video
         <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif,video/mp4,video/quicktime,video/webm,.m4v"
@@ -276,8 +278,13 @@ export function openPostModal(id, dateStr){
      chosen for it, not about hiding a choice the customer already made. */
   setComposerTikTok({...COMPOSER_TIKTOK_IDLE,
     options:{...COMPOSER_TIKTOK_IDLE.options, ...readStoredTikTokOptions(p)}});
+  /* A post that already carries a carousel reopens showing it. Only the extras
+     live in composer state — item one is `media_url`, which #pm_media already
+     holds, and keeping one copy of it is what stops the two drifting apart. */
+  setComposerCarousel(storedCarouselExtras(p));
   if(p?.media_url) showMediaPreview(p.media_url);
   renderVariantSections();                     // #pm_variants was built empty
+  renderCarousel();                            // …and so was #pm_carousel
   renderTikTokPanel();                         // …and so was #pm_tiktok
   syncComposer();                              // the panels were built before #pm_text existed
   setComposerBaseline(composerSnapshot());     // arms the unsaved-changes guard
@@ -522,6 +529,162 @@ function paintCount(el, length, cap, suffix=""){
 export function syncComposer(){
   syncComposerCounts();
   syncAiAssist();
+}
+
+/* =============== Instagram carousels (ADR 0005 publishing depth) ===============
+
+   ADR 0005 decision 14 cut carousels from v1 because they need a media *array*
+   and an N-container upload flow. This is that array, and it is deliberately the
+   smallest one that works: `media_url` stays the single cover every network
+   publishes, and the carousel is `[media_url, ...extras]` — so a customer who
+   never opens this affordance has exactly the composer, the post shape and the
+   publish path they had before.
+
+   It follows the per-network disclosure and the TikTok panel exactly: one host
+   div rendered empty into the composer, filled by a function the network picker
+   re-runs, and nothing at all in the DOM when Instagram is not a selected
+   network. Only the extras live in composer state; item one is #pm_media, and
+   keeping one copy of it is what stops the two from drifting apart.
+
+   The one sentence the panel owes the customer is the one about the other
+   networks: Facebook, LinkedIn and the rest have no carousel to publish, so they
+   post the first item and nothing else. Saying it beside the control is cheaper
+   than a support ticket about a Facebook post that lost four images. */
+
+/* Instagram's own bounds, restated here because this is where the customer is
+   choosing. posts_media_urls_valid states them where the data lands, and
+   instagramCarouselItems() in _shared/platforms.ts states them where the
+   provider is called. */
+export const CAROUSEL_MAX_ITEMS = 10;
+const CAROUSEL_MAX_EXTRAS = CAROUSEL_MAX_ITEMS - 1;
+
+/** The extras a stored post reopens with: everything after item one. A post
+    with no carousel, or one somehow holding a single item, has no extras. */
+function storedCarouselExtras(p){
+  const stored=p?.media_urls;
+  return Array.isArray(stored) && stored.length > 1
+    ? stored.slice(1).map(url => typeof url==="string" ? url : "") : [];
+}
+function instagramSelected(){ return checkedNets().includes("instagram"); }
+/* Rendered empty, filled by renderCarousel() — the variants and TikTok pattern.
+   Absent for a locked post: a delivered carousel has no items left to add. */
+function carouselHost(locked){
+  return locked ? "" : `<div class="carousel" id="pm_carousel"></div>`;
+}
+/** What is typed right now, over what this composer opened with or retained. */
+function currentCarousel(){
+  const typed=[...document.querySelectorAll("#pm_carousel input[data-carousel]")];
+  if(!typed.length) return [...composerCarousel];
+  const out=[...composerCarousel];
+  for(const box of typed) out[Number(box.dataset.carousel)]=box.value;
+  return out;
+}
+/** The panel, rebuilt for the currently selected networks — keeping whatever is
+    already typed, including items for a composer that has just deselected
+    Instagram, which are retained but never published. */
+export function renderCarousel(){
+  if(!document.getElementById("pm_carousel")) return;
+  setComposerCarousel(currentCarousel());
+  paintCarousel();
+}
+/* Draws the state as it stands. Split from renderCarousel() deliberately: the
+   add and remove paths have *already* decided what the list is, and re-reading
+   the outgoing DOM there would merge the row being removed straight back in. */
+function paintCarousel(){
+  const host=document.getElementById("pm_carousel");
+  if(!host) return;
+  if(!instagramSelected()){ host.innerHTML=""; return; }
+  const extras=composerCarousel;
+  const total=extras.length + 1;
+  const rows=extras.map((url, index) => `<li class="carousel-item">
+      <span class="carousel-index">${index + 2}</span>
+      <input type="url" id="pm_carousel_${index}" data-carousel="${index}"
+        data-input="syncCarouselItem" data-change="syncCarouselItem" data-arg="${index}"
+        placeholder="https://…" value="${attr(url)}"
+        aria-label="${attr(`Carousel item ${index + 2} image or video URL`)}">
+      <div class="media-preview carousel-thumb"></div>
+      <button class="btn ghost mini" data-action="removeCarouselItem" data-arg="${index}"
+        aria-label="${attr(`Remove carousel item ${index + 2}`)}">Remove</button>
+    </li>`).join("");
+  host.innerHTML=`<section class="carousel-panel" aria-label="Instagram carousel">
+    <h4>Instagram carousel</h4>
+    <p class="carousel-note">Add up to ${CAROUSEL_MAX_ITEMS} images or videos and Instagram
+      posts them as one swipeable carousel. <strong>Other networks post the first item
+      only.</strong></p>
+    ${extras.length ? `<ol class="carousel-list">
+      <li class="carousel-item cover"><span class="carousel-index">1</span>
+        <span class="carousel-cover-note">The image or video above</span></li>
+      ${rows}</ol>` : ""}
+    ${extras.length < CAROUSEL_MAX_EXTRAS
+      ? `<button class="btn ghost mini" data-action="addCarouselItem">➕ Add another image/video —
+          Instagram carousel</button>`
+      : `<p class="carousel-note">That is all ${CAROUSEL_MAX_ITEMS} items Instagram allows.</p>`}
+    ${extras.length ? `<p class="carousel-count">${total} of ${CAROUSEL_MAX_ITEMS} items</p>` : ""}
+  </section>`;
+  for(const box of host.querySelectorAll("input[data-carousel]")) paintCarouselThumb(box);
+}
+/** One row's thumbnail. Built with createElement and a safeUrl()'d src — never
+    innerHTML — so a hostile URL is at worst a broken image, and a javascript:
+    URL is not even that. Painted in place so typing never loses the caret. */
+function paintCarouselThumb(box){
+  const thumb=box.closest(".carousel-item")?.querySelector(".carousel-thumb");
+  if(!thumb) return;
+  thumb.replaceChildren(); thumb.classList.remove("on");
+  const src=safeUrl(box.value.trim());
+  if(!src) return;
+  const video=VIDEO_URL.test(src);
+  const media=document.createElement(video?"video":"img");
+  media.src=src; media.alt=video?"Carousel video preview":"Carousel image preview";
+  if(video){ media.controls=true; media.playsInline=true; media.preload="metadata"; }
+  thumb.append(media); thumb.classList.add("on");
+}
+/** One item URL changed: remember it and repaint just that thumbnail. The panel
+    is deliberately NOT rebuilt — that would drop the caret mid-URL. */
+export function syncCarouselItem(el){
+  const extras=[...composerCarousel];
+  extras[Number(el.dataset.carousel)]=el.value;
+  setComposerCarousel(extras);
+  paintCarouselThumb(el);
+}
+export function addCarouselItem(){
+  const extras=currentCarousel();
+  if(extras.length >= CAROUSEL_MAX_EXTRAS)
+    return toast(`Instagram carousels hold up to ${CAROUSEL_MAX_ITEMS} items`);
+  setComposerCarousel([...extras, ""]);
+  paintCarousel();
+  document.getElementById(`pm_carousel_${extras.length}`)?.focus?.();
+}
+export function removeCarouselItem(index){
+  const extras=currentCarousel();
+  const at=Number(index);
+  if(!Number.isInteger(at) || at < 0 || at >= extras.length) return;
+  extras.splice(at, 1);
+  setComposerCarousel(extras);
+  paintCarousel();
+}
+/** The array this composer would save, or null when there is no carousel.
+ *  Deliberately not "whatever the panel happens to hold": a post that does not
+ *  publish to Instagram has no carousel, and a post with no extras is an
+ *  ordinary single-media post — storing `[media_url]` would be the same post
+ *  said twice, which posts_media_urls_valid refuses outright. */
+function carouselForSave(nets, mediaUrl){
+  if(!nets.includes("instagram") || !mediaUrl) return null;
+  const extras=currentCarousel().map(url => String(url||"").trim()).filter(Boolean);
+  return extras.length ? [mediaUrl, ...extras] : null;
+}
+/** Why this post's carousel cannot be saved, as a sentence — or "" when it can.
+ *  The composer caps the list at ten and only offers https URLs, so both of
+ *  these are about a post that reached here another way: an imported backup, a
+ *  duplicated post, a cached workspace. */
+export function carouselBlocked(mediaUrls){
+  if(!Array.isArray(mediaUrls) || !mediaUrls.length) return "";
+  if(mediaUrls.length > CAROUSEL_MAX_ITEMS)
+    return `Instagram carousels hold up to ${CAROUSEL_MAX_ITEMS} items — this one has ${mediaUrls.length}. Remove some.`;
+  const bad=mediaUrls.findIndex(url => {
+    try{ return new URL(url).protocol!=="https:"; }catch(e){ return true; }
+  });
+  return bad < 0 ? ""
+    : `Carousel item ${bad + 1} needs a valid https:// URL`;
 }
 
 /* =============== TikTok Direct Post options ===============
@@ -1011,7 +1174,12 @@ export function readPostForm(){
      always present: null is the meaningful value for a post that does not
      target TikTok, and writing it is how deselecting TikTok clears them. */
   const tiktok_options=tiktokOptionsForSave(nets);
-  return {text,nets,date,time,status,media_url,variants,tiktok_options,
+  /* The Instagram carousel, on the same terms as TikTok's choices: always
+     present, because null is the meaningful value for a post with no carousel,
+     and writing it is how deselecting Instagram — or removing the last extra —
+     clears one. */
+  const media_urls=carouselForSave(nets, media_url);
+  return {text,nets,date,time,status,media_url,media_urls,variants,tiktok_options,
     ...(noteBox ? {approval_note:noteBox.value.trim()} : {})};
 }
 export function showMediaPreview(url,contentType=""){
@@ -1074,7 +1242,8 @@ export async function uploadPostMedia(input){
     input.value="";
   }
 }
-export function validatePostForm({text,nets,date,time,media_url,variants={},tiktok_options=null}){
+export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
+                                  variants={},tiktok_options=null}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
   if(!date || !time) return toast("Choose a date and time");
@@ -1120,6 +1289,12 @@ export function validatePostForm({text,nets,date,time,media_url,variants={},tikt
      defence. */
   const tiktokProblem=tiktokBlocked(nets, tiktok_options);
   if(tiktokProblem) return toast(tiktokProblem);
+  /* The carousel's own two rules, refused here rather than trimmed: an item
+     Instagram could not fetch, and an eleventh item. posts_media_urls_valid
+     refuses the row and instagramCarouselItems() refuses the publish, so this is
+     the sentence the customer gets rather than the only line of defence. */
+  const carouselProblem=carouselBlocked(media_urls);
+  if(carouselProblem) return toast(carouselProblem);
   return true;
 }
 export function savePost(id){

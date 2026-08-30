@@ -169,6 +169,14 @@ export async function publishPost(
            them, and the adapter is handed a finished value rather than a post.
            Adapters that do not publish to TikTok ignore the field. */
         tiktokOptions: post.tiktok_options ?? null,
+        /* The Instagram carousel, threaded through for the same reason and by
+           the same route as `tiktok_options`: the claim RPCs return `p.*`, so
+           the column arrives on the post row with no migration to any of them.
+           `media_url` is unchanged and is still what every other adapter
+           publishes — the first carousel item and `media_url` are the same URL,
+           which is what makes "other networks post the first item only" true
+           rather than merely stated. */
+        mediaUrls: post.media_urls ?? null,
       });
       await mark({ status: "published", connection_id: conn.id, attempts: currentAttempt,
         remote_id: out.remote_id, remote_url: out.remote_url ?? null,

@@ -6,8 +6,8 @@ import { todayStr, uid } from "./util.js";
 import {
   AI_ASSIST_IDLE, COMPOSER_TIKTOK_IDLE, composerBaseline, db, mediaUploadActive,
   previousModalFocus, setAiAssist, setAnalyticsNet, setComposerBaseline,
-  setComposerTikTok, setComposerVariantFocus, setComposerVariants,
-  setPreviousModalFocus, setSelectedMsg, setView, view,
+  setComposerCarousel, setComposerTikTok, setComposerVariantFocus,
+  setComposerVariants, setPreviousModalFocus, setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
 import {
@@ -36,6 +36,7 @@ export function openModal(html){
   setComposerVariants({});                     // …and no per-network copy either
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);     // …and no other creator's account
+  setComposerCarousel([]);                     // …and no other post's carousel
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
   modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
@@ -52,6 +53,7 @@ export function closeModal(){
   setComposerVariants({});
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);
+  setComposerCarousel([]);
   previousModalFocus?.focus?.(); setPreviousModalFocus(null);
 }
 /* The composer's values as it opened, so a stray Escape or backdrop click

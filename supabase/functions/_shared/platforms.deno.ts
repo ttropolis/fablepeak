@@ -3,6 +3,8 @@ import {
   effectiveText,
   configuredPlatforms,
   exchangeAuthorizationCode,
+  INSTAGRAM_CAROUSEL_MAX,
+  instagramCarouselItems,
   platformConnectionEnabled,
   ProviderRequestError,
   PublishOutcomeUnknownError,
@@ -131,6 +133,307 @@ Deno.test("Instagram marks a successful final response without a media ID as unk
       throw new Error(`Expected unknown Instagram outcome, received ${String(caught)}`);
     }
   } finally { globalThis.fetch = originalFetch; }
+});
+
+/* ---------------------------------------------------------- Instagram carousels
+ *
+ * ADR 0005 publishing depth. A carousel is the single-media flow with one layer
+ * in front of it: an item container per child, then a CAROUSEL container that
+ * names them, then the one publish. Everything below is asserted as a *request
+ * sequence*, because the two things that can go wrong here are ordering (publish
+ * before a child is ready) and blast radius (a rejected child leaving a
+ * half-published post).
+ *
+ * The composer half — the affordance, the ten-item cap, what is stored — is in
+ * test/behaviour/carousel.test.mjs.
+ */
+interface RecordedCall { method: string; url: string; body: Record<string, string> | null }
+
+/** Answers the whole Instagram carousel flow, recording every request. Item
+ *  containers are numbered in creation order; `failItem` rejects the Nth one
+ *  with an explicit 400 whose body would be forwarded if anything forwarded it. */
+function instagramFetch(calls: RecordedCall[], { failItem = 0 } = {}) {
+  let created = 0;
+  return (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const body = init?.body
+      ? Object.fromEntries(new URLSearchParams(String(init.body))) as Record<string, string>
+      : null;
+    calls.push({ method: init?.method ?? "GET", url, body });
+    if (url.endsWith("/media")) {
+      if (body?.media_type === "CAROUSEL") return Promise.resolve(json({ id: "carousel-1" }));
+      created++;
+      if (created === failItem) {
+        return Promise.resolve(json({
+          error: { message: "The image is not a valid aspect ratio", code: 36003 },
+        }, 400));
+      }
+      return Promise.resolve(json({ id: `item-${created}` }));
+    }
+    if (url.includes("?fields=status_code")) {
+      return Promise.resolve(json({ status_code: "FINISHED" }));
+    }
+    if (url.endsWith("/media_publish")) return Promise.resolve(json({ id: "post-9" }));
+    if (url.includes("?fields=permalink")) {
+      return Promise.resolve(json({ permalink: "https://instagram.com/p/post-9/" }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+}
+/** Which container id a status poll asked about, or "" for any other request. */
+const polled = (call: RecordedCall) =>
+  call.url.includes("?fields=status_code") ? call.url.split("/").at(-1)!.split("?")[0] : "";
+
+const CAROUSEL = [
+  "https://cdn.example.com/1.jpg",
+  "https://cdn.example.com/2.jpg",
+  "https://cdn.example.com/3.jpg",
+];
+
+Deno.test("Instagram publishes a carousel as N item containers, one CAROUSEL, one publish", async () => {
+  const calls: RecordedCall[] = [];
+  globalThis.fetch = instagramFetch(calls);
+  try {
+    const result = await ADAPTERS.instagram.publish({
+      text: "Six shots from the shoot",
+      mediaUrl: CAROUSEL[0],
+      mediaUrls: CAROUSEL,
+      accessToken: "token",
+      connection: { external_id: "account-1", meta: {} },
+    });
+    if (result.remote_id !== "post-9") throw new Error("Expected the published carousel ID");
+    if (result.remote_url !== "https://instagram.com/p/post-9/") {
+      throw new Error("Expected the permalink lookup to survive the carousel path");
+    }
+
+    const containers = calls.filter((call) => call.url.endsWith("/media"));
+    if (containers.length !== CAROUSEL.length + 1) {
+      throw new Error(`Expected ${CAROUSEL.length} item containers plus one CAROUSEL, got ` +
+        `${containers.length}`);
+    }
+    // Each child names its own URL, says it is a child, and carries no caption
+    // of its own — the caption belongs to the carousel, once.
+    for (const [index, container] of containers.slice(0, -1).entries()) {
+      const expected = {
+        image_url: CAROUSEL[index], is_carousel_item: "true", access_token: "token",
+      };
+      if (JSON.stringify(container.body) !== JSON.stringify(expected)) {
+        throw new Error(`item ${index + 1} sent ${JSON.stringify(container.body)}`);
+      }
+      if (container.method !== "POST") throw new Error("item containers are POSTs");
+    }
+    const carousel = containers.at(-1)!;
+    if (JSON.stringify(carousel.body) !== JSON.stringify({
+      media_type: "CAROUSEL", children: "item-1,item-2,item-3",
+      caption: "Six shots from the shoot", access_token: "token",
+    })) throw new Error(`carousel container sent ${JSON.stringify(carousel.body)}`);
+
+    // Ordering is the whole point: every child is FINISHED before the carousel
+    // names it, and the carousel is FINISHED before anything is published.
+    const order = calls.map((call) =>
+      polled(call) ? `poll:${polled(call)}`
+      : call.url.endsWith("/media_publish") ? "publish"
+      : call.url.endsWith("/media") ? (call.body?.media_type === "CAROUSEL" ? "carousel" : "item")
+      : "permalink");
+    if (order.join(" ") !== [
+      "item", "poll:item-1", "item", "poll:item-2", "item", "poll:item-3",
+      "carousel", "poll:carousel-1", "publish", "permalink",
+    ].join(" ")) throw new Error(`Unexpected request sequence: ${order.join(", ")}`);
+
+    const publish = calls.find((call) => call.url.endsWith("/media_publish"))!;
+    if (publish.body?.creation_id !== "carousel-1") {
+      throw new Error("media_publish must name the CAROUSEL container, never a child");
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a video carousel child is media_type=VIDEO, never a standalone REELS", async () => {
+  const calls: RecordedCall[] = [];
+  globalThis.fetch = instagramFetch(calls);
+  try {
+    await ADAPTERS.instagram.publish({
+      text: "Clip and stills",
+      mediaUrl: "https://cdn.example.com/1.jpg",
+      mediaUrls: ["https://cdn.example.com/1.jpg", "https://cdn.example.com/clip.mp4"],
+      accessToken: "token",
+      connection: { external_id: "account-1", meta: {} },
+    });
+    const child = calls.filter((call) => call.url.endsWith("/media"))[1];
+    if (child.body?.media_type !== "VIDEO" || child.body?.video_url !== "https://cdn.example.com/clip.mp4") {
+      throw new Error(`video child sent ${JSON.stringify(child.body)}`);
+    }
+    if (calls.some((call) => call.body?.media_type === "REELS")) {
+      throw new Error("REELS is a standalone format; Meta rejects it as a carousel child");
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("fewer than two items is the single-media path, byte for byte", async () => {
+  const runs: RecordedCall[][] = [];
+  // Absent, null, not-an-array, and a one-entry array must all produce exactly
+  // the requests that shipped before carousels existed.
+  for (const mediaUrls of [undefined, null, "https://cdn.example.com/1.jpg",
+                           ["https://cdn.example.com/1.jpg"], [""]]) {
+    const calls: RecordedCall[] = [];
+    globalThis.fetch = instagramFetch(calls);
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "One image",
+        mediaUrl: "https://cdn.example.com/1.jpg",
+        mediaUrls,
+        accessToken: "token",
+        connection: { external_id: "account-1", meta: {} },
+      });
+    } finally { globalThis.fetch = originalFetch; }
+    runs.push(calls);
+  }
+  const baseline = JSON.stringify(runs[0]);
+  if (!baseline.includes('"image_url":"https://cdn.example.com/1.jpg"') ||
+      !baseline.includes('"caption":"One image"')) {
+    throw new Error(`the single-media container changed shape: ${baseline}`);
+  }
+  if (baseline.includes("is_carousel_item") || baseline.includes("CAROUSEL")) {
+    throw new Error("a post with no carousel must not learn the carousel vocabulary");
+  }
+  for (const [index, calls] of runs.entries()) {
+    if (JSON.stringify(calls) !== baseline) {
+      throw new Error(`media_urls case ${index} diverged from the single-media path`);
+    }
+  }
+});
+
+Deno.test("one rejected carousel item publishes nothing, and reports a status, not a body", async () => {
+  const calls: RecordedCall[] = [];
+  globalThis.fetch = instagramFetch(calls, { failItem: 2 });
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "Six shots from the shoot",
+        mediaUrl: CAROUSEL[0],
+        mediaUrls: CAROUSEL,
+        accessToken: "token",
+        connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+
+    if (!(caught instanceof ProviderRequestError)) {
+      throw new Error(`Expected a ProviderRequestError, received ${String(caught)}`);
+    }
+    const message = String((caught as Error).message);
+    if (!message.includes("carousel item 2 of 3")) {
+      throw new Error(`the failure must name the item that failed: ${message}`);
+    }
+    if (!message.includes("400")) throw new Error(`the status must survive: ${message}`);
+    if (message.includes("aspect ratio") || message.includes("36003")) {
+      throw new Error(`the provider's body must not be forwarded: ${message}`);
+    }
+    if ((caught as ProviderRequestError).retryable) {
+      throw new Error("an explicit 400 is a permanent failure, not a retryable one");
+    }
+
+    // Nothing was published, and nothing even reached the point where it could
+    // have been: no CAROUSEL container, no media_publish, and no third item.
+    if (calls.some((call) => call.url.endsWith("/media_publish"))) {
+      throw new Error("a half-published carousel is the one outcome this must never produce");
+    }
+    if (calls.some((call) => call.body?.media_type === "CAROUSEL")) {
+      throw new Error("no CAROUSEL container may be created once a child has failed");
+    }
+    if (calls.filter((call) => call.url.endsWith("/media")).length !== 2) {
+      throw new Error("the run stops at the failed item rather than preparing the rest");
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a retryable item failure stays retryable, because nothing was published", async () => {
+  const calls: RecordedCall[] = [];
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ method: init?.method ?? "GET", url, body: null });
+    if (url.endsWith("/media")) return Promise.resolve(json({ error: "upstream" }, 503));
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+  try {
+    let caught: unknown;
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "Six shots", mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+        accessToken: "token", connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!(caught instanceof ProviderRequestError) || !caught.retryable) {
+      throw new Error(`Expected a retryable provider failure, received ${String(caught)}`);
+    }
+    if (caught instanceof PublishOutcomeUnknownError) {
+      throw new Error("nothing ambiguous happened: no publish request was ever made");
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("more items than Instagram allows is refused before a single request", async () => {
+  let requested = false;
+  globalThis.fetch = () => { requested = true; return Promise.resolve(json({ id: "x" })); };
+  try {
+    const tooMany = Array.from({ length: INSTAGRAM_CAROUSEL_MAX + 1 },
+      (_, index) => `https://cdn.example.com/${index}.jpg`);
+    let caught: unknown;
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "Eleven", mediaUrl: tooMany[0], mediaUrls: tooMany,
+        accessToken: "token", connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) { caught = error; }
+    if (!String((caught as Error)?.message).includes(`up to ${INSTAGRAM_CAROUSEL_MAX} items`)) {
+      throw new Error(`Expected a refusal naming the limit, received ${String(caught)}`);
+    }
+    if (requested) throw new Error("truncating to ten and publishing anyway is the wrong answer");
+  } finally { globalThis.fetch = originalFetch; }
+
+  // The resolver itself, at both edges of the range.
+  if (instagramCarouselItems(["https://a/1.jpg"]) !== null) {
+    throw new Error("one item is an ordinary post, not a carousel");
+  }
+  if (instagramCarouselItems(CAROUSEL)?.length !== 3) {
+    throw new Error("three usable items is a carousel of three");
+  }
+});
+
+Deno.test("the publish loop hands the adapter the post's carousel, and null when it has none", async () => {
+  const seen: unknown[] = [];
+  const dependencies = {
+    adapters: {
+      instagram: {
+        label: "Instagram", clientIdEnv: "INSTAGRAM_APP_ID", supportsMedia: true,
+        publish: async (input: any) => { seen.push(input.mediaUrls); return { remote_id: "ig-1" }; },
+      },
+    },
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-1", status: "active", external_id: "account-1", meta: {},
+    },
+    sbUpsert: async (_table: string, row: any) => row,
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-31T00:00:00.000Z",
+  } as any;
+
+  await publishPost({
+    id: "post-carousel", brand_id: "brand-1", networks: ["instagram"],
+    text: "Six shots", media_url: CAROUSEL[0], media_urls: CAROUSEL,
+  }, dependencies);
+  await publishPost({
+    id: "post-plain", brand_id: "brand-1", networks: ["instagram"],
+    text: "One shot", media_url: CAROUSEL[0],
+  }, dependencies);
+
+  if (JSON.stringify(seen[0]) !== JSON.stringify(CAROUSEL)) {
+    throw new Error(`the carousel must reach the adapter intact: ${JSON.stringify(seen[0])}`);
+  }
+  if (seen[1] !== null) {
+    throw new Error("a post with no media_urls column must hand the adapter null, not undefined");
+  }
 });
 
 Deno.test("Facebook marks transport loss on the final publish request as unknown", async () => {
