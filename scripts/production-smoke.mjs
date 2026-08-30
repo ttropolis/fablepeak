@@ -94,7 +94,14 @@ await check("OAuth discovery reports the three launch platforms", async () => {
   });
   assert.equal(response.status, 200);
   const platforms = (await response.json()).platforms?.slice().sort();
-  assert.deepEqual(platforms, ["facebook", "instagram", "youtube"]);
+  // While the TikTok app review runs, the TIKTOK_SANDBOX server flag
+  // deliberately adds tiktok to discovery. That one extra is allowed; any
+  // other frozen platform appearing here is still an accidental exposure.
+  const allowed = ["facebook", "instagram", "tiktok", "youtube"];
+  assert.deepEqual(platforms.filter(p => p !== "tiktok"),
+    ["facebook", "instagram", "youtube"]);
+  assert.ok(platforms.every(p => allowed.includes(p)),
+    `unexpected platform in discovery: ${platforms.join(",")}`);
 });
 
 for (const [fn, body, expected] of [
