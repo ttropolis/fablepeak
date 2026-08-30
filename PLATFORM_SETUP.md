@@ -329,14 +329,21 @@ product/scope explanation text. Domain verification for `fablepeak.com` is a
 DNS TXT record at Hostinger
 (`tiktok-developers-site-verification=ZNKudTrEO1iJqk3Cx1tu3g0LPmX0rmVP`, added
 2026-08-30); TikTok's verify re-check clears the three "URL is not verified"
-errors once their resolvers see it. The draft cannot be **saved** until every
-form error clears — the last one is the mandatory **demo video** showing the
-end-to-end TikTok flow. That compliance UX (creator-info-driven privacy picker
-with no default, comment/duet/stitch toggles, duration validation, consent,
-publish-status polling) is now built; the demo video can be recorded by running
-a sandbox deployment with `TIKTOK_SANDBOX=1` and the sandbox client
-credentials. If the browser draft is lost, re-entering the fields above takes
-minutes; the app id and credentials persist server-side.
+errors once their resolvers see it.
+
+**Submitted for app review 2026-08-30** ("First submission: Login Kit and
+Content Posting API (Direct Post)"), with a demo video recorded from a real
+end-to-end Sandbox run: sandbox **FablePeak Demo** (id `7679670342440257544`,
+its own `sbaw…` client key/secret, target user shilohcreekpod — set to a
+private account, because unaudited apps may only post to private accounts).
+The video shows the consent screen, the creator-info compliance panel,
+scheduling, and a genuine PUBLISH_COMPLETE. `fablepeak.com` is domain-verified
+on both the production app and the sandbox (two TXT records at Hostinger).
+While the audit runs, sandbox testing uses `TIKTOK_SANDBOX=1` with the sandbox
+credentials in the secrets below; after approval, swap in the production
+credentials, remove `TIKTOK_SANDBOX`, and enable production behind the
+provider-freeze gate. If the portal form is ever blanked again, re-entering
+the fields above takes minutes; app id and credentials persist server-side.
 
 ```
 TIKTOK_CLIENT_KEY=<...>
