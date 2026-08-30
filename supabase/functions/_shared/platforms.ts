@@ -1453,7 +1453,14 @@ export async function exchangeToken(
   const r = await fetch(a.tokenUrl, { method: "POST", headers, body: new URLSearchParams(body) });
   const txt = await r.text();
   if (!r.ok) throw new ProviderRequestError(`token exchange (${a.id})`, r.status, txt);
-  return JSON.parse(txt);
+  const parsed = JSON.parse(txt);
+  // TikTok's v2 token endpoint reports failures in an HTTP 200 body; treating
+  // that as success hands "Bearer undefined" to the next request, which then
+  // fails somewhere misleading. Surface the exchange error where it happened.
+  if (!parsed?.access_token) {
+    throw new ProviderRequestError(`token exchange (${a.id})`, r.status, txt);
+  }
+  return parsed;
 }
 
 /** Exchange a provider callback code while hiding provider-specific token
