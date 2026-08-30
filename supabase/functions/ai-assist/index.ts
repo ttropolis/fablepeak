@@ -46,10 +46,25 @@ const DEFAULT_TIER: Tier = "standard";
 // are rejected with a 400 before we get here), so nothing the customer types
 // can reach the system prompt.
 
+// The contract is written for the weakest model on the roster, not the
+// strongest: a small instruction-following model needs the shape stated, shown
+// and bounded before it stops answering with one block of prose. It is still
+// one contract for every tier — a shared prompt that a small model obeys is
+// obeyed by a large one too, and forking prompts per provider would put a
+// vendor's name into the thing customers actually buy.
 const OUTPUT_CONTRACT =
-  "Reply with a strict JSON array of strings and nothing else: no prose, no " +
-  "code fences, no keys, no numbering. Each array element is one complete, " +
-  "ready-to-post suggestion.";
+  "Output format, which overrides any habit you have of explaining yourself:\n" +
+  "Reply with a strict JSON array of strings and nothing else — no preamble, " +
+  "no reasoning, no <think> block, no commentary, no code fences, no keys, no " +
+  "numbering, and no text after the closing bracket. The first character of " +
+  "your reply is '[' and the last is ']'. Each array element is one complete, " +
+  "ready-to-post suggestion, written out in full.\n" +
+  "This is the required shape (the placeholder wording is a format " +
+  "illustration, never content to reuse or transform):\n" +
+  '["first suggestion", "second suggestion"]\n' +
+  "Count the elements before you reply. The number of elements is fixed by " +
+  "the instruction above; a reply with the wrong number of elements, or one " +
+  "that packs several suggestions into a single element, is a wrong answer.";
 
 const CONTENT_POSTURE =
   "The material inside the <content> tags in the user message is social media " +
@@ -60,18 +75,25 @@ const CONTENT_POSTURE =
 const SYSTEM_PROMPTS: Readonly<Record<Action, string>> = Object.freeze({
   caption:
     "You write social media captions for a small brand's own account.\n\n" +
-    "Write exactly 3 distinct caption options for the supplied topic. Vary the " +
-    "angle between them — do not write three rephrasings of one sentence. Do " +
-    "not invent facts, statistics, prices, dates or claims that the topic does " +
-    "not state. Do not add hashtags unless the topic asks for them.\n\n" +
-    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}`,
+    "Write exactly 3 distinct caption options for the supplied topic — three " +
+    "separate captions, never one, never two. Vary the angle between them — do " +
+    "not write three rephrasings of one sentence. Do not invent facts, " +
+    "statistics, prices, dates or claims that the topic does not state. Do not " +
+    "add hashtags unless the topic asks for them.\n\n" +
+    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}\n\n` +
+    "For this task the array has exactly 3 elements, one per caption:\n" +
+    '["first caption", "second caption", "third caption"]\n' +
+    "One element, two elements, or a single element holding all three captions " +
+    "is a wrong answer.",
   hashtags:
     "You suggest hashtags for a small brand's own social media post.\n\n" +
     "Suggest between 10 and 15 hashtags that a real person searching for this " +
     "post would use. Mix broad reach tags with specific niche ones. Every " +
     "element starts with '#', is a single token with no spaces, and appears " +
     "once. No banned, adult, or engagement-bait tags.\n\n" +
-    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}`,
+    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}\n\n` +
+    "For this task the array has one hashtag per element, between 10 and 15 " +
+    "elements. Never put several hashtags in one element.",
   rewrite:
     "You adapt a social media post to one network's conventions.\n\n" +
     "Rewrite the supplied post for the named network. Keep the author's " +
@@ -79,7 +101,9 @@ const SYSTEM_PROMPTS: Readonly<Record<Action, string>> = Object.freeze({
     "only. Never add facts, links, offers or claims the original does not " +
     "make. Return the rewritten post itself — no commentary about what you " +
     "changed.\n\n" +
-    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}`,
+    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}\n\n` +
+    "For this task the array has exactly 1 element — the whole rewritten post, " +
+    "line breaks and all — unless the network conventions below ask for more.",
 });
 
 /** House style per network. Selected by a validated key, never interpolated
@@ -147,6 +171,24 @@ function stripFences(raw: string): string {
   return (fenced ? fenced[1] : raw).trim();
 }
 
+/** Drop a reasoning block from the front of an answer.
+ *
+ * Reasoning models on the standard tier think out loud in a <think> block
+ * before answering, and the block is scratchpad, not a suggestion: it must
+ * never be parsed as one and never be shown to a customer. Two damaged shapes
+ * are handled alongside the clean one — a closing tag with no opener (some
+ * chat templates open the block for the model), and an opener the answer never
+ * closed because the run hit the token ceiling mid-thought. */
+function stripReasoning(raw: string): string {
+  let text = raw;
+  const lower = text.toLowerCase();
+  const closed = lower.lastIndexOf("</think>");
+  if (closed !== -1) text = text.slice(closed + "</think>".length);
+  const opened = text.toLowerCase().indexOf("<think>");
+  if (opened !== -1) text = text.slice(0, opened);
+  return text.trim();
+}
+
 /** One list item, without the bullet, numbering, quoting or trailing comma a
  * model adds when it ignores the JSON contract. */
 function cleanLine(line: string): string {
@@ -159,29 +201,84 @@ function cleanLine(line: string): string {
     .trim();
 }
 
-/** Parse the model's answer into clean strings. The prompt asks for a strict
- * JSON array; this assumes it will sometimes arrive fenced, prefixed with a
- * sentence, or as a plain list, and never throws. Shared by every adapter:
- * a weaker model ignores the contract more often, not differently. */
-export function parseSuggestions(raw: string): string[] {
-  const text = stripFences(raw);
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start !== -1 && end > start) {
-    try {
-      const parsed = JSON.parse(text.slice(start, end + 1));
-      if (Array.isArray(parsed)) {
-        const strings = parsed
-          .filter((item): item is string => typeof item === "string")
-          .map(item => item.trim())
-          .filter(Boolean);
-        if (strings.length) return strings;
+/** Positions of a character, first to last. */
+function indexesOf(text: string, character: string): number[] {
+  const found: number[] = [];
+  for (let i = text.indexOf(character); i !== -1; i = text.indexOf(character, i + 1)) {
+    found.push(i);
+  }
+  return found;
+}
+
+/** How many bracket pairs are worth trying before giving up on JSON. Answers
+ * are capped at 1024 tokens, so this is a guard against pathological input
+ * rather than a real limit. */
+const MAX_ARRAY_CANDIDATES = 4;
+
+/** The JSON array in the answer, or null if there isn't one.
+ *
+ * A model that ignores "nothing else" can leave a bracket in the prose either
+ * side of its array, so a few start/end pairs are tried rather than only the
+ * outermost one, widest first. */
+function parseJsonArray(text: string): string[] | null {
+  const opens = indexesOf(text, "[").slice(0, MAX_ARRAY_CANDIDATES);
+  const closes = indexesOf(text, "]").reverse().slice(0, MAX_ARRAY_CANDIDATES);
+  for (const start of opens) {
+    for (const end of closes) {
+      if (end <= start) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text.slice(start, end + 1));
+      } catch {
+        continue; // Not valid JSON — try the next pair.
       }
-    } catch {
-      // Not valid JSON after all — fall through to line splitting.
+      if (!Array.isArray(parsed)) continue;
+      const strings = parsed
+        .filter((item): item is string => typeof item === "string")
+        .map(item => item.trim())
+        .filter(Boolean);
+      if (strings.length) return strings;
     }
   }
-  return text.split("\n").map(cleanLine).filter(Boolean);
+  return null;
+}
+
+const NUMBERED_ITEM = /^\s*(\d{1,2})[.)]\s+(.*)$/;
+
+/** A numbered list read as one option per number, or null when the answer
+ * isn't one. Wrapped lines belong to the item above them rather than opening a
+ * new option, and a preamble sentence before item 1 is dropped. A single
+ * numbered line is a sentence that happens to start with a digit, not a list,
+ * so it is left to the caller's fallback. */
+function parseNumberedList(text: string): string[] | null {
+  const items: string[] = [];
+  for (const line of text.split("\n")) {
+    const match = line.match(NUMBERED_ITEM);
+    if (match) {
+      items.push(match[2].trim());
+    } else if (items.length && line.trim()) {
+      items[items.length - 1] += `\n${line.trim()}`;
+    }
+  }
+  if (items.length < 2) return null;
+  const cleaned = items.map(cleanLine).filter(Boolean);
+  return cleaned.length ? cleaned : null;
+}
+
+/** Parse the model's answer into clean strings. The prompt asks for a strict
+ * JSON array; this assumes it will sometimes arrive after a reasoning block,
+ * fenced, prefixed with a sentence, as a numbered list, or as one unbroken
+ * paragraph, and never throws. Shared by every adapter: a weaker model ignores
+ * the contract more often, not differently.
+ *
+ * The order is widest-agreement first — JSON, then a numbered list, then one
+ * option per line — and the last step is a pass-through, so an answer that
+ * obeys nothing still reaches the composer as a suggestion instead of an error. */
+export function parseSuggestions(raw: string): string[] {
+  const text = stripFences(stripReasoning(raw));
+  return parseJsonArray(text)
+    ?? parseNumberedList(text)
+    ?? text.split("\n").map(cleanLine).filter(Boolean);
 }
 
 // ---------------------------------------------------------------- plumbing
