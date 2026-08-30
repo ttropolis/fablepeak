@@ -5,10 +5,11 @@ import { NETWORKS, SCHEDULE_TZ } from "./constants.js";
 import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
-  AI_ASSIST_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist, approvalFilter, calCursor,
-  composerCarousel, composerTikTok, composerVariantFocus, composerVariants,
-  mediaUploadActive, setAiAssist, setApprovalFilter, setComposerBaseline,
-  setComposerCarousel, setComposerTikTok, setComposerVariantFocus,
+  AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist,
+  approvalFilter, calCursor, composerCarousel, composerInstagram, composerTikTok,
+  composerVariantFocus, composerVariants, mediaUploadActive, setAiAssist,
+  setApprovalFilter, setComposerBaseline, setComposerCarousel,
+  setComposerInstagram, setComposerTikTok, setComposerVariantFocus,
   setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
@@ -225,6 +226,7 @@ export function openPostModal(id, dateStr){
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${attr(p?.media_url||"")}" ${locked?"disabled":""} data-change="showMediaPreview">
     <div class="media-preview" id="pm_media_preview"></div>
     ${carouselHost(locked)}
+    ${instagramPanelHost(locked)}
     ${liveMode() && !locked ? `<div class="upload-actions">
       <label class="filebtn ghost">📱 Choose photo or video
         <input type="file" id="pm_upload" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif,video/mp4,video/quicktime,video/webm,.m4v"
@@ -282,9 +284,15 @@ export function openPostModal(id, dateStr){
      live in composer state — item one is `media_url`, which #pm_media already
      holds, and keeping one copy of it is what stops the two drifting apart. */
   setComposerCarousel(storedCarouselExtras(p));
+  /* A post that already recorded Instagram choices reopens showing them. Unlike
+     TikTok's audience there is a legitimate default here — "Instagram default",
+     which is what an absent share_to_feed has always meant — so a post with no
+     stored options opens on it rather than on nothing. */
+  setComposerInstagram({...COMPOSER_INSTAGRAM_IDLE, ...readStoredInstagramOptions(p)});
   if(p?.media_url) showMediaPreview(p.media_url);
   renderVariantSections();                     // #pm_variants was built empty
   renderCarousel();                            // …and so was #pm_carousel
+  renderInstagramPanel();                      // …and so was #pm_instagram
   renderTikTokPanel();                         // …and so was #pm_tiktok
   syncComposer();                              // the panels were built before #pm_text existed
   setComposerBaseline(composerSnapshot());     // arms the unsaved-changes guard
@@ -652,6 +660,7 @@ export function addCarouselItem(){
     return toast(`Instagram carousels hold up to ${CAROUSEL_MAX_ITEMS} items`);
   setComposerCarousel([...extras, ""]);
   paintCarousel();
+  renderInstagramPanel();                        // alt text is for a single image
   document.getElementById(`pm_carousel_${extras.length}`)?.focus?.();
 }
 export function removeCarouselItem(index){
@@ -661,6 +670,7 @@ export function removeCarouselItem(index){
   extras.splice(at, 1);
   setComposerCarousel(extras);
   paintCarousel();
+  renderInstagramPanel();                        // …and removing the last extra restores it
 }
 /** The array this composer would save, or null when there is no carousel.
  *  Deliberately not "whatever the panel happens to hold": a post that does not
@@ -685,6 +695,166 @@ export function carouselBlocked(mediaUrls){
   });
   return bad < 0 ? ""
     : `Carousel item ${bad + 1} needs a valid https:// URL`;
+}
+
+/* =============== per-post Instagram options (ADR 0005 publishing depth) =====
+
+   Two choices Instagram gives the customer that FablePeak has so far made for
+   them by omission, and neither costs a Meta permission:
+   `instagram_business_content_publish` already covers both parameters.
+
+   Where does this video appear? FablePeak forces every Instagram video to
+   `media_type=REELS`, so today a Reel lands wherever Instagram's own default puts
+   it. That default is the one option preselected here, and it is preselected
+   precisely *because* it is today's behaviour — picking "Reel + Home feed" or
+   "Reel only" for somebody would change what their existing posts do.
+
+   What does a screen reader say about this image? Instagram writes alt text
+   automatically when none is supplied. A customer describing their own picture
+   will do it better, and accessibility is one of ADR 0001's release gates.
+
+   The panel follows the carousel and the TikTok form exactly: one host div
+   rendered empty into the composer, filled by a function the network picker and
+   the media field re-run, and nothing at all in the DOM when Instagram is not a
+   selected network. Nothing here contacts any network in any mode — the choices
+   are client state until publish time — so a local or demo workspace composes
+   them for real and says only that the posting itself is simulated.
+
+   v1 scope, stated where it is felt: alt text is for a *single* image. Instagram
+   takes `alt_text` per container, so a carousel would need one description per
+   item; the panel says so instead of silently describing only the cover. */
+
+/* Instagram's own alt-text ceiling, restated here because this is where the
+   customer is typing. posts_instagram_options_valid states it where the data
+   lands, and INSTAGRAM_ALT_TEXT_MAX in _shared/platforms.ts where Meta is called. */
+export const INSTAGRAM_ALT_MAX = 1000;
+/* Three answers to one question, and the third is the absence of an answer.
+   "" is stored as null and sends no parameter at all, which is what every
+   Instagram video published before this feature did. */
+export const INSTAGRAM_SHARE_CHOICES = [
+  ["", "Instagram default",
+    "Whatever Instagram already does for this account. No preference is sent."],
+  ["true", "Reel + Home feed", "The Reel also appears on your profile grid."],
+  ["false", "Reel only", "The Reel stays on the Reels tab, off your profile grid."],
+];
+/** The stored options of the post being edited, keys we know only. */
+function readStoredInstagramOptions(p){
+  const stored=p?.instagram_options;
+  if(!stored || typeof stored!=="object" || Array.isArray(stored)) return {};
+  const out={};
+  if(typeof stored.share_to_feed==="boolean") out.share_to_feed=stored.share_to_feed;
+  if(typeof stored.alt_text==="string") out.alt_text=stored.alt_text;
+  return out;
+}
+/* Rendered empty, filled by renderInstagramPanel() — the carousel pattern.
+   Absent for a locked post: a delivered Reel has no placement left to choose.
+   It sits below the media field rather than up with the per-network copy because
+   both choices are *about the media*: which one is offered depends on whether
+   that field holds a video or an image. */
+function instagramPanelHost(locked){
+  return locked ? "" : `<div class="instagram" id="pm_instagram"></div>`;
+}
+/** What the media field holds right now, as far as this panel cares:
+    "video", "carousel" (an image with extras, which alt text does not cover in
+    v1), "image", or "" when there is nothing to describe yet. */
+function instagramMediaKind(){
+  const url=document.getElementById("pm_media")?.value.trim() || "";
+  if(!url) return "";
+  if(VIDEO_URL.test(url)) return "video";
+  return currentCarousel().some(item => String(item||"").trim()) ? "carousel" : "image";
+}
+/** The panel, rebuilt for the currently selected networks and media. */
+export function renderInstagramPanel(){
+  const host=document.getElementById("pm_instagram");
+  if(!host) return;
+  if(!instagramSelected()){ host.innerHTML=""; return; }
+  const kind=instagramMediaKind();
+  if(!kind){ host.innerHTML=""; return; }
+  // A rebuild would drop the caret out of whichever control was in use.
+  const focused=document.activeElement?.id || "";
+  host.innerHTML=instagramPanelInner(kind);
+  if(focused) document.getElementById(focused)?.focus?.();
+  paintInstagramAltCount();
+}
+function instagramPanelInner(kind){
+  const shell=body => `<section class="instagram-panel" aria-label="Instagram options">
+    <h4>Instagram</h4>
+    ${liveMode() ? "" : `<p class="instagram-note"><strong>Simulated — posting to Instagram
+      needs a cloud workspace and a connected Instagram account.</strong> These controls
+      behave exactly as the real ones do; nothing here contacts Instagram.</p>`}
+    ${body}</section>`;
+  if(kind==="video"){
+    const chosen = composerInstagram.share_to_feed===null ? "" : String(composerInstagram.share_to_feed);
+    return shell(`<fieldset class="instagram-where">
+      <legend class="f">Where does this video appear?</legend>
+      ${INSTAGRAM_SHARE_CHOICES.map(([value,label,why],index) =>
+        `<label class="instagram-choice">
+          <input type="radio" name="pm_ig_share" id="pm_ig_share_${index}"
+            value="${attr(value)}" ${chosen===value?"checked":""}
+            data-change="instagramOption" data-arg="share_to_feed">
+          ${esc(label)}<small class="netreason">${esc(why)}</small></label>`).join("")}
+    </fieldset>`);
+  }
+  if(kind==="carousel"){
+    return shell(`<p class="instagram-note">Alt text describes one image. A carousel needs a
+      description per item, so FablePeak does not send alt text for carousels yet — Instagram
+      writes its own.</p>`);
+  }
+  return shell(`<label class="f" for="pm_ig_alt">Alt text <span
+      style="text-transform:none;font-weight:400">— optional</span></label>
+    <input type="text" id="pm_ig_alt" data-input="syncInstagramAlt" data-change="syncInstagramAlt"
+      placeholder="Describe this image for people using a screen reader"
+      aria-describedby="pm_ig_alt_count" value="${attr(composerInstagram.alt_text)}">
+    <div class="charcount" id="pm_ig_alt_count" aria-live="polite"></div>
+    <p class="instagram-note">Leave it empty and Instagram writes its own description.</p>`);
+}
+function paintInstagramAltCount(){
+  paintCount(document.getElementById("pm_ig_alt_count"),
+    composerInstagram.alt_text.length, INSTAGRAM_ALT_MAX);
+}
+/** The Reel placement changed. "" is the absence of a preference and is stored
+    as null, never as false — false is "keep this Reel off the profile grid",
+    which is a different instruction. */
+export function setInstagramOption(el){
+  if(el.dataset.arg!=="share_to_feed") return;
+  const value=el.value;
+  setComposerInstagram({...composerInstagram,
+    share_to_feed: value==="" ? null : value==="true"});
+  syncComposer();
+}
+/** Alt text changed: remember it and repaint its counter. The panel is
+    deliberately NOT rebuilt — that would drop the caret mid-sentence. */
+export function syncInstagramAlt(el){
+  setComposerInstagram({...composerInstagram, alt_text:el.value});
+  paintInstagramAltCount();
+  syncComposer();
+}
+/** The options this composer would save, or null when there are none.
+ *  Deliberately not "whatever the panel happens to hold": a post that does not
+ *  publish to Instagram has no Instagram choices, a placement belongs only to a
+ *  video, and alt text belongs only to a single image — so each key is written
+ *  only when the question it answers was actually on screen. An object with no
+ *  keys is null, because posts_instagram_options_valid refuses `{}` outright:
+ *  "no options" already has a spelling and it is NULL. */
+function instagramOptionsForSave(nets, mediaUrl, mediaUrls){
+  if(!nets.includes("instagram") || !mediaUrl) return null;
+  const out={};
+  const video=VIDEO_URL.test(mediaUrl);
+  if(video && composerInstagram.share_to_feed!==null)
+    out.share_to_feed=composerInstagram.share_to_feed;
+  const alt=String(composerInstagram.alt_text||"").trim();
+  if(!video && !mediaUrls && alt) out.alt_text=alt;
+  return Object.keys(out).length ? out : null;
+}
+/** Why this post's Instagram options cannot be saved, as a sentence — or "" when
+ *  they can. Alt text is refused rather than truncated, for the reason ADR 0005
+ *  decision 12 refused a truncated X post: silently losing the end of a
+ *  description is worse than saying it is too long. */
+export function instagramBlocked(options){
+  if(!options || typeof options.alt_text!=="string") return "";
+  if(options.alt_text.length > INSTAGRAM_ALT_MAX)
+    return `Instagram allows ${INSTAGRAM_ALT_MAX} characters of alt text — this is ${options.alt_text.length}. Shorten it.`;
+  return "";
 }
 
 /* =============== TikTok Direct Post options ===============
@@ -1179,7 +1349,13 @@ export function readPostForm(){
      and writing it is how deselecting Instagram — or removing the last extra —
      clears one. */
   const media_urls=carouselForSave(nets, media_url);
+  /* The per-post Instagram choices, on the same terms again: always present,
+     because null is the meaningful value for a post that records none, and
+     writing it is how deselecting Instagram — or swapping a video for an image —
+     clears the choices that no longer apply. */
+  const instagram_options=instagramOptionsForSave(nets, media_url, media_urls);
   return {text,nets,date,time,status,media_url,media_urls,variants,tiktok_options,
+    instagram_options,
     ...(noteBox ? {approval_note:noteBox.value.trim()} : {})};
 }
 export function showMediaPreview(url,contentType=""){
@@ -1243,7 +1419,8 @@ export async function uploadPostMedia(input){
   }
 }
 export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
-                                  variants={},tiktok_options=null}){
+                                  variants={},tiktok_options=null,
+                                  instagram_options=null}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
   if(!date || !time) return toast("Choose a date and time");
@@ -1295,6 +1472,12 @@ export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
      the sentence the customer gets rather than the only line of defence. */
   const carouselProblem=carouselBlocked(media_urls);
   if(carouselProblem) return toast(carouselProblem);
+  /* Alt text's one rule, refused here rather than truncated.
+     posts_instagram_options_valid refuses the row and readInstagramOptions()
+     drops an over-length description at publish time, so this is the sentence the
+     customer gets rather than the only line of defence. */
+  const instagramProblem=instagramBlocked(instagram_options);
+  if(instagramProblem) return toast(instagramProblem);
   return true;
 }
 export function savePost(id){

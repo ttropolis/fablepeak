@@ -177,6 +177,12 @@ export async function publishPost(
            which is what makes "other networks post the first item only" true
            rather than merely stated. */
         mediaUrls: post.media_urls ?? null,
+        /* The customer's own per-post Instagram choices — Reel feed visibility
+           and image alt text — on the same terms and by the same route. Null is
+           the value nearly every post has, and it is what makes those posts
+           publish exactly the requests they published before the column
+           existed. */
+        instagramOptions: post.instagram_options ?? null,
       });
       await mark({ status: "published", connection_id: conn.id, attempts: currentAttempt,
         remote_id: out.remote_id, remote_url: out.remote_url ?? null,

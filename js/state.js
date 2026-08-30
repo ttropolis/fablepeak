@@ -84,6 +84,19 @@ export let composerVariantFocus = null;
     whenever a modal opens or closes, so no composer inherits another post's
     carousel. */
 export let composerCarousel = [];
+/** The open composer's per-post Instagram choices.
+    `share_to_feed` is three-state on purpose: true, false, and **null** meaning
+    "Instagram's own default", which is what every post published before this
+    feature used and therefore the only value that is preselected. `alt_text` is
+    the description a screen reader announces for a single image; "" is "none
+    written", which is not the same as an empty one. Held here rather than read
+    off the DOM because the panel is rebuilt whenever the media or the network
+    picker changes, and a rebuild must not lose what was typed. Reset whenever a
+    modal opens or closes, so no composer inherits another post's choices. */
+export const COMPOSER_INSTAGRAM_IDLE = Object.freeze({
+  share_to_feed: null, alt_text: "",
+});
+export let composerInstagram = COMPOSER_INSTAGRAM_IDLE;
 /** The open composer's TikTok half: what TikTok said this creator's account
     allows, and the choices the customer has made about this video.
     `creator` is null until the lazy creator_info read answers — TikTok's
@@ -127,6 +140,7 @@ export function setAiAssist(value){ aiAssist = value; }
 export function setComposerVariants(value){ composerVariants = value; }
 export function setComposerVariantFocus(value){ composerVariantFocus = value; }
 export function setComposerCarousel(value){ composerCarousel = value; }
+export function setComposerInstagram(value){ composerInstagram = value; }
 export function setComposerTikTok(value){ composerTikTok = value; }
 
 const SETTERS = {
@@ -142,6 +156,7 @@ const SETTERS = {
   composerVariants: setComposerVariants,
   composerVariantFocus: setComposerVariantFocus,
   composerCarousel: setComposerCarousel,
+  composerInstagram: setComposerInstagram,
   composerTikTok: setComposerTikTok,
 };
 

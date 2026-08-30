@@ -65,6 +65,11 @@ export const RemoteAdapter = {
           // forbid a preselected privacy level, so "no choices recorded" has to
           // stay distinguishable from "these are the choices".
           tiktok_options: p.tiktok_options || null,
+          // The per-post Instagram choices. Same three-edit rule again, and
+          // nullable for the same reason: an absent share_to_feed is what every
+          // Reel published so far used, so "no choices" must stay a value of its
+          // own rather than collapse into an empty object the CHECK refuses.
+          instagram_options: p.instagram_options || null,
           targets: targets.filter(t => t.post_id===p.id) })),
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
@@ -98,6 +103,14 @@ export const RemoteAdapter = {
         media_urls:(p.networks || []).includes("instagram")
           && Array.isArray(p.media_urls) && p.media_urls.length > 1
           ? p.media_urls : null,
+        /* Written only for a post that actually targets Instagram *and* records
+           at least one choice. A post that no longer names instagram has no Reel
+           placement and no image to describe, and an empty object is a claim to
+           carry choices nobody made — posts_instagram_options_valid refuses it,
+           and so does this. */
+        instagram_options:(p.networks || []).includes("instagram")
+          && p.instagram_options && Object.keys(p.instagram_options).length
+          ? p.instagram_options : null,
         client_id:this._clientId });
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
@@ -152,7 +165,7 @@ export const RemoteAdapter = {
          status trigger writes them from auth.uid() and now(), and a column this
          list does not name is one no client payload can carry — which is what
          keeps an approval attributable to the account that made it. */
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options"],
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));

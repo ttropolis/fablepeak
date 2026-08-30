@@ -211,6 +211,22 @@ export function validBackupMediaUrls(v){
   return Array.isArray(v) && v.length >= CAROUSEL_MIN && v.length <= CAROUSEL_MAX
     && v.every(isCarouselItem);
 }
+/* The per-post Instagram options, checked against the same closed shape
+   posts_instagram_options_valid enforces: the two keys and nothing else, a
+   boolean share_to_feed, an alt text of at most 1000 characters carrying no
+   control characters, and never an object with no keys — "no options" is spelled
+   null, and a second spelling of it would be a post claiming choices nobody made.
+   Alt text is announced by a screen reader and rendered back into this app, so a
+   backup carrying a C0 character in one is refused rather than repaired. */
+const ALT_TEXT_MAX = 1000;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+export function validBackupInstagramOptions(o){
+  return isPlainObject(o) && Object.keys(o).length > 0
+    && Object.keys(o).every(k => k==="share_to_feed" || k==="alt_text")
+    && (o.share_to_feed===undefined || typeof o.share_to_feed==="boolean")
+    && (o.alt_text===undefined || (isText(o.alt_text) && o.alt_text.length <= ALT_TEXT_MAX
+        && !CONTROL_CHARS.test(o.alt_text)));
+}
 export function validBackupPost(p){
   return isPlainObject(p) && isId(p.id) && isText(p.text) && isText(p.date)
     && (p.time===undefined || isText(p.time))
@@ -234,6 +250,11 @@ export function validBackupPost(p){
     // enforces, so a backup cannot smuggle an audience TikTok never offered.
     && (p.tiktok_options===undefined || p.tiktok_options===null
         || validBackupTikTokOptions(p.tiktok_options))
+    // Instagram's Reel placement and image alt text. Null and absent both mean
+    // "this post records no Instagram choices", which is every post that
+    // predates the column and every post that does not target Instagram.
+    && (p.instagram_options===undefined || p.instagram_options===null
+        || validBackupInstagramOptions(p.instagram_options))
     // ADR 0006 decision 11: the rejection note is one optional string, and it
     // is rendered — so it is validated on the way in like every other one.
     && (p.approval_note===undefined || p.approval_note===null || isText(p.approval_note))

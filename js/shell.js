@@ -4,10 +4,11 @@ import { VIEWS } from "./constants.js";
 import { attr, esc } from "./escape.js";
 import { todayStr, uid } from "./util.js";
 import {
-  AI_ASSIST_IDLE, COMPOSER_TIKTOK_IDLE, composerBaseline, db, mediaUploadActive,
-  previousModalFocus, setAiAssist, setAnalyticsNet, setComposerBaseline,
-  setComposerCarousel, setComposerTikTok, setComposerVariantFocus,
-  setComposerVariants, setPreviousModalFocus, setSelectedMsg, setView, view,
+  AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, composerBaseline,
+  db, mediaUploadActive, previousModalFocus, setAiAssist, setAnalyticsNet,
+  setComposerBaseline, setComposerCarousel, setComposerInstagram, setComposerTikTok,
+  setComposerVariantFocus, setComposerVariants, setPreviousModalFocus,
+  setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
 import {
@@ -37,6 +38,7 @@ export function openModal(html){
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);     // …and no other creator's account
   setComposerCarousel([]);                     // …and no other post's carousel
+  setComposerInstagram(COMPOSER_INSTAGRAM_IDLE); // …and no other post's alt text
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
   modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
@@ -54,6 +56,7 @@ export function closeModal(){
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);
   setComposerCarousel([]);
+  setComposerInstagram(COMPOSER_INSTAGRAM_IDLE);
   previousModalFocus?.focus?.(); setPreviousModalFocus(null);
 }
 /* The composer's values as it opened, so a stray Escape or backdrop click

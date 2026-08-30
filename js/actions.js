@@ -24,9 +24,10 @@ import {
 import {
   addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
   dropPost, dupPost, focusVariant, openPostModal, publishNow, rejectPost,
-  removeCarouselItem, renderCarousel, renderTikTokPanel, renderVariantSections,
-  retryPost, runAiAssist, savePost, setApprovalScope, setTikTokOption,
-  showMediaPreview, syncAiAssist, syncCarouselItem, syncComposer, syncVariant,
+  removeCarouselItem, renderCarousel, renderInstagramPanel, renderTikTokPanel,
+  renderVariantSections, retryPost, runAiAssist, savePost, setApprovalScope,
+  setInstagramOption, setTikTokOption, showMediaPreview, syncAiAssist,
+  syncCarouselItem, syncComposer, syncInstagramAlt, syncVariant,
   togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
@@ -78,12 +79,18 @@ export const ACTIONS = {
   dupPost:               el => dupPost(el.dataset.arg),
   publishNow:            el => publishNow(el.dataset.arg),
   retryPost:             el => retryPost(el.dataset.arg),
-  showMediaPreview:      el => { showMediaPreview(el.value); renderTikTokPanel(); },
+  /* The media field decides which Instagram options exist at all — a video is
+     offered a placement, a single image is offered alt text — so the panel is
+     rebuilt with the preview, exactly as TikTok's duration check is. */
+  showMediaPreview:      el => {
+    showMediaPreview(el.value); renderInstagramPanel(); renderTikTokPanel();
+  },
   uploadPostMedia:       el => uploadPostMedia(el),
   toggleNet:             el => {
     el.parentElement.classList.toggle("on", el.checked);
     renderVariantSections();                   // one section per selected network
     renderCarousel();                          // …the carousel, or none
+    renderInstagramPanel();                    // …Instagram's own options, or none
     renderTikTokPanel();                       // …and TikTok's own form, or none
     syncAiAssist();
   },
@@ -92,7 +99,12 @@ export const ACTIONS = {
      syncCarouselItem records the value and repaints only that row's thumbnail. */
   addCarouselItem:       () => addCarouselItem(),
   removeCarouselItem:    el => removeCarouselItem(el.dataset.arg),
-  syncCarouselItem:      el => syncCarouselItem(el),
+  syncCarouselItem:      el => { syncCarouselItem(el); renderInstagramPanel(); },
+  /* composer → per-post Instagram options. The Reel placement rebuilds nothing
+     and alt text repaints only its own counter: rebuilding the panel under the
+     caret would drop it mid-description. */
+  instagramOption:       el => setInstagramOption(el),
+  syncInstagramAlt:      el => syncInstagramAlt(el),
   /* composer → TikTok Direct Post options. One entry for every control in the
      panel; which one is being changed travels in data-arg, so the conditional
      rules the guidelines impose live in one function instead of six. */

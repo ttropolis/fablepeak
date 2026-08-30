@@ -3,8 +3,10 @@ import {
   effectiveText,
   configuredPlatforms,
   exchangeAuthorizationCode,
+  INSTAGRAM_ALT_TEXT_MAX,
   INSTAGRAM_CAROUSEL_MAX,
   instagramCarouselItems,
+  readInstagramOptions,
   platformConnectionEnabled,
   ProviderRequestError,
   PublishOutcomeUnknownError,
@@ -433,6 +435,193 @@ Deno.test("the publish loop hands the adapter the post's carousel, and null when
   }
   if (seen[1] !== null) {
     throw new Error("a post with no media_urls column must hand the adapter null, not undefined");
+  }
+});
+
+/* ----------------------------------------------- Instagram per-post options
+ *
+ * ADR 0005 publishing depth. Two choices the customer makes about one post: where
+ * a Reel appears, and what a screen reader says about an image. Everything below
+ * is asserted as a *request body*, because the only two things that can go wrong
+ * are sending the wrong parameter and — much more importantly — sending anything
+ * at all when the customer made no choice. The baseline test is the contract: a
+ * post with no options must produce the exact bytes it produced before this
+ * feature existed.
+ *
+ * The composer half — which question is asked of which media, and what is stored
+ * — is in test/behaviour/instagram-options.test.mjs.
+ */
+const IG_IMAGE = "https://cdn.example.com/still.jpg";
+const IG_VIDEO = "https://cdn.example.com/clip.mp4";
+
+/** The bodies of the container-creation requests one publish made. */
+async function instagramContainers(input: Record<string, unknown>) {
+  const calls: RecordedCall[] = [];
+  globalThis.fetch = instagramFetch(calls);
+  try {
+    await ADAPTERS.instagram.publish({
+      text: "Episode 53", accessToken: "token",
+      connection: { external_id: "account-1", meta: {} },
+      ...input,
+    } as any);
+  } finally { globalThis.fetch = originalFetch; }
+  return calls.filter((call) => call.url.endsWith("/media")).map((call) => call.body);
+}
+
+Deno.test("a Reel container carries share_to_feed exactly when the post recorded a choice", async () => {
+  const shown = await instagramContainers({
+    mediaUrl: IG_VIDEO, instagramOptions: { share_to_feed: true },
+  });
+  if (JSON.stringify(shown[0]) !== JSON.stringify({
+    media_type: "REELS", video_url: IG_VIDEO, caption: "Episode 53",
+    access_token: "token", share_to_feed: "true",
+  })) throw new Error(`share_to_feed=true sent ${JSON.stringify(shown[0])}`);
+
+  const hidden = await instagramContainers({
+    mediaUrl: IG_VIDEO, instagramOptions: { share_to_feed: false },
+  });
+  if (hidden[0]?.share_to_feed !== "false") {
+    throw new Error(`share_to_feed=false sent ${JSON.stringify(hidden[0])}`);
+  }
+  // The third state. Absent is not false: it is "FablePeak expresses no
+  // opinion", and Instagram's own default stands.
+  for (const instagramOptions of [undefined, null, {}, { alt_text: "ignored on a Reel" },
+                                  { share_to_feed: "true" }, { share_to_feed: 1 }]) {
+    const bodies = await instagramContainers({ mediaUrl: IG_VIDEO, instagramOptions });
+    if ("share_to_feed" in (bodies[0] ?? {})) {
+      throw new Error(`no choice was recorded, yet ${JSON.stringify(instagramOptions)} sent one`);
+    }
+  }
+});
+
+Deno.test("an image container carries alt_text, trimmed, and only when there is one", async () => {
+  const described = await instagramContainers({
+    mediaUrl: IG_IMAGE, instagramOptions: { alt_text: "  A grey cat asleep on books  " },
+  });
+  if (JSON.stringify(described[0]) !== JSON.stringify({
+    image_url: IG_IMAGE, caption: "Episode 53", access_token: "token",
+    alt_text: "A grey cat asleep on books",
+  })) throw new Error(`alt text sent ${JSON.stringify(described[0])}`);
+
+  for (const instagramOptions of [undefined, null, {}, { alt_text: "" }, { alt_text: "   " },
+                                  { alt_text: 42 }, { share_to_feed: true },
+                                  { alt_text: "x".repeat(INSTAGRAM_ALT_TEXT_MAX + 1) }]) {
+    const bodies = await instagramContainers({ mediaUrl: IG_IMAGE, instagramOptions });
+    if ("alt_text" in (bodies[0] ?? {})) {
+      throw new Error(`${JSON.stringify(instagramOptions)} produced an alt_text parameter`);
+    }
+    // share_to_feed belongs to a Reel and must not ride along on a photo.
+    if ("share_to_feed" in (bodies[0] ?? {})) {
+      throw new Error("share_to_feed is a Reel parameter and has no meaning on an image");
+    }
+  }
+});
+
+Deno.test("a post with no Instagram options sends exactly what it sent before", async () => {
+  // The compatibility contract, for both media kinds and every way "no options"
+  // can arrive on a claimed row.
+  for (const mediaUrl of [IG_IMAGE, IG_VIDEO]) {
+    const runs: string[] = [];
+    for (const instagramOptions of [undefined, null, {}, [], "share_to_feed",
+                                    { unknown_key: true }]) {
+      const calls: RecordedCall[] = [];
+      globalThis.fetch = instagramFetch(calls);
+      try {
+        await ADAPTERS.instagram.publish({
+          text: "Episode 53", mediaUrl, instagramOptions, accessToken: "token",
+          connection: { external_id: "account-1", meta: {} },
+        } as any);
+      } finally { globalThis.fetch = originalFetch; }
+      runs.push(JSON.stringify(calls));
+    }
+    if (runs[0].includes("share_to_feed") || runs[0].includes("alt_text")) {
+      throw new Error(`a post with no options learned the vocabulary: ${runs[0]}`);
+    }
+    for (const [index, run] of runs.entries()) {
+      if (run !== runs[0]) {
+        throw new Error(`instagram_options case ${index} diverged for ${mediaUrl}`);
+      }
+    }
+  }
+});
+
+Deno.test("carousel children never carry alt text in v1", async () => {
+  const bodies = await instagramContainers({
+    mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+    instagramOptions: { alt_text: "A grey cat asleep on books", share_to_feed: true },
+  });
+  // alt_text is a per-container parameter, so one description cannot honestly
+  // cover N items — and describing only the cover would be worse than not
+  // describing anything, because it would be wrong for nine of the ten.
+  for (const body of bodies) {
+    if (body && ("alt_text" in body || "share_to_feed" in body)) {
+      throw new Error(`a carousel container carried a single-media option: ${JSON.stringify(body)}`);
+    }
+  }
+});
+
+Deno.test("readInstagramOptions keeps only what it can honestly send", () => {
+  const cases: [unknown, unknown][] = [
+    [null, null],
+    [undefined, null],
+    [{}, null],
+    [[{ share_to_feed: true }], null],
+    [{ unknown: true }, null],
+    [{ share_to_feed: "true" }, null],
+    [{ share_to_feed: false }, { share_to_feed: false }],
+    [{ alt_text: "  A cat  " }, { alt_text: "A cat" }],
+    [{ alt_text: "   " }, null],
+    [{ alt_text: "x".repeat(INSTAGRAM_ALT_TEXT_MAX) },
+     { alt_text: "x".repeat(INSTAGRAM_ALT_TEXT_MAX) }],
+    [{ alt_text: "x".repeat(INSTAGRAM_ALT_TEXT_MAX + 1) }, null],
+    [{ share_to_feed: true, alt_text: "A cat", unknown: 1 },
+     { share_to_feed: true, alt_text: "A cat" }],
+  ];
+  for (const [input, expected] of cases) {
+    const actual = readInstagramOptions(input);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`${JSON.stringify(input)} read as ${JSON.stringify(actual)}`);
+    }
+  }
+});
+
+Deno.test("the publish loop hands the adapter the post's Instagram options, and null when it has none", async () => {
+  const seen: unknown[] = [];
+  const dependencies = {
+    adapters: {
+      instagram: {
+        label: "Instagram", clientIdEnv: "INSTAGRAM_APP_ID", supportsMedia: true,
+        publish: async (input: any) => {
+          seen.push(input.instagramOptions);
+          return { remote_id: "ig-1" };
+        },
+      },
+    },
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-1", status: "active", external_id: "account-1", meta: {},
+    },
+    sbUpsert: async (_table: string, row: any) => row,
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-31T00:00:00.000Z",
+  } as any;
+
+  await publishPost({
+    id: "post-options", brand_id: "brand-1", networks: ["instagram"],
+    text: "Episode 53", media_url: IG_VIDEO, instagram_options: { share_to_feed: false },
+  }, dependencies);
+  await publishPost({
+    id: "post-plain-options", brand_id: "brand-1", networks: ["instagram"],
+    text: "Episode 53", media_url: IG_VIDEO,
+  }, dependencies);
+
+  if (JSON.stringify(seen[0]) !== JSON.stringify({ share_to_feed: false })) {
+    throw new Error(`the options must reach the adapter intact: ${JSON.stringify(seen[0])}`);
+  }
+  if (seen[1] !== null) {
+    throw new Error("a post with no instagram_options column must hand the adapter null");
   }
 });
 

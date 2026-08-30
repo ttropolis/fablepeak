@@ -100,7 +100,7 @@ test("a column the sync whitelist does not name is invisible, so media_urls is n
      here as well as there. `media_urls` is the third such widening, after
      `variants` and `tiktok_options`. */
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter,
     /media_urls: Array\.isArray\(p\.media_urls\) && p\.media_urls\.length > 1\s*\n?\s*\? p\.media_urls : null/,

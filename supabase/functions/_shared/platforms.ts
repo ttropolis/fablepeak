@@ -46,6 +46,13 @@ export interface PublishInput {
    * more entries; every other adapter publishes from `mediaUrl` alone, which is
    * why the first carousel item and `mediaUrl` are the same URL. */
   mediaUrls?: unknown;
+  /** `posts.instagram_options` for this post, or null — the customer's own
+   * per-post Instagram choices (Reel feed visibility, image alt text). Threaded
+   * through exactly the way `tiktokOptions` and `mediaUrls` are: the publish loop
+   * reads the column off the claimed post row (the claim RPCs already return
+   * `p.*`) and hands the adapter a finished value. Only the Instagram adapter
+   * reads it; every other adapter ignores it. */
+  instagramOptions?: unknown;
 }
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
@@ -830,19 +837,35 @@ const instagram: PlatformAdapter = {
   // container per child, then a CAROUSEL container that names them all, then the
   // one publish. The container that reaches media_publish is the only thing that
   // differs, which is why both paths converge on publishInstagramContainer().
-  async publish({ text, mediaUrl, mediaUrls, accessToken, connection }) {
+  async publish({ text, mediaUrl, mediaUrls, instagramOptions, accessToken, connection }) {
     if (!mediaUrl) throw new Error("Instagram requires an image or video URL — it has no text-only post.");
     const igId = connection.external_id;
     const carousel = instagramCarouselItems(mediaUrls);
     if (carousel) {
+      // v1 deliberately sends NO alt text on carousel children. `alt_text` is a
+      // per-container parameter, so a carousel would need one description per
+      // item and a composer that collects N of them; the single-image case is
+      // the one customers meet, and it ships on its own rather than waiting.
       return await publishInstagramContainer(
         igId, await createInstagramCarousel(igId, carousel, text, accessToken), accessToken);
     }
     const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
     const video = mediaKind(safeMediaUrl) === "video";
+    const options = readInstagramOptions(instagramOptions);
     const createParams: Record<string, string> = video
       ? { media_type: "REELS", video_url: safeMediaUrl, caption: text, access_token: accessToken }
       : { image_url: safeMediaUrl, caption: text, access_token: accessToken };
+    /* Both parameters are *appended*, and only when the post actually carries
+       the choice. A post with no `instagram_options` therefore sends exactly the
+       body it sent before this feature existed, key for key and in the same
+       order — which is the compatibility contract, pinned by a baseline test. */
+    if (video && options?.share_to_feed !== undefined) {
+      // Instagram reads this as a form field, so the boolean is spelled the way
+      // an HTML form spells one. Absent is a third state and it is not this:
+      // omitting the parameter leaves Instagram's own default in force.
+      createParams.share_to_feed = options.share_to_feed ? "true" : "false";
+    }
+    if (!video && options?.alt_text) createParams.alt_text = options.alt_text;
     const container = await j(await fetch(
       `https://graph.instagram.com/${META_VERSION}/${igId}/media`, {
         method: "POST",
@@ -882,6 +905,51 @@ async function waitForInstagramContainer(containerId: string, accessToken: strin
 
 const INSTAGRAM_PUBLISH_UNKNOWN =
   "Instagram may have accepted this post. Verify the profile before retrying.";
+
+/** Instagram's own alt-text ceiling, named once here and restated by
+ *  posts_instagram_options_valid where the data lands and by js/planner.js where
+ *  the customer is typing. */
+export const INSTAGRAM_ALT_TEXT_MAX = 1000;
+
+/** The per-post Instagram choices this post actually carries.
+ *
+ *  `share_to_feed` is deliberately three-state: true, false, and **absent**.
+ *  Absent is not a synonym for false — it is "FablePeak expresses no opinion",
+ *  which is what every Instagram post published before this feature did and what
+ *  keeps those posts publishing byte-identically. A value that is not a boolean
+ *  is therefore dropped rather than coerced, because coercing it would invent
+ *  the one state the customer did not choose. */
+export interface InstagramPostOptions {
+  share_to_feed?: boolean;
+  alt_text?: string;
+}
+
+/** Read `posts.instagram_options` into the shape the request body needs.
+ *
+ *  Unlike readTikTokOptions(), a malformed value here is *ignored* rather than
+ *  refused. The difference is what the absence means: a TikTok post without a
+ *  recorded audience must fail, because publishing it would broadcast to an
+ *  audience nobody picked. An Instagram post without these options is simply
+ *  today's post — Instagram's default Reel placement and Instagram's own
+ *  generated alt text — so dropping a junk key costs the customer nothing and
+ *  failing their post over one would cost them the post.
+ *
+ *  posts_instagram_options_valid refuses everything below at the row, so this is
+ *  the second line, not the only one. */
+export function readInstagramOptions(value: unknown): InstagramPostOptions | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const options: InstagramPostOptions = {};
+  if (typeof raw.share_to_feed === "boolean") options.share_to_feed = raw.share_to_feed;
+  if (typeof raw.alt_text === "string") {
+    // Trimmed, because leading whitespace is not a description — and unlike a
+    // variant, which is the customer's copy and is sent verbatim, alt text is
+    // read aloud.
+    const alt = raw.alt_text.trim();
+    if (alt && alt.length <= INSTAGRAM_ALT_TEXT_MAX) options.alt_text = alt;
+  }
+  return Object.keys(options).length ? options : null;
+}
 
 /** Instagram's own carousel bounds. Two is its minimum — a single item is an
  *  ordinary post, and `media_urls` must not become a second way to say that —
