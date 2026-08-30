@@ -266,6 +266,73 @@ export const RemoteAdapter = {
     if(error) return null;
     return data?.role || null;
   },
+  /* ---------- team invitations (ADR 0006 delivery item 2) ----------
+     Seven calls, six of them PostgREST RPCs over security-definer functions in
+     20260830110000_team_invitations.sql, exposed exactly the way get_smartlink
+     and set_smartlink_slug are. There is no Edge Function and no mail provider:
+     an invite is a row, and the invitee claims it once their own confirmed
+     address matches. Every refusal that is a *result* rather than a breach
+     comes back as {ok:false,error:"…"} for the caller to render. */
+
+  /** The active brand's roster: [{member_id, member_email, member_role}].
+      brand_member_list is member-gated, so an editor sees it too — that is
+      decision 12, and it is why bare UUIDs are not what the Team card shows. */
+  async listMembers(brandId){
+    if(!this.user) return [];
+    const { data, error } = await this._sb.rpc("brand_member_list", { p_brand_id: brandId });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  /** Pending invitations for one brand, newest last. A plain select: the
+      invites_select policy is is_owner(brand_id), so an editor gets [] from the
+      database rather than from a render gate. */
+  async listInvites(brandId){
+    if(!this.user) return [];
+    const { data, error } = await this._sb.from("brand_invites")
+      .select("id,email,role,status,created_at,expires_at")
+      .eq("brand_id", brandId).eq("status", "pending").order("created_at");
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  /** Owner-only. Returns the typed jsonb result — {ok:true,invite_id,email,role}
+      or {ok:false,error:"already_member"|"already_invited"|"invalid_email"|
+      "invalid_role"|"self_invite"}. Only a non-owner call raises. */
+  async inviteMember(brandId, email, role){
+    const { data, error } = await this._sb.rpc("create_invite",
+      { p_brand_id: brandId, p_email: email, p_role: role });
+    if(error) throw new Error(error.message);
+    return data || { ok:false, error:"unknown_error" };
+  },
+  /** Owner-only. Retains the row as status='revoked' — the one revocation model
+      this feature has; nothing ever deletes a brand_invites row. */
+  async revokeInvite(inviteId){
+    const { data, error } = await this._sb.rpc("revoke_invite", { p_invite_id: inviteId });
+    if(error) throw new Error(error.message);
+    return data || { ok:false, error:"unknown_error" };
+  },
+  /** Invitations addressed to this signed-in user's own CONFIRMED address:
+      [{invite_id, brand_name, invite_role, invited_at, expires_at}]. There is
+      deliberately no brand_id in that shape — until Accept, an invitee holds a
+      workspace's display name and nothing that any RLS policy is written on. */
+  async myInvitations(){
+    if(!this.user) return [];
+    const { data, error } = await this._sb.rpc("list_my_invites");
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  /** Join. The server re-checks the confirmed-email match, the pending status
+      and the expiry — this is an explicit act by the invitee, never a silent
+      auto-join (decision 4). */
+  async acceptInvite(inviteId){
+    const { data, error } = await this._sb.rpc("accept_invite", { p_invite_id: inviteId });
+    if(error) throw new Error(error.message);
+    return data || { ok:false, error:"unknown_error" };
+  },
+  async declineInvite(inviteId){
+    const { data, error } = await this._sb.rpc("decline_invite", { p_invite_id: inviteId });
+    if(error) throw new Error(error.message);
+    return data || { ok:false, error:"unknown_error" };
+  },
   /** opens the platform's consent screen; resolves when the popup reports back */
   async startOAuth(platform, brandId){
     const jwt = await this._jwt();

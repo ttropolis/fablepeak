@@ -23,6 +23,7 @@ import * as shell from "./shell.js";
 import * as smartlinks from "./smartlinks.js";
 import * as state from "./state.js";
 import * as storeModule from "./store.js";
+import * as team from "./team.js";
 import * as util from "./util.js";
 import * as welcome from "./welcome.js";
 import * as workspace from "./workspace.js";
@@ -53,8 +54,8 @@ import { load, persistNow, tickPublish } from "./workspace.js";
 function testSeam(){
   const modules = {
     actions, analytics, connections, constants, escapers, inbox, localStore, metrics,
-    planner, remoteStore, reports, settings, shell, smartlinks, storeModule, util,
-    welcome, workspace,
+    planner, remoteStore, reports, settings, shell, smartlinks, storeModule, team,
+    util, welcome, workspace,
   };
   const fn = {};
   for(const [moduleName, namespace] of Object.entries(modules)){

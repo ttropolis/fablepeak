@@ -17,6 +17,7 @@ import { renderSmartlinks } from "./smartlinks.js";
 import { renderReports } from "./reports.js";
 import { renderConnections } from "./connections.js";
 import { renderSettings } from "./settings.js";
+import { ensureInvitesLoaded, invitationsBanner } from "./team.js";
 
 /* =============== ui plumbing =============== */
 export function toast(msg){
@@ -89,7 +90,7 @@ export function render(){
   if(!document.getElementById("welcome").hidden) return;   // auth gate is up
   tickPublish(); renderNav();
   const m=document.getElementById("main");
-  if(!db.brands.length){ renderOnboarding(m); return; }    // fresh account, no brand yet
+  if(!db.brands.length){ renderOnboarding(m); showInvitations(m); return; }  // fresh account
   // Three views gate controls on the caller's role. Asking here rather than in
   // each of them means the answer is already settled by the time one is opened,
   // and one cache invalidation covers switching brands. Idempotent per brand.
@@ -97,6 +98,18 @@ export function render(){
   ({planner:renderPlanner, analytics:renderAnalytics, inbox:renderInbox,
     smartlinks:renderSmartlinks, reports:renderReports,
     connections:renderConnections, settings:renderSettings}[view])(m);
+  showInvitations(m);
+}
+/* A pending invitation belongs above whatever the user is looking at, not
+   buried in one view — including the onboarding screen, since an account
+   created only to accept an invite has no brand of its own yet. Prepended after
+   the view has written #main, so no renderer has to know about it and none of
+   them can forget it. Idempotent per session; empty markup when there is
+   nothing to answer, and always empty in local/demo mode (ADR 0006 §5). */
+function showInvitations(m){
+  ensureInvitesLoaded();
+  const banner=invitationsBanner();
+  if(banner) m.insertAdjacentHTML("afterbegin", banner);
 }
 
 /* =============== first-brand onboarding (signed in, empty account) =============== */

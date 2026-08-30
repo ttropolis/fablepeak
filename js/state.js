@@ -36,6 +36,15 @@ export let connCache = { brandId:null, available:[], accounts:[], loaded:false }
 /** the signed-in user's own role in one brand — "owner" | "editor" | null.
     `loaded:false` means "not known yet", never "not an owner": see isOwner(). */
 export let roleCache = { brandId:null, role:null, loaded:false, loading:false };
+/** the active brand's roster and its pending invitations (Settings → Team).
+    Owner-only data: `invites` is always [] for an editor, because the
+    invites_select policy is is_owner (ADR 0006 delivery item 2). */
+export let teamCache = { brandId:null, members:[], invites:[],
+                         loaded:false, loading:false, error:null };
+/** invitations addressed to THIS signed-in user, from list_my_invites().
+    Not per brand: the whole point is that the invitee is not in the brand yet
+    and the read never returns a brand_id. */
+export let inviteCache = { items:[], loaded:false, loading:false };
 /** public SmartLink slug, publish flag and real click aggregates for one brand */
 export let slCache = { brandId:null, slug:"", published:false, totals:{},
                        loaded:false, loading:false, error:null };
@@ -65,6 +74,8 @@ export function setDeferredInstallPrompt(value){ deferredInstallPrompt = value; 
 export function setMetricsCache(value){ metricsCache = value; }
 export function setConnCache(value){ connCache = value; }
 export function setRoleCache(value){ roleCache = value; }
+export function setTeamCache(value){ teamCache = value; }
+export function setInviteCache(value){ inviteCache = value; }
 export function setSlCache(value){ slCache = value; }
 export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
@@ -77,7 +88,7 @@ const SETTERS = {
   mediaUploadActive: setMediaUploadActive,
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,
-  roleCache: setRoleCache,
+  roleCache: setRoleCache, teamCache: setTeamCache, inviteCache: setInviteCache,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
 };

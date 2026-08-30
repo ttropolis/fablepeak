@@ -5,6 +5,7 @@ import { todayStr } from "./util.js";
 import { db, deferredInstallPrompt, setDb, setDeferredInstallPrompt } from "./state.js";
 import { store } from "./store.js";
 import { defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
+import { renderTeamCard } from "./team.js";
 import { render, toast } from "./shell.js";
 
 export function installedApp(){
@@ -67,6 +68,7 @@ export function renderSettings(m){
         <p style="color:var(--muted);font-size:13px">This deployment has no
         <code>backend-config.js</code>, so it intentionally runs without accounts or cloud sync.</p>`}
     </div>
+    ${renderTeamCard()}
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Your data</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Back up everything to a JSON file, restore it later, or start fresh with demo data.</p>

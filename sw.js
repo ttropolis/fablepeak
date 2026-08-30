@@ -11,7 +11,8 @@ const ASSETS = [
   "./js/constants.js", "./js/escape.js", "./js/inbox.js", "./js/local-store.js",
   "./js/metrics.js", "./js/planner.js", "./js/remote-store.js", "./js/reports.js",
   "./js/settings.js", "./js/shell.js", "./js/smartlinks.js", "./js/state.js",
-  "./js/store.js", "./js/util.js", "./js/welcome.js", "./js/workspace.js",
+  "./js/store.js", "./js/team.js", "./js/util.js", "./js/welcome.js",
+  "./js/workspace.js",
 ];
 
 self.addEventListener("install", e => {

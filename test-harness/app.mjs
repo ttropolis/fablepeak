@@ -390,6 +390,14 @@ async function signIn(api, cloud) {
     // because every brand's creator is one; pass "editor" to exercise the
     // owner-gated affordances, or null for "the lookup failed".
     role = "owner",
+    // ADR 0006 delivery item 2. `members` is brand_member_list()'s shape,
+    // `invites` is the owner-only pending list (the real policy returns [] to
+    // an editor, so a test for an editor passes []), and `invitations` is
+    // list_my_invites()'s shape — note it carries no brand_id, exactly as the
+    // function's projection does not.
+    members = [],
+    invites = [],
+    invitations = [],
   } = cloud;
 
   const store = api.store;
@@ -438,6 +446,16 @@ async function signIn(api, cloud) {
       suggestions: answer.suggestions ?? [], truncated: !!answer.truncated,
     });
   };
+  /* Team + invitations. The four writes answer with the RPCs' typed jsonb —
+     `cloud.inviteResult` / `revokeResult` / `acceptResult` / `declineResult`
+     override it to exercise a refusal ({ok:false,error:"already_member"}). */
+  store.listMembers = async brandId => { record("listMembers", [brandId]); return api.intoPage(cloud.membersFor?.(brandId) ?? members); };
+  store.listInvites = async brandId => { record("listInvites", [brandId]); return api.intoPage(cloud.invitesFor?.(brandId) ?? invites); };
+  store.myInvitations = async () => { record("myInvitations", []); return api.intoPage(invitations); };
+  store.inviteMember = async (brandId, email, role2) => { record("inviteMember", [brandId, email, role2]); return api.intoPage(cloud.inviteResult ?? { ok: true }); };
+  store.revokeInvite = async id => { record("revokeInvite", [id]); return api.intoPage(cloud.revokeResult ?? { ok: true }); };
+  store.acceptInvite = async id => { record("acceptInvite", [id]); return api.intoPage(cloud.acceptResult ?? { ok: true, role: "editor" }); };
+  store.declineInvite = async id => { record("declineInvite", [id]); return api.intoPage(cloud.declineResult ?? { ok: true }); };
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 

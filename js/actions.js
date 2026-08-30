@@ -38,6 +38,9 @@ import {
   addBrand, cloudSignOut, deleteBrand, deleteCloudAccount, exportData, importData,
   installPhoneApp, renameBrand, resetData,
 } from "./settings.js";
+import {
+  acceptInvite, declineInvite, inviteMember, revokeInvite, simulatedTeamAction,
+} from "./team.js";
 
 export const ACTIONS = {
   /* shell + navigation */
@@ -113,6 +116,14 @@ export const ACTIONS = {
   cloudSignOut:          () => cloudSignOut(),
   deleteCloudAccount:    () => deleteCloudAccount(),
   installPhoneApp:       () => installPhoneApp(),
+  /* team (ADR 0006 delivery item 2). Emails are user-controlled strings, so
+     every id below travels in data-arg through attr() and never in an inline
+     handler — the same rule the rest of this table follows. */
+  inviteMember:          () => inviteMember(),
+  revokeInvite:          el => revokeInvite(el.dataset.arg),
+  acceptInvite:          el => acceptInvite(el.dataset.arg),
+  declineInvite:         el => declineInvite(el.dataset.arg),
+  simulatedTeamAction:   () => simulatedTeamAction(),
 };
 function actionTarget(ev, name){ return ev.target?.closest?.(`[data-${name}]`) || null; }
 function runAction(ev, name){
