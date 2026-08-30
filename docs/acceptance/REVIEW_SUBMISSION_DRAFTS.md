@@ -648,3 +648,378 @@ shows **Verified** in the Meta dashboard.
 | 9 | YouTube Analytics API still enabled in Cloud project `fablepeak` | `PLATFORM_SETUP.md` §2 says it was enabled; no scope in `platforms.ts` uses it |
 | 10 | Google developer contact email, authorized JavaScript origins, uploaded logo asset | Not recorded in the repo |
 | 11 | Google/Meta reviewer test-asset accounts (Page, IG professional profile, YouTube channel, sample media URL) | Must be developer-owned and supplied at submission time |
+
+The table above covers Sections A–C only. Section D keeps its own list in **D6**.
+
+---
+
+# Section D — Later submission: first-comment permissions (DO NOT submit with the core review)
+
+> ## ⛔ STOP — this is a **separate, later** Meta submission
+>
+> **Nothing in Section D goes into the submission drafted in Sections A–C.**
+> This section is prepared in advance for a **second** Meta App Review round
+> that may only be opened **after** the core publishing permissions
+> (`pages_show_list`, `pages_manage_posts`, `pages_read_engagement`,
+> `instagram_business_basic`, `instagram_business_content_publish`) show
+> **Advanced Access approved** and the app is **Live**.
+>
+> Adding `pages_manage_engagement` or `instagram_business_manage_comments` to
+> the current request would put core publishing approval at risk — a broader
+> permission set invites a broader review and a rejection of the whole request,
+> not just the new permission. **ADR 0005 decision 6** ("No — do not add comment
+> permissions to the imminent submission") and its closing rationale
+> ("Nothing in this ADR may put core publishing approval at risk") govern this
+> section and cannot be overridden without a new ADR amendment.
+>
+> Also do not submit Section D **early** in the other direction: the feature it
+> describes **is not built yet** (see D3). Submitting reviewer instructions for
+> UI that does not exist is an automatic rejection.
+
+**Preconditions, all of which must be true before any of D is pasted anywhere**
+
+1. The Section A permissions are approved for Advanced Access and the app is Live.
+2. The unrelated-account acceptance rows from `C1.13` are recorded in
+   `docs/acceptance/EXTERNAL_BETA_EVIDENCE.md`.
+3. The first-comment feature is built, deployed to production, and recordable
+   end to end (D3's "not built yet" list is empty).
+4. A release owner has explicitly decided to reopen Meta review. This is a
+   release decision, not an engineering one (ADR 0005 Consequences).
+
+## D1. Permissions requested in this round
+
+| Permission | Network | Graph call FablePeak makes with it | Why the current round cannot carry it |
+|---|---|---|---|
+| `pages_manage_engagement` | Facebook Page | `POST /{page-post-id}/comments`, once, immediately after the customer's own post publishes | Scope-adding; the live probe proved held permissions do not suffice (ADR 0005, "Probe result (2026-08-30): DENIED") |
+| `instagram_business_manage_comments` | Instagram professional account | `POST /{ig-media-id}/comments`, once, immediately after the customer's own media publishes | Scope-adding, App Review-gated, and it widens the data-handling statement (ADR 0005 decision 2 table) |
+
+Nothing else is added in this round. Do **not** take the opportunity to request
+`read_insights`, `pages_read_user_content`, `pages_messaging`, Ads,
+public-content or branded-content permissions.
+
+**The probe evidence this round rests on.** On **2026-08-30** the owner-gated
+`probe_fb_comment` action in `supabase/functions/connection-health/index.ts`
+posted a real comment on the internal brand's **own** Page post
+(`…_122111105709416585`) using only the permissions the app holds today. Graph
+refused with `(#200) You do not have sufficient permissions to perform this
+action`. The probe's own classifier treats Graph `#200`/`#10` on that call as
+`permission_hint: "pages_manage_engagement required"` and treats every other
+outcome as `"unknown"`, so the verdict is Graph's, not ours
+(`connection-health/index.ts` `classify()`). This is the "no narrower
+permission exists" evidence cited in D2.
+
+## D2. Per-permission justifications
+
+Paste each block into the matching "Tell us how you're using this permission"
+field. Each is under 300 words, in the same form as Section A1.
+
+### `pages_manage_engagement`
+
+FablePeak is a social media planning and publishing tool. Its customers write a
+post inside FablePeak, choose the Facebook Page they connected, and publish or
+schedule it. This permission is used for exactly one added step: an optional
+"first comment" the customer types into the composer alongside the post itself,
+on the same screen, before that post is published.
+
+When the customer's post publishes to their own Page, FablePeak makes one call,
+`POST /{page-post-id}/comments`, carrying the text that customer wrote, using
+the Page access token for the Page that same customer connected and selected as
+their publishing destination. The comment is created as the Page, on the Page's
+own post that FablePeak just created, once. If the comment call fails, the post
+is left published and the customer is shown "Published — first comment did not
+post"; retrying is a manual action they take. Customers use this for the hashtag
+block, link or disclosure they prefer to keep out of the post body.
+
+FablePeak does not read, list, display, moderate, hide, delete or reply to
+comments written by anyone. We understand `pages_manage_engagement` also grants
+those abilities. Our product has no comment inbox and no moderation screen, and
+the single comment creation above is the only Graph call we make with this
+permission. We store only the returned comment id, with that post's delivery
+record.
+
+No narrower permission exists, and we tested that before asking. On 2026-08-30
+we attempted a live comment creation on our own Page's own post while holding
+only `pages_show_list`, `pages_manage_posts` and `pages_read_engagement`. Graph
+refused with `(#200) You do not have sufficient permissions to perform this
+action`. Creating a comment as the Page requires this permission and no lesser
+one.
+
+### `instagram_business_manage_comments`
+
+FablePeak publishes content its customers compose, to the Instagram
+professional account each customer connected through Instagram Login. This
+permission is used for exactly one added step: an optional "first comment" the
+customer types in the composer, next to the caption, before the post is
+published or scheduled.
+
+When that customer's media publishes to their own professional account,
+FablePeak makes one call, `POST /{ig-media-id}/comments`, carrying the text that
+customer wrote, on the media FablePeak has just created for them, using the
+token that same customer authorized. The comment is created once, on their own
+new post. It is the customer's hashtag block or credit line, kept out of the
+caption. If the comment fails, the media stays published and FablePeak reports
+"Published — first comment did not post"; any retry is a manual action by the
+customer.
+
+FablePeak does not read comments, does not list or display comments written by
+other users, does not moderate, hide or delete comments, and does not reply to
+them. We are aware `instagram_business_manage_comments` also grants comment
+reading and moderation. Our product contains no comment inbox, no moderation
+surface and no comment reading of any kind; the single call above is the entire
+use of this permission, and the only comment data we retain is the returned
+comment id, stored with that post's delivery record.
+
+No narrower permission exists. `instagram_business_basic` is read-only account
+identity, and `instagram_business_content_publish` covers only creating and
+publishing a media container — neither can create a comment. The Instagram API
+with Instagram Login exposes comment creation only under
+`instagram_business_manage_comments`.
+
+## D3. Reviewer instructions and recordings — and what must be built first
+
+### D3.0 What does not exist yet (build and deploy before recording)
+
+The first-comment feature is **gated on this approval and is therefore not
+built**. Everything in this list must exist in production before the reviewer
+instructions below are truthful. Verified absent in the repository at the time
+of writing:
+
+| Missing piece | Where it will live | Evidence it is absent today |
+|---|---|---|
+| `posts.first_comment jsonb not null default '{}'` | migration | no `first_comment` in `supabase/migrations/` |
+| `post_targets.comment_status` / `comment_remote_id` / `comment_error` / `comment_failure_kind` / `comment_attempts` | same migration | as above |
+| `"first_comment"` in the posts column whitelist and both row mappers | `js/remote-store.js` (`FIELDS.posts`, `_dbToRows`, `_rowsToDb`) — **owned by another workstream; sequence with its owner** | no `first_comment` in `js/` |
+| A first-comment textarea inside each per-network `<details>` section, plus a "copy to every network" control | `js/planner.js` `variantSection()` — today that section contains the **variant** textarea and character counter only | `variantSection()` renders `#pm_var_<net>` and nothing else |
+| Adapter `comment()` for Facebook and Instagram | `supabase/functions/_shared/platforms.ts` | no comment method on either adapter |
+| The comment step in the per-target publish loop, with the unknown-outcome and stale-claim rules | `supabase/functions/publish/index.ts` | not present |
+| "Published — first comment did not post" plus the manual comment retry | delivery panel | not present |
+| The two new scopes actually requested at authorization | `platforms.ts` `instagram.scopes` for Instagram; for Facebook the **Login for Business configuration** (`META_CONFIG_ID`), because `oauth-start` sends `config_id` and omits `scope` | `facebook.scopes` / `instagram.scopes` hold the five Section A permissions only |
+
+Note the shipped part: the **"Customize per network" disclosure and per-network
+variant copy already exist** (ADR 0005 decision 7 split the release). The
+reviewer flow below therefore extends a real screen; only the first-comment
+field inside it is new.
+
+**Re-consent warning.** Existing connections were authorized without these
+permissions. The reviewer must connect (or reconnect) the test Page and test
+Instagram profile **after** the new permissions are attached, or the consent
+screen will not list them and the comment call will fail with the same `(#200)`
+the probe recorded.
+
+### D3.1 Reviewer instructions (numbered)
+
+Paste into "Provide detailed step-by-step instructions". Reviewer test assets
+are the same ones listed in A2; supply credentials only in Meta's own reviewer
+credential fields.
+
+1. Open `https://fablepeak.com` and sign in as `<REVIEWER_EMAIL>` /
+   `<REVIEWER_PASSWORD>`, then select the workspace `<REVIEWER_WORKSPACE_NAME>`.
+2. Click **🔌 Connections**. If the Facebook Page or Instagram row is already
+   connected, click **Disconnect** on it first — the connection must be made
+   again so the new permission appears on the consent screen.
+3. **Connect the Facebook Page.** Click **Connect** on the Facebook Page card,
+   sign in as `<REVIEWER_FB_TEST_USER>`, select `<REVIEWER_TEST_PAGE_NAME>`,
+   keep every listed permission enabled — the list now includes the ability to
+   create comments as the Page — and continue until you return to FablePeak.
+   Click **Use for publishing** on that Page row.
+4. **Connect Instagram.** Click **Connect** on the Instagram card, sign in as
+   `<REVIEWER_IG_USERNAME>`, and approve all requested permissions, which now
+   include managing comments on that account. Confirm the card shows
+   `@<REVIEWER_IG_USERNAME>`.
+5. Click **🗓 Planner → + New post**.
+6. In **Content**, type: `FablePeak first-comment review test <TODAY_DATE>`.
+7. In **Image / video**, paste `<REVIEWER_SAMPLE_IMAGE_URL>` (Instagram posts
+   require media). A preview appears.
+8. Under **Networks**, tick **Facebook Page** and **Instagram**.
+9. Tick **Customize per network**. One expandable section appears per selected
+   network.
+10. Expand the **Facebook Page** section and type into its **First comment**
+    field: `First comment posted by FablePeak — Facebook <TODAY_DATE>`.
+11. Expand the **Instagram** section and type into its **First comment** field:
+    `#fablepeak #reviewtest — first comment <TODAY_DATE>`. (These are separate
+    fields on purpose: the same text is rarely right on both networks. The
+    "copy to every network" control fills the others from the focused one.)
+12. Set **Date** and **Time** a few minutes ahead, leave **Status** as
+    `scheduled`, and click **Schedule**.
+13. Re-open the post from the calendar and click **🚀 Publish now**, confirming
+    the prompt "This posts to the real accounts". (Or wait — the scheduler
+    publishes within a minute.)
+14. **Verify in FablePeak.** The **Delivery results** panel shows, per network,
+    "Published — view post" **and** a first-comment line reading
+    "First comment posted". A failed comment would instead read
+    "Published — first comment did not post" with a **Retry comment** control;
+    the post itself is never marked failed because of a comment.
+15. **Verify on Facebook.** Open the Facebook link. The new post appears on
+    `<REVIEWER_TEST_PAGE_NAME>` with the comment from step 10 underneath it,
+    authored by the Page.
+16. **Verify on Instagram.** Open the Instagram link. The new media appears on
+    `@<REVIEWER_IG_USERNAME>` with the comment from step 11 underneath it.
+17. **Confirm the limits of the feature.** There is no comment inbox, no
+    moderation view and no reply control anywhere in FablePeak: the composer's
+    first-comment field is the only place comments appear in the product, and
+    FablePeak never reads comments written by anyone else.
+18. **Disconnect.** Return to **🔌 Connections** and click **Disconnect** on
+    both rows. This deletes the stored credentials; the same instructions are
+    published at `https://fablepeak.com/data-deletion.html`.
+
+### D3.2 Screen-recording shot list
+
+Two more recordings, numbered to continue from A3 (which holds Recordings 1 and
+2). Same rules as A3: English, 1280×720 or larger, full browser address bar
+visible in every shot, no cuts between consent and result, and the same
+"never visible" list — passwords in plain text, app secrets,
+`SOCIAL_TOKEN_ENCRYPTION_KEY`, `CRON_SECRET`, any `access_token=` or `code=`
+value, devtools, the Supabase dashboard, inboxes, and any real customer data.
+
+The **Status** column says whether the UI in that shot exists today. Every
+`TO BUILD` row must become `exists` before recording; that is the checklist
+D3.0 exists to serve.
+
+#### Recording 3 — Facebook Page first comment (`pages_manage_engagement`)
+
+| # | On screen | Action | Must be visible | Must never be visible | Status |
+|---|---|---|---|---|---|
+| 1 | `https://fablepeak.com` sign-in | Sign in as `<REVIEWER_EMAIL>` | The address bar; the sign-in screen | Typed password characters | exists |
+| 2 | Connections | Click **🔌 Connections**, then **Disconnect** on any existing Facebook row | The row returning to "Available to connect" | — | exists |
+| 3 | Facebook Login for Business popup | Click **Connect** | The popup on `facebook.com`; **the permission list now including comment management as the Page** — this is the consent proof for the new permission | Any `code=` / `access_token=`; unrelated real Pages | exists (permission text depends on the updated Login configuration) |
+| 4 | Connections — connected | Hold 4 s | The Page name, picture and **✓ Publishing account** | — | exists |
+| 5 | Composer | **🗓 Planner → + New post**; type the post text; attach the sample media | The typed text; the media preview | Real customer posts | exists |
+| 6 | Composer — Networks | Tick **Facebook Page** only | Facebook ticked, all others unticked | — | exists |
+| 7 | Composer — per-network panel | Tick **Customize per network**; expand the Facebook section | The Facebook section opening | — | exists |
+| 8 | Composer — first comment | Type the first-comment text into the Facebook **First comment** field | **The field, its label, and the typed comment text** — this shows the customer authoring the comment before publishing | — | **TO BUILD** |
+| 9 | Publish | **Schedule**, reopen, **🚀 Publish now**, confirm | The "This posts to the real accounts" confirmation | — | exists |
+| 10 | Delivery results | Hold 4 s | "Published — view post" **and** "First comment posted" for Facebook | — | **TO BUILD** |
+| 11 | Facebook | Click the published link | **The real post on `<REVIEWER_TEST_PAGE_NAME>` with the comment beneath it, authored by the Page** — the `pages_manage_engagement` proof | Comments from real users; unrelated Page content | exists (the comment itself is the new part) |
+| 12 | Back in FablePeak | Scroll the composer and the sidebar slowly | **That no comment inbox, moderation view or reply control exists anywhere** — supports the data-minimization claim in D2 | — | exists |
+| 13 | Connections — disconnect | Click **Disconnect**, confirm | The card returning to "Available to connect" | — | exists |
+
+#### Recording 4 — Instagram first comment (`instagram_business_manage_comments`)
+
+| # | On screen | Action | Must be visible | Must never be visible | Status |
+|---|---|---|---|---|---|
+| 1 | `https://fablepeak.com` | Sign in, open **🔌 Connections**, disconnect any existing Instagram row | The Instagram card returning to "Available to connect" | Typed password characters | exists |
+| 2 | Instagram login popup | Click **Connect** | The popup URL on `instagram.com/oauth/authorize`; the Instagram-branded login, **not** a Facebook login | Any `code=` / `access_token=` | exists |
+| 3 | Instagram consent | Sign in as `<REVIEWER_IG_USERNAME>`, approve | **The permission screen listing all three permissions**, including comment management — the consent proof for the new permission | The password field contents | exists (list depends on the updated scope request) |
+| 4 | Connections — connected | Hold 4 s | `@<REVIEWER_IG_USERNAME>` and that profile's picture | Any other connected account | exists |
+| 5 | Composer | **+ New post**; type the caption; attach the sample media | The caption and the media preview | Private photos in the picker | exists |
+| 6 | Composer — Networks | Tick **Instagram** only | Instagram ticked, all others unticked | — | exists |
+| 7 | Composer — per-network panel | Tick **Customize per network**; expand the Instagram section | The Instagram section opening | — | exists |
+| 8 | Composer — first comment | Type the hashtag block into the Instagram **First comment** field | **The field, its label, and the typed hashtag block** | — | **TO BUILD** |
+| 9 | Publish | **Schedule**, reopen, **🚀 Publish now**, confirm | The confirmation dialog | — | exists |
+| 10 | Delivery results | Hold 4 s | "Published — view post" **and** "First comment posted" for Instagram | — | **TO BUILD** |
+| 11 | Instagram | Open the permalink | **The new media on `@<REVIEWER_IG_USERNAME>` with the hashtag comment beneath it** — the `instagram_business_manage_comments` proof | DMs, other accounts' content, follower lists | exists (the comment itself is the new part) |
+| 12 | Back in FablePeak | Scroll the product slowly | **That there is no comment inbox, moderation or reply surface** | — | exists |
+| 13 | Connections — disconnect | Click **Disconnect**, confirm | The card returning to "Available to connect" | — | exists |
+| 14 | Data deletion page | Open `https://fablepeak.com/data-deletion.html` | The published disconnect and deletion instructions | — | exists |
+
+## D4. Data-handling addendum
+
+Section A4 stands unchanged and should be re-submitted as written. This round
+adds one paragraph and **no new data category**.
+
+**First comment text.** The first comment is text the customer types in
+FablePeak's composer, in the same dialog as the post itself. It is stored the
+same way the post text is stored: in the `posts` row in our Postgres database,
+inside the customer's own workspace, protected by the same row-level security
+that scopes every read to the workspaces the signed-in user belongs to. It is
+not a new category of data — it is post content, authored by the customer,
+destined for the customer's own account.
+
+**What comes back from Meta.** Only the created comment's id, stored on that
+post's delivery record next to the post id we already store, so the customer can
+see the comment posted and so a failed comment can be retried without
+duplicating a successful one. FablePeak reads no other comment, from Meta or
+anyone, and stores no comment authored by any other user.
+
+**Deletion.** Exactly the deletion paths already described in A4, with no new
+step: disconnecting an account deletes that connection's stored credentials and
+stops all future delivery; deleting the FablePeak account runs
+`prepare_account_deletion`, which removes the user's posts along with their
+provider credentials, memberships and solely-owned workspaces. Because the first
+comment lives on the post row, deleting the post or the account deletes it with
+everything else. There is no separate comment store and therefore no separate
+retention period.
+
+**Not used for.** The comment text and comment id are not sold, not shared for
+advertising, not used to build any profile, and not used outside the workspace
+that authored them.
+
+## D5. Submission-day checklist for this later round
+
+Run only after every precondition at the top of Section D is true.
+
+1. **Re-verify the app is Live and unaffected.** Open the Meta dashboard as the
+   app owner and confirm: the app is **Live** (not back in Development), the
+   five Section A permissions all still show **Advanced Access approved**,
+   business verification and access verification still show **Verified**, and
+   there is no "Account confirmation needed" banner. If any of those has
+   regressed, stop — fix that first. Nothing in this round is worth touching a
+   healthy Live app.
+2. **Confirm production is healthy before adding scope.** `npm run check`
+   passes, `operations-health` is green, and the scheduled publish/connection/
+   metrics jobs are running (the same evidence C0.1 and C3.3 require).
+3. **Confirm the feature is real.** Every row of D3.0 is built and deployed from
+   the reviewed commit, and D3.2 has no `TO BUILD` row left.
+4. **Facebook: update the Login for Business configuration**, not just the
+   review request. Because `oauth-start` sends `config_id` and omits `scope`,
+   `pages_manage_engagement` must be attached to the Login configuration
+   (`META_CONFIG_ID`) or the reviewer's consent screen will never show it. Do
+   not remove or reorder the three permissions already on that configuration.
+5. **Instagram: update the use case's permission list.** In the Instagram
+   product / use case, add `instagram_business_manage_comments` to the requested
+   permissions alongside `instagram_business_basic` and
+   `instagram_business_content_publish`, and add the same scope to
+   `instagram.scopes` in `platforms.ts` so the authorize URL actually requests
+   it. The console list and the code must match exactly — a permission approved
+   but not requested is dead, and a permission requested but not approved fails
+   at consent.
+6. **Do not disturb the approved permissions.** Request Advanced Access for the
+   two new permissions **only**. Do not withdraw, resubmit or re-justify the
+   five that are already approved; do not add any other permission to the
+   request "while we are in here".
+7. **Reconcile the A1 wording.** The approved `pages_read_engagement`
+   justification states that FablePeak deliberately does **not** request
+   `pages_manage_engagement`. That sentence was true when submitted and is now
+   superseded. If the console lets you edit it, update it to say FablePeak
+   requests `pages_manage_engagement` solely to create a first comment on the
+   customer's own post and still requests none of the other permissions listed
+   there; if it does not, say so explicitly in this round's justification and
+   notes so the reviewer is not reading a contradiction. **Update Section A1 of
+   this file in the same change** — do not leave the two rounds disagreeing.
+8. **Record Recordings 3 and 4** (D3.2), review them frame by frame against the
+   "must never be visible" column, and only then fill in the forms.
+9. **Paste D2** into each permission's justification field, and **D3.1** into
+   the reviewer-instructions field with every placeholder replaced. Reviewer
+   credentials go only in Meta's credential fields.
+10. **Answer data handling with A4 plus the D4 addendum.** Do not silently
+    re-submit A4 alone: the comment id is new stored provider data, small as it
+    is, and an unexplained new field is a rejection risk.
+11. **Submit, then leave production alone.** Keep the reviewer accounts and
+    connections alive, keep `SOCIAL_TOKEN_ENCRYPTION_KEY` unchanged, and do not
+    ship connection or publish changes during the review window.
+12. **Plan the re-consent rollout.** Approval alone does not grant the new
+    permission to connections authorized earlier. Before releasing first
+    comments to customers, decide how existing connections are re-consented
+    (prompt to reconnect, or a health-check state), and make the composer's
+    first-comment field unavailable — with a readable reason — on a connection
+    that has not re-consented. The publish path must refuse rather than fail
+    publicly.
+13. **After approval**, record the outcome in
+    `docs/acceptance/EXTERNAL_BETA_EVIDENCE.md` and run first-comment acceptance
+    on an unrelated Business account and an unrelated Creator account, as
+    `META_APP_REVIEW.md`'s launch gate requires for any new capability.
+
+## D6. NEEDS-HUMAN-CONFIRM for Section D
+
+Separate from the Sections A–C table above.
+
+| # | Item | Why it could not be verified here |
+|---|---|---|
+| D1 | The core submission is approved and the app is Live | Console state; cannot be read from the repository. This is the gate on the whole section |
+| D2 | The exact permission name Meta's console shows for Instagram comment creation | The repository never requests it; `instagram_business_manage_comments` is taken from ADR 0005's capability table, not from a console screenshot |
+| D3 | Whether Meta's current review UI attaches these to a **use case** rather than a bare permission list, and what that use case is called | Console state; D5.5 assumes the Instagram use case owns the permission list |
+| D4 | Whether `pages_manage_engagement` can be added to the existing Login for Business configuration in place, and whether that forces re-consent for already-connected Pages | The permission set lives in the Meta dashboard, not in code (`oauth-start` sends `config_id` and omits `scope`) — same reason as item 7 of the A–C table |
+| D5 | Whether the A1 `pages_read_engagement` justification can still be edited after approval | Console behaviour; D5.7 gives both branches |
+| D6 | That the probe's raw Graph response is retained somewhere durable | The `(#200)` verdict is recorded in ADR 0005 and reproduced by `connection-health/index.deno.ts`'s fixtures, but the live response body itself is not stored in the repository. Capture it before submitting if the reviewer thread may need it |
+| D7 | The first comment's exact composer wording and control names used in D3.1 and D3.2 ("First comment", "copy to every network", "First comment posted", "Retry comment") | The UI does not exist yet; these names are taken from ADR 0005 and **must be reconciled with what is actually built** before submission |
+| D8 | Reviewer test assets for this round (Page, Instagram professional profile, sample media) | Must be developer-owned and supplied at submission time; the A2 assets may have been disconnected after the first round |
