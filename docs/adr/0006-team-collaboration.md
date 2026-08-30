@@ -304,7 +304,9 @@ the amendment governs; the body text is left as written for the record.
    `approval_required` defaulting off — and it is **enabled only after roles
    and invitations have been proven internally**. *Reinforces decision 1 above
    and amends decision 8's sequencing:* approval is not part of the external
-   beta release.
+   beta release. **Precondition met 2026-08-30:** the release owner declared
+   roles and invitations proven internally, unlocking the item-5 build and
+   internal pilot.
 10. **Yes, with a safeguard.** Status transitions are enforced in a `posts`
     trigger, including forbidding client-written `publishing`/`published`.
     *Amends the escape hatch in decision 6 of the body:* the trigger must
