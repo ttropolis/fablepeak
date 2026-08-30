@@ -360,36 +360,95 @@ the job definitions.
 
 The `ai-assist` Edge Function writes caption options, suggests hashtags, and
 rewrites a post for one network's conventions. It is entirely optional: leave
-the secret unset and the endpoint answers `503 AI assist is not configured on
+the secrets unset and the endpoint answers `503 AI assist is not configured on
 the server`, and nothing else in FablePeak changes.
 
+### Capability tiers
+
+A request names a **capability tier**, never a provider. Which company answers
+is an operator decision, so it can change without anything customer-facing
+changing — no error message, plan name or button in FablePeak names a vendor.
+
+| Tier | Live today? | Served by | Secrets |
+| --- | --- | --- | --- |
+| `standard` | **Yes** — the only tier any plan includes | Cloudflare Workers AI | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AI_TOKEN` |
+| `enhanced` | No — built, dormant | OpenAI chat completions | `OPENAI_API_KEY` |
+| `advanced` | No — built, dormant | Anthropic Messages API | `ANTHROPIC_API_KEY` |
+
+Only the standard tier is reachable. Entitlement is decided server-side by
+`entitlementsFor()` in `supabase/functions/ai-assist/index.ts`, which today
+returns the same constant for everyone; asking for another tier is answered
+`403 That AI tier isn't available on your plan yet.` The paid tiers are the
+seam a subscription lookup drops into later — **there is no billing code in
+this function.**
+
+So a working install needs exactly two secrets:
+
 ```
-ANTHROPIC_API_KEY=sk-ant-...        # from console.anthropic.com → API keys
+CLOUDFLARE_ACCOUNT_ID=...           # dash.cloudflare.com → the account ID in the URL
+CLOUDFLARE_AI_TOKEN=...             # → My Profile → API Tokens, "Workers AI" template
 ```
 
-The key is only ever read inside the Edge Function. The browser calls
+Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` only when you are about to open one
+of the paid tiers; until entitlement grants them, they are dead weight. A key
+is only ever read inside the Edge Function. The browser calls
 `/functions/v1/ai-assist` with the signed-in customer's own Supabase session;
 the function checks that session, checks workspace membership, and never
 returns the provider's raw response.
 
-**Rate limit.** Each signed-in user gets **20 assist requests an hour**,
-counted in `ai_assist_requests` (see
+### Operator overrides
+
+Two optional secrets exist to move the live tier without a deploy. Neither is
+visible to customers, and neither changes what anyone is entitled to.
+
+```
+AI_PROVIDER=cloudflare|openai|anthropic   # re-points the STANDARD tier only
+AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast   # model for whichever of
+                                          # cloudflare/openai serves a request
+```
+
+`AI_PROVIDER` is the escape hatch for a provider outage or a pricing change: set
+it and the standard tier is served by a different adapter with no code change.
+It is ignored by the paid tiers, which are a promise about which model answers.
+An unrecognised value is logged and ignored. `AI_MODEL` overrides the default
+model (`@cf/meta/llama-3.3-70b-instruct-fp8-fast` on Cloudflare, `gpt-4o-mini`
+on OpenAI); the advanced tier's model is pinned and ignores it.
+
+### Rate limit
+
+Each signed-in user gets **20 assist requests an hour**, counted in
+`ai_assist_requests` (see
 `supabase/migrations/20260829120000_ai_assist_requests.sql`, which also folds a
-30-day sweep into the existing `fablepeak-prune-job-runs` job). Over the
-ceiling the endpoint returns a 429 asking the customer to try again later. To
-change the ceiling, edit `HOURLY_LIMIT` in
-`supabase/functions/ai-assist/index.ts` and redeploy.
+30-day sweep into the existing `fablepeak-prune-job-runs` job, and
+`supabase/migrations/20260830090000_ai_assist_tiers.sql`, which adds the `tier`
+column). The count is per user across every tier — one person's hour of assist
+is one budget however it was served — while each row records the tier it spent,
+so a per-tier ceiling later is a query change rather than a schema change. Over
+the ceiling the endpoint returns a 429 asking the customer to try again later.
+To change the ceiling, edit `HOURLY_LIMIT` (or, per tier, the `hourlyLimit`
+returned by `entitlementsFor`) in `supabase/functions/ai-assist/index.ts` and
+redeploy.
 
-**Cost.** Requests use `claude-opus-5` at $5 per million input tokens and $25
-per million output tokens, capped at 1024 output tokens each. A typical assist
-request is around a thousand tokens all in — roughly a cent. At the default
-ceiling, one very heavy user costs about 20c an hour; a hundred customers doing
-a handful of requests a day is a few dollars a month. Watch actual spend in the
-Anthropic console and set a billing limit there if you want a hard stop.
+### Cost
 
-**Composer UI.** The buttons that call this endpoint ship with the frontend
-batch; until then the function is deployable and testable on its own with a
-signed-in session token.
+**Standard.** Workers AI is billed in *neurons*, not tokens, and the Cloudflare
+free allocation is 10,000 neurons a day — enough that ordinary composer use
+costs nothing. Beyond it, Workers AI is a fraction of a cent per assist
+request. This is why the standard tier can be offered on every plan; watch the
+Workers AI dashboard for neuron burn if usage grows.
+
+**Advanced (when enabled).** Requests use `claude-opus-5` at $5 per million
+input tokens and $25 per million output tokens, capped at 1024 output tokens
+each. A typical assist request is around a thousand tokens all in — roughly a
+cent. At the default ceiling, one very heavy user costs about 20c an hour; a
+hundred customers doing a handful of requests a day is a few dollars a month.
+Watch actual spend in the Anthropic console and set a billing limit there if
+you want a hard stop. This is the tier a paid plan is expected to pay for,
+which is exactly why it is entitlement-gated rather than open.
+
+**Composer UI.** The buttons that call this endpoint ship in the composer
+(`js/planner.js`). There is no tier picker: the browser sends `tier:"standard"`
+explicitly, because that is the only tier a plan includes today.
 
 ---
 

@@ -340,9 +340,14 @@ export const RemoteAdapter = {
   async publishNow(postId){ return this._publishRequest(postId); },
   async retryPost(postId){ return this._publishRequest(postId,true); },
   /** Composer writing assist (supabase/functions/ai-assist).
-      `request` is the function's own body minus brand_id: {action:"caption",
-      topic, tone?, network?} | {action:"hashtags", text, network?} |
-      {action:"rewrite", text, network}. Resolves to {suggestions, truncated}.
+      `request` is the function's own body minus brand_id and tier:
+      {action:"caption", topic, tone?, network?} | {action:"hashtags", text,
+      network?} | {action:"rewrite", text, network}. Resolves to {suggestions,
+      truncated}.
+      The capability tier is sent explicitly rather than left to the server's
+      default, so the day a picker ships the only change is where the value
+      comes from. "standard" is the only tier any plan includes today; asking
+      for another one is a 403 from the function.
       A failure throws an Error carrying only the function's already
       customer-facing message plus `status` and, for a rate limit,
       `retryAfterSeconds` — the response body itself is never shown. */
@@ -353,7 +358,7 @@ export const RemoteAdapter = {
       method: "POST",
       headers: { Authorization: `Bearer ${jwt}`, apikey: window.FABLEPEAK_BACKEND.anonKey,
                  "Content-Type": "application/json" },
-      body: JSON.stringify({ brand_id: brandId, ...request }),
+      body: JSON.stringify({ brand_id: brandId, tier: "standard", ...request }),
     });
     const out = await r.json().catch(() => ({}));
     if(!r.ok){

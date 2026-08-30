@@ -191,6 +191,10 @@ test("AI assist keeps the provider key server-side and meters every customer", a
   const migration = await read(
     "supabase/migrations/20260829120000_ai_assist_requests.sql",
   );
+  const tiers = await read(
+    "supabase/migrations/20260830090000_ai_assist_tiers.sql",
+  );
+  const adapter = await read("js/remote-store.js");
   const setup = await read("PLATFORM_SETUP.md");
 
   assert.match(config, /\[functions\.ai-assist\]\nverify_jwt = false/);
@@ -200,22 +204,50 @@ test("AI assist keeps the provider key server-side and meters every customer", a
   // The function does its own authentication, exactly like connection-health.
   assert.match(source, /dependencies\.authenticate\(jwt\)/);
   assert.match(source, /dependencies\.isMember\(brandId, user\.id\)/);
-  // The key is read from the environment, never logged, never returned.
-  assert.match(source, /dependencies\.env\("ANTHROPIC_API_KEY"\)/);
-  assert.doesNotMatch(source, /console\.(log|error)\([^)]*apiKey/);
+  // Every provider key is read from the environment, never logged, never
+  // returned — one adapter per capability tier, all behind the same interface.
+  for (const secret of [
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_AI_TOKEN",
+  ]) {
+    assert.match(source, new RegExp(`dependencies\\.env\\("${secret}"\\)`));
+  }
+  assert.doesNotMatch(source, /console\.(log|error)\([^)]*(apiKey|token)/);
   assert.match(source, /AI assist is not configured on the server/);
   // A declined request returns HTTP 200 — stop_reason is checked before content.
   assert.ok(
     source.indexOf('stop_reason === "refusal"') < source.indexOf("payload?.content ?? []"),
     "the refusal stop reason must be handled before the content blocks are read",
   );
-  // Sampling and thinking parameters are rejected by this model.
+  // Sampling and thinking parameters are rejected by the advanced tier's model.
   assert.doesNotMatch(source, /temperature|budget_tokens/);
+
+  // A customer picks a capability tier, never a vendor: entitlement is decided
+  // server-side, and no client-facing string names a provider.
+  assert.match(source, /dependencies\.entitlements\(user\.id, brandId\)/);
+  assert.match(source, /That AI tier isn't available on your plan yet\./);
+  assert.match(adapter, /tier: "standard"/,
+    "the browser states the tier it is entitled to rather than relying on a default");
+  // Every sentence a browser can be shown is one of these constants.
+  const messages = source.match(
+    /const NOT_CONFIGURED =[\s\S]*?const TIER_UNAVAILABLE = "[^"]*";/,
+  );
+  assert.ok(messages, "the customer-facing messages must stay in one reviewable block");
+  for (const vendor of [/anthropic/i, /claude/i, /openai/i, /gpt/i, /cloudflare/i, /llama/i]) {
+    assert.doesNotMatch(messages[0], vendor,
+      "a customer-facing message must not name a provider");
+  }
 
   assert.match(migration, /create table if not exists public\.ai_assist_requests/);
   assert.match(migration, /alter table public\.ai_assist_requests enable row level security/);
   assert.match(migration, /grant all on public\.ai_assist_requests to service_role/);
+  // The meter records which tier a request spent — forward-only, defaulted so
+  // pre-tier rows stay valid.
+  assert.match(tiers, /add column if not exists tier text not null default 'standard'/);
+  assert.match(tiers, /check \(tier in \('standard', 'enhanced', 'advanced'\)\)/);
+  assert.match(source, /recordRequest\("ai_assist_requests", \{\s*user_id: user\.id,\s*action,\s*tier,/);
   assert.match(setup, /ANTHROPIC_API_KEY/);
+  assert.match(setup, /CLOUDFLARE_AI_TOKEN/);
+  assert.match(setup, /AI_PROVIDER/);
 });
 
 test("Edge Function mutation endpoints reject unsupported HTTP methods", async () => {
