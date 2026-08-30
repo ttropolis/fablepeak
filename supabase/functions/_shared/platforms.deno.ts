@@ -1,9 +1,11 @@
 import {
   ADAPTERS,
+  effectiveText,
   exchangeAuthorizationCode,
   ProviderRequestError,
   PublishOutcomeUnknownError,
   refreshPlatformToken,
+  X_TEXT_LIMIT,
 } from "./platforms.ts";
 import { INTERRUPTED, publishPost } from "../publish/index.ts";
 
@@ -1132,5 +1134,223 @@ Deno.test("automatic scheduling publishes a brand-new target with no prior outco
 
   if (!providerCalled || results[0]?.status !== "published") {
     throw new Error(`Brand-new scheduled target was not published: ${JSON.stringify(results)}`);
+  }
+});
+
+/* ---------------------------------------------------------------------------
+   ADR 0005 delivery item 3 — per-network copy variants.
+
+   The resolver is the whole contract: everything below either pins its
+   semantics or pins that publishPost routes its answer to the right adapter.
+   --------------------------------------------------------------------------- */
+
+Deno.test("a missing, empty or whitespace-only variant all inherit the base text", () => {
+  // The amendment to decision 3. `post.variants?.[platform] ?? post.text` would
+  // pass the first case and publish an empty or blank post for the other three.
+  const cases: Array<[unknown, string]> = [
+    [undefined, "no variants map at all"],
+    [{}, "an empty map"],
+    [{ x: "" }, "an empty variant"],
+    [{ x: "   " }, "a whitespace-only variant"],
+    [{ x: "\n\t " }, "a variant of newlines and tabs"],
+    [{ x: null }, "a null variant"],
+    [{ x: 42 }, "a variant that is not a string"],
+    [{ instagram: "Other network" }, "a variant belonging to another network"],
+  ];
+  for (const [variants, description] of cases) {
+    const resolved = effectiveText({ text: "Base copy", variants }, "x");
+    if (resolved !== "Base copy") {
+      throw new Error(`${description} must inherit the base text, got ${JSON.stringify(resolved)}`);
+    }
+  }
+});
+
+Deno.test("a real variant overrides the base text verbatim, for its network only", () => {
+  const post = { text: "Base copy", variants: { x: "  Short version  " } };
+  if (effectiveText(post, "x") !== "  Short version  ") {
+    throw new Error("a non-blank variant must be sent exactly as written, whitespace included");
+  }
+  if (effectiveText(post, "facebook") !== "Base copy") {
+    throw new Error("a variant must not leak to a network that has none");
+  }
+  // A hostile map shape must not throw its way into the publish loop.
+  for (const variants of [null, "not a map", ["array"], 7]) {
+    if (effectiveText({ text: "Base copy", variants }, "x") !== "Base copy") {
+      throw new Error(`a variants value of ${JSON.stringify(variants)} must resolve to the base text`);
+    }
+  }
+});
+
+/** A publishPost harness that records the text each adapter was handed. */
+function textRecordingDependencies(platforms: string[]) {
+  const sent: Record<string, string> = {};
+  const adapters: Record<string, any> = {};
+  for (const platform of platforms) {
+    adapters[platform] = {
+      label: platform, clientIdEnv: `${platform.toUpperCase()}_CLIENT_ID`, supportsMedia: true,
+      publish: async (input: any) => {
+        sent[platform] = input.text;
+        return { remote_id: `${platform}-1` };
+      },
+    };
+  }
+  return {
+    sent,
+    dependencies: {
+      adapters,
+      platformConnectionEnabled: () => true,
+      env: () => "configured",
+      sbOne: async (table: string) => table === "post_targets" ? null : {
+        id: "connection-1", status: "active", external_id: "account-1", meta: {},
+      },
+      sbUpsert: async (_table: string, row: any) => row,
+      sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+      freshConnectionToken: async () => "token",
+      now: () => "2026-08-30T00:00:00.000Z",
+    } as any,
+  };
+}
+
+Deno.test("a post with no variants sends the same base text to every network", async () => {
+  // The backward-compatibility contract of decision 3, asserted directly rather
+  // than inferred from the older publishPost tests that happen to omit the key.
+  const { sent, dependencies } = textRecordingDependencies(["x", "facebook", "instagram"]);
+  await publishPost({
+    id: "post-compat", brand_id: "brand-1", networks: ["x", "facebook", "instagram"],
+    text: "One message for everyone", media_url: null,
+  }, dependencies);
+
+  for (const platform of ["x", "facebook", "instagram"]) {
+    if (sent[platform] !== "One message for everyone") {
+      throw new Error(`${platform} received ${JSON.stringify(sent[platform])} instead of the base text`);
+    }
+  }
+});
+
+Deno.test("each network receives its own variant, and the base text where it has none", async () => {
+  const { sent, dependencies } = textRecordingDependencies(["x", "facebook", "instagram"]);
+  await publishPost({
+    id: "post-variants", brand_id: "brand-1", networks: ["x", "facebook", "instagram"],
+    text: "The long, considered version for a feed with room for it.",
+    variants: {
+      x: "The short one.",
+      instagram: "   ",                       // blank: inherits, never publishes blank
+      linkedin: "For a network this post does not name",
+    },
+  }, dependencies);
+
+  if (sent.x !== "The short one.") {
+    throw new Error(`X received ${JSON.stringify(sent.x)} instead of its variant`);
+  }
+  if (sent.facebook !== "The long, considered version for a feed with room for it.") {
+    throw new Error("a network without a variant must receive the base text");
+  }
+  if (sent.instagram !== "The long, considered version for a feed with room for it.") {
+    throw new Error("a whitespace-only variant must inherit, not publish blank");
+  }
+  if (Object.values(sent).includes("For a network this post does not name")) {
+    throw new Error("a variant for an unselected network must never be sent");
+  }
+});
+
+Deno.test("X refuses an over-length post instead of silently truncating it", async () => {
+  // ADR 0005 decision 12. This adapter used to send `text.slice(0, 280)`, which
+  // published a post the customer never wrote. X is production-frozen, so this
+  // path is dormant — and it is still the wrong thing to leave in the code.
+  let requested = false;
+  globalThis.fetch = () => {
+    requested = true;
+    return Promise.resolve(json({ data: { id: "tweet-1" } }));
+  };
+  try {
+    const overLength = "n".repeat(X_TEXT_LIMIT + 1);
+    let message = "";
+    try {
+      await ADAPTERS.x.publish({
+        text: overLength, mediaUrl: null, accessToken: "token",
+        connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) {
+      message = String((error as Error).message);
+    }
+    if (!message) throw new Error("an over-length X post must be refused");
+    if (!message.includes(String(X_TEXT_LIMIT)) || !message.includes("281")) {
+      throw new Error(`the refusal must name the limit and the actual length: ${message}`);
+    }
+    if (requested) throw new Error("nothing may reach X once the text is known to be too long");
+
+    // Exactly at the limit still publishes, and publishes in full.
+    let sentText = "";
+    globalThis.fetch = (_input, init) => {
+      sentText = JSON.parse(String(init?.body)).text;
+      return Promise.resolve(json({ data: { id: "tweet-1" } }));
+    };
+    await ADAPTERS.x.publish({
+      text: "y".repeat(X_TEXT_LIMIT), mediaUrl: null, accessToken: "token",
+      connection: { external_id: "account-1", meta: {} },
+    });
+    if (sentText.length !== X_TEXT_LIMIT) {
+      throw new Error(`a post at the limit must be sent whole, got ${sentText.length} characters`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("an over-length X variant fails that target permanently and never blocks its siblings", async () => {
+  const marks: any[] = [];
+  const called: string[] = [];
+  const results = await publishPost({
+    id: "post-x-cap", brand_id: "brand-1", networks: ["x", "facebook"],
+    text: "A perfectly ordinary post.",
+    variants: { x: "z".repeat(X_TEXT_LIMIT + 40) },
+  }, {
+    adapters: {
+      x: {
+        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+        publish: ADAPTERS.x.publish,
+      },
+      facebook: {
+        label: "Facebook", clientIdEnv: "FACEBOOK_CLIENT_ID",
+        publish: async (input: any) => {
+          called.push(input.text);
+          return { remote_id: "fb-1" };
+        },
+      },
+    } as any,
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-1", status: "active", external_id: "account-1", meta: {},
+    },
+    sbUpsert: async (_table: string, row: any) => { marks.push(row); return row; },
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-08-30T00:00:00.000Z",
+  } as any);
+
+  if (results[0]?.failure_kind !== "permanent") {
+    throw new Error(`an over-length variant is not retryable: ${JSON.stringify(results[0])}`);
+  }
+  if (marks.at(-2)?.next_retry_at !== null && marks.at(-1)?.next_retry_at !== null) {
+    throw new Error("a refusal no retry can fix must not schedule one");
+  }
+  if (called.join("") !== "A perfectly ordinary post.") {
+    throw new Error("the sibling network must still receive its own text");
+  }
+});
+
+Deno.test("platforms.ts effectiveText matches the shared fixture table", async () => {
+  // Same table js/planner.js is held to (test/effective-text-parity.test.mjs):
+  // the two resolvers must answer identically or the composer's "inherits"
+  // label lies about what publishes. JSON module import needs no fs permission.
+  const fixture = (await import("../../../test/fixtures/effective-text-cases.json", {
+    with: { type: "json" },
+  })).default;
+  for (const c of fixture.cases) {
+    const got = effectiveText(c.post, c.platform);
+    if (got !== c.expect) {
+      throw new Error(`${c.name}: expected ${JSON.stringify(c.expect)}, got ${JSON.stringify(got)}`);
+    }
   }
 });

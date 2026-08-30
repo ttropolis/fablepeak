@@ -5,8 +5,8 @@ import { attr, esc } from "./escape.js";
 import { todayStr, uid } from "./util.js";
 import {
   AI_ASSIST_IDLE, composerBaseline, db, mediaUploadActive, previousModalFocus,
-  setAiAssist, setAnalyticsNet, setComposerBaseline, setPreviousModalFocus,
-  setSelectedMsg, setView, view,
+  setAiAssist, setAnalyticsNet, setComposerBaseline, setComposerVariantFocus,
+  setComposerVariants, setPreviousModalFocus, setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
 import { defaultBrand, ensureRoleLoaded, save, tickPublish } from "./workspace.js";
@@ -28,6 +28,8 @@ export function openModal(html){
   setPreviousModalFocus(document.activeElement);
   setComposerBaseline(null);                   // openPostModal re-arms this
   setAiAssist(AI_ASSIST_IDLE);                 // no answer outlives its composer
+  setComposerVariants({});                     // …and no per-network copy either
+  setComposerVariantFocus(null);
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
   modal.setAttribute("aria-label",modal.querySelector("h3")?.textContent||"Dialog");
@@ -41,6 +43,8 @@ export function closeModal(){
   document.getElementById("overlay").classList.remove("open");
   setComposerBaseline(null);
   setAiAssist(AI_ASSIST_IDLE);
+  setComposerVariants({});
+  setComposerVariantFocus(null);
   previousModalFocus?.focus?.(); setPreviousModalFocus(null);
 }
 /* The composer's values as it opened, so a stray Escape or backdrop click
@@ -63,7 +67,13 @@ export function handleModalKeydown(event){
   if(event.key!=="Tab") return;
   const modal=document.getElementById("modalBody");
   const focusable=[...modal.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])")]
-    .filter(el=>!el.hidden && el.getAttribute("aria-hidden")!=="true");
+    /* ADR 0005 decision 11 put native <details> in the composer. A collapsed
+       one still contains its textarea in the DOM, but the browser will not tab
+       into it — so counting it here would leave the trap's "last control"
+       pointing at something focus can never reach. The <summary> itself stays:
+       it is the control that opens the section. */
+    .filter(el=>!el.hidden && el.getAttribute("aria-hidden")!=="true"
+      && (el.tagName==="SUMMARY" || !el.closest("details:not([open])")));
   if(!focusable.length){ event.preventDefault(); modal.focus(); return; }
   const first=focusable[0],last=focusable[focusable.length-1];
   if(event.shiftKey&&document.activeElement===first){ event.preventDefault(); last.focus(); }

@@ -22,9 +22,10 @@ import {
   completePasswordReset, enterDemo, exitDemo, requestPasswordReset, wSubmit, wTab,
 } from "./welcome.js";
 import {
-  calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost, openPostModal,
-  publishNow, retryPost, runAiAssist, savePost, showMediaPreview, syncAiAssist,
-  uploadPostMedia, useAiSuggestion,
+  calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost, focusVariant,
+  openPostModal, publishNow, renderVariantSections, retryPost, runAiAssist,
+  savePost, showMediaPreview, syncAiAssist, syncComposer, syncVariant,
+  togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
 import {
@@ -71,7 +72,16 @@ export const ACTIONS = {
   retryPost:             el => retryPost(el.dataset.arg),
   showMediaPreview:      el => showMediaPreview(el.value),
   uploadPostMedia:       el => uploadPostMedia(el),
-  toggleNet:             el => { el.parentElement.classList.toggle("on", el.checked); syncAiAssist(); },
+  toggleNet:             el => {
+    el.parentElement.classList.toggle("on", el.checked);
+    renderVariantSections();                   // one section per selected network
+    syncAiAssist();
+  },
+  /* composer → per-network copy (ADR 0005 decisions 11-13) */
+  togglePerNetwork:      () => togglePerNetwork(),
+  syncVariant:           el => syncVariant(el),
+  syncComposer:          () => syncComposer(),
+  focusVariant:          el => focusVariant(el.dataset.arg),
   /* composer → AI assist. "Rewrite for network" also depends on the picker
      above, which is why toggleNet re-syncs the row too. */
   runAiAssist:           el => runAiAssist(el.dataset.arg),
@@ -139,6 +149,12 @@ export function installDelegatedHandlers(){
      `change` on a textarea only fires on blur, which is too late to enable the
      AI assist buttons beside it. */
   document.addEventListener("input",  ev => runAction(ev, "input"));
+  /* data-focus is for controls that have to record *where the caret is*: AI
+     "Rewrite for network" targets the per-network section the customer is
+     working in (ADR 0005 decision 13). Registered on the capture phase because
+     `focus` does not bubble, which is also why it is not folded into the
+     listeners above. */
+  document.addEventListener("focus", ev => runAction(ev, "focus"), true);
   document.addEventListener("keydown", ev => {
     if(ev.key !== "Enter") return;                 // Escape and Tab stay with handleModalKeydown
     runAction(ev, "enter");

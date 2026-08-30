@@ -532,3 +532,81 @@ test("cloud startup failures do not promise an unsafe local sync fallback", asyn
   assert.match(gate, /document\.getElementById\("nav"\)\.replaceChildren\(\)/);
   assert.match(gate, /document\.querySelector\("aside"\)\.inert = false/);
 });
+
+/* ADR 0005 delivery item 3 — per-network copy variants.
+ *
+ * These are source assertions rather than behaviour, because what they pin has
+ * no runtime in this repo: SQL that only a real Postgres executes, and a
+ * whitelist whose omission is silent by construction. */
+
+test("per-network variants are validated where posts are actually written", async () => {
+  const migration = await read("supabase/migrations/20260830120000_post_variants.sql");
+
+  assert.match(migration,
+    /alter table public\.posts\s+add column if not exists variants jsonb not null default '\{\}'/,
+    "existing rows must default to an empty map so they publish byte-identically");
+
+  /* The seam. Posts reach the database through the browser's own upsert under
+     the posts_all RLS policy — there is no post-write Edge Function to put this
+     in, and RLS answers "whose post is this?", not "is this map well-formed?".
+     A CHECK constraint is the one gate every writer passes: today's browser,
+     a future function, psql, a replayed backup. */
+  assert.match(migration, /create or replace function public\.valid_post_variants\(v jsonb\)/);
+  assert.match(migration, /immutable/,
+    "a CHECK constraint may only call an IMMUTABLE function");
+  assert.match(migration,
+    /add constraint posts_variants_valid check \(public\.valid_post_variants\(variants\)\)/);
+  assert.match(migration, /jsonb_typeof\(v\) = 'object'/, "the map itself must be an object");
+  assert.match(migration, /jsonb_typeof\(entry\.value\) <> 'string'/,
+    "values must be strings — never numbers, objects or nulls");
+  for (const platform of [
+    "youtube", "x", "instagram", "facebook", "linkedin", "tiktok", "pinterest", "gbp",
+  ]) {
+    assert.match(migration, new RegExp(`'${platform}'`),
+      `${platform} is a platform this app publishes to, so it is a legal key`);
+  }
+  // Honest caps: a ceiling that stops unbounded jsonb, plus X's real 280, which
+  // decision 12 refuses rather than truncates.
+  assert.match(migration, /length\(entry\.value #>> '\{\}'\) > 63206/);
+  assert.match(migration, /entry\.key = 'x' and length\(entry\.value #>> '\{\}'\) > 280/);
+
+  // The claim RPCs stay shape-agnostic: `p.*` already carries the new column.
+  const scheduling = await read("supabase/migrations/20260731090000_reliable_scheduling.sql");
+  assert.match(scheduling, /returns setof public\.posts/);
+  assert.doesNotMatch(migration, /claim_post_for_publish|claim_due_posts/,
+    "variant resolution happens in the publish loop, so no claim RPC changes");
+});
+
+test("a column the sync whitelist does not name is invisible, so variants is named three times", async () => {
+  const adapter = await read("js/remote-store.js");
+  assert.match(adapter,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants"\]/,
+    "FIELDS.posts decides what is diffed and upserted");
+  assert.match(adapter, /variants: p\.variants \|\| \{\}/, "server row -> app post");
+  assert.match(adapter, /variants:p\.variants \|\| \{\}/, "app post -> server row");
+});
+
+test("the effective-text resolver is one rule, shared by the publish path and mirrored in the composer", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const planner = await read("js/planner.js");
+
+  // The amendment to decision 3: `??` is not enough, on either side.
+  for (const [source, label] of [[platforms, "the publish path"], [planner, "the composer"]]) {
+    /* The behaviour is pinned by tests on both sides — the Deno resolver suite
+       and the composer's inherit-when-blank round trip. What a source assertion
+       adds is that neither side can drift back to `?? ` alone without this
+       failing: the guard is a type check *and* a blank check, together. */
+    assert.match(source, /typeof variant\s*===\s*"string"\s*&&\s*variant\.trim\(\)\s*!==\s*""/,
+      `${label} must treat missing, non-string, empty and whitespace-only variants alike`);
+  }
+  assert.match(publish, /text: effectiveText\(post, platform\)/,
+    "resolution happens per target in the publish loop (decision 4)");
+
+  // Decision 12: the adapter refuses over-length text instead of truncating it.
+  assert.match(platforms, /export const X_TEXT_LIMIT = 280/);
+  // The truncation is gone from the request body, not merely commented about.
+  assert.doesNotMatch(platforms, /text:\s*text\.slice\(/);
+  assert.match(platforms, /if \(text\.length > X_TEXT_LIMIT\)/);
+  assert.match(planner, /export const HARD_TEXT_CAPS = \{ x: 280 \}/);
+});

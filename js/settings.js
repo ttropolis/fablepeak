@@ -135,6 +135,12 @@ export function validBackupPost(p){
     && (p.media_url===undefined || p.media_url===null || isText(p.media_url))
     && Array.isArray(p.networks) && p.networks.every(isText)
     && POST_STATUSES.includes(p.status)
+    // ADR 0005 decision 2: per-network copy. An imported file is as untrusted
+    // as any other input, and the database CHECK on `posts.variants` is the
+    // last line, not the first — a backup that carries a non-string variant is
+    // refused here, before it can reach `db` and be queued for sync.
+    && (p.variants===undefined || (isPlainObject(p.variants)
+        && Object.values(p.variants).every(isText)))
     && (p.targets===undefined || Array.isArray(p.targets));
 }
 export function validBackupThread(t){

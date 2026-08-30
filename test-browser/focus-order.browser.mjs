@@ -181,3 +181,82 @@ test("Tab is left alone while no dialog is open", async t => {
   assert.notEqual(first.name, second.name,
     "the trap must not be armed when the overlay is closed");
 });
+
+/* ADR 0005 decision 11 put a native <details> per selected network inside the
+   composer. Two things only this tier can see: Chromium makes <summary> a Tab
+   stop of its own, and it refuses to tab into a *collapsed* section however
+   focusable the elements inside it look to a querySelectorAll. A trap built
+   from the raw selector alone would point its "last control" at a textarea the
+   keyboard can never reach. */
+
+async function openPerNetworkPanel(page) {
+  await page.locator("#pm_percustom").check();
+  await page.waitForFunction(() => document.querySelectorAll("#pm_variants details").length > 0);
+}
+
+test("the per-network panel keeps every Tab stop inside the dialog", async t => {
+  const { page } = await boot(t);
+  await openComposer(page);
+  await openPerNetworkPanel(page);
+  await page.locator("#pm_text").focus();      // checking the box moved focus to it
+
+  const { start, stops, closed } = await tabCycle(page, { limit: 90 });
+
+  assert.equal(start, "pm_text");
+  assert.ok(closed, "the trap still closes with the panel expanded");
+  assert.deepEqual(stops.filter(stop => !stop.inModal), [],
+    "an expanded disclosure must not open a hole in the dialog");
+  assert.ok(controls(stops).some(name => name.startsWith("summary:")),
+    "the disclosure's own summary is a real Tab stop, and it is reachable");
+});
+
+test("a collapsed section's textarea is not a Tab stop, and opening it makes one", async t => {
+  const { page } = await boot(t);
+  await openComposer(page);
+  await openPerNetworkPanel(page);
+
+  const network = await page.evaluate(() =>
+    document.querySelector("#pm_variants textarea[data-net]").dataset.net);
+  assert.equal(await page.evaluate(() =>
+    document.querySelector("#pm_variants details").open), false,
+    "sections start collapsed — the composer is already tall on a phone");
+
+  const collapsed = await tabCycle(page, { limit: 90 });
+  assert.ok(!controls(collapsed.stops).includes(`pm_var_${network}`),
+    "Chromium will not tab into a collapsed section, so neither may the trap");
+
+  await page.locator("#pm_variants summary").first().click();
+  await page.waitForFunction(() => document.querySelector("#pm_variants details").open);
+  await page.locator("#pm_text").focus();
+
+  const expanded = await tabCycle(page, { limit: 90 });
+  assert.ok(controls(expanded.stops).includes(`pm_var_${network}`),
+    "…and once it is open the textarea joins the keyboard path");
+  assert.deepEqual(expanded.stops.filter(stop => !stop.inModal), []);
+});
+
+test("the app's own focusable list agrees with Chromium about a half-open panel", async t => {
+  const { page } = await boot(t);
+  await openComposer(page);
+  await openPerNetworkPanel(page);
+  await page.locator("#pm_variants summary").first().click();
+  await page.waitForFunction(() => document.querySelector("#pm_variants details").open);
+  await page.locator("#pm_text").focus();
+
+  const { start, stops } = await tabCycle(page, { limit: 90 });
+  const visited = [start, ...controls(stops).slice(0, -1)];
+
+  // The same list handleModalKeydown builds, including its collapsed-details
+  // rule — this is the assertion that would fail if the two ever diverged.
+  const expected = await page.evaluate(() =>
+    [...document.getElementById("modalBody").querySelectorAll(
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled])," +
+      "select:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+      .filter(el => !el.hidden && el.getAttribute("aria-hidden") !== "true"
+        && (el.tagName === "SUMMARY" || !el.closest("details:not([open])")))
+      .map(el => el.id
+        || (el.value && el.type === "checkbox" ? `checkbox:${el.value}` : "")
+        || `${el.tagName.toLowerCase()}:${(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 24)}`));
+
+  assert.deepEqual(visited, expected);
+});

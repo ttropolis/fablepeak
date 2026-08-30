@@ -4,6 +4,7 @@
 // Refreshes expired OAuth tokens automatically.
 import {
   ADAPTERS,
+  effectiveText,
   platformConnectionEnabled,
   ProviderRequestError,
   PublishOutcomeUnknownError,
@@ -153,8 +154,14 @@ export async function publishPost(
       failure_kind: null, next_retry_at: null, error: null });
     try {
       const token = await dependencies.freshConnectionToken(conn, dependencies.env);
+      // ADR 0005 decision 4: variants resolve here, in the per-target loop, and
+      // not at claim time. The three claim RPCs are the atomicity-critical SQL
+      // and already return `p.*`, so keeping them shape-agnostic meant no
+      // migration to any of them. A post with no `variants` resolves to
+      // `post.text` for every platform, which is what keeps existing posts
+      // publishing byte-identically.
       const out = await adapter.publish({
-        text: post.text, mediaUrl: post.media_url ?? null,
+        text: effectiveText(post, platform), mediaUrl: post.media_url ?? null,
         accessToken: token, connection: conn,
       });
       await mark({ status: "published", connection_id: conn.id, attempts: currentAttempt,

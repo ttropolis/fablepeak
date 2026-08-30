@@ -42,6 +42,10 @@ export const RemoteAdapter = {
         posts: posts.filter(p => p.brand_id===b.id).map(p => ({
           id: p.id, date: p.date, time: p.time, text: p.text,
           networks: p.networks || [], status: p.status, media_url: p.media_url || "",
+          // ADR 0005 decision 2: per-network copy. A column this file does not
+          // name is invisible to the app even when it exists, so `variants`
+          // needs all three edits — here, in _dbToRows, and in FIELDS.posts.
+          variants: p.variants || {},
           targets: targets.filter(t => t.post_id===p.id) })),
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
@@ -61,7 +65,8 @@ export const RemoteAdapter = {
         connections:b.connections||{}, smartlink:b.smartlink||{}, client_id:this._clientId });
       for(const p of b.posts) posts.push({ id:p.id, brand_id:b.id, date:p.date,
         time:p.time||"10:00", text:p.text, networks:p.networks||[], status:p.status,
-        media_url:p.media_url || null, client_id:this._clientId });
+        media_url:p.media_url || null, variants:p.variants || {},
+        client_id:this._clientId });
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
         client_id:this._clientId });
@@ -111,7 +116,7 @@ export const RemoteAdapter = {
     const cur = this._dbToRows(data), prev = this._snap || {brands:[],posts:[],inbox:[]};
     const FIELDS = {
       brands: ["id","name","seed","connections","smartlink"],
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url"],
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));

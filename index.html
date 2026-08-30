@@ -110,6 +110,21 @@
   .ai-sugg{border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font:inherit;font-size:13px;padding:8px 10px;text-align:left;cursor:pointer;white-space:pre-wrap;overflow-wrap:anywhere}
   .ai-sugg:hover{border-color:var(--accent);background:#f2fbfd}
   .ai-note{font-size:11px;color:var(--muted)}
+  /* per-network copy (ADR 0005 decisions 11-12) */
+  .charcount{font-size:11px;color:var(--muted);margin-top:4px;text-align:right;min-height:14px}
+  .charcount.near{color:#8a6100}
+  .charcount.over{color:var(--danger);font-weight:600}
+  .percheck{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;cursor:pointer}
+  .variants details{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:8px;background:#f8fafc}
+  /* a flex <summary> loses its native marker in Chromium, and the row has to
+     keep saying "this opens" — so the caret is drawn back in */
+  .variants summary{cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;list-style:none}
+  .variants summary::-webkit-details-marker{display:none}
+  .variants summary::before{content:"▸";color:var(--muted);font-size:10px;width:9px}
+  .variants details[open] summary::before{content:"▾"}
+  .variant-state{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+  .variants textarea{margin-top:8px;min-height:60px}
+  .variant-empty{font-size:12px;color:var(--muted);margin-top:8px}
   .fieldrow{display:flex;gap:10px;flex-wrap:wrap}
   .modalfoot{display:flex;justify-content:space-between;margin-top:18px;gap:8px}
   .modalfoot .right{display:flex;gap:8px}

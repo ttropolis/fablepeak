@@ -36,6 +36,38 @@ export interface PublishInput {
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
 
+/** X refuses a tweet over 280 characters. ADR 0005 decision 12 replaced this
+ * adapter's silent `text.slice(0, 280)` with a refusal, so the number is named
+ * once and asserted against rather than repeated inside the request body. */
+export const X_TEXT_LIMIT = 280;
+
+/** The text one platform actually receives (ADR 0005 decisions 2-4).
+ *
+ * `posts.variants` is a `{ "<network>": "<text>" }` map that overrides
+ * `posts.text` for that network. The amendment to decision 3 is the whole
+ * reason this is a function and not the expression `post.variants?.[platform]
+ * ?? post.text`: `??` only catches null and undefined, so a variant of `""` or
+ * `"   "` would publish an empty or blank post to that network. **Missing,
+ * empty and whitespace-only variants all mean "inherit the base text."**
+ *
+ * A variant that survives that test is sent verbatim, leading and trailing
+ * whitespace included — trimming it would be editing the customer's copy.
+ *
+ * js/planner.js mirrors these exact semantics for the composer's previews,
+ * counters and save-time validation. The two must not drift: a post whose
+ * counter says it inherits must inherit here too. */
+export function effectiveText(
+  post: { text?: string | null; variants?: unknown },
+  platform: string,
+): string {
+  const variants = post?.variants;
+  const variant = variants && typeof variants === "object" && !Array.isArray(variants)
+    ? (variants as Record<string, unknown>)[platform]
+    : undefined;
+  if (typeof variant === "string" && variant.trim() !== "") return variant;
+  return post?.text ?? "";
+}
+
 /** Outcome of asking a provider to drop FablePeak's authorization.
  * `unsupported` distinguishes "the provider has no revocation API" from
  * "revocation was performed", so disconnect never claims an action it could
@@ -454,6 +486,20 @@ const x: PlatformAdapter = {
   },
 
   async publish({ text, mediaUrl, accessToken }) {
+    // ADR 0005 decision 12. The request body used to slice the text down to the
+    // limit: X would accept a post the customer never wrote, with their last
+    // sentence quietly missing. The composer now refuses to save an over-length
+    // X variant, and this is the same rule restated at the boundary that
+    // actually talks to the provider — defence in depth for any path that
+    // reaches an adapter without passing through the composer (an imported
+    // backup, a direct database write, a future API). A plain Error is
+    // classified `permanent`, which is right: no retry can shorten the text.
+    // Checked before the media upload so a doomed post costs no upload.
+    if (text.length > X_TEXT_LIMIT) {
+      throw new Error(
+        `X posts are limited to ${X_TEXT_LIMIT} characters — this one is ` +
+        `${text.length}. Shorten it, or give X its own shorter variant.`);
+    }
     const mediaId = mediaUrl ? await uploadXMedia(mediaUrl, accessToken) : null;
     let response: Response;
     try {
@@ -461,7 +507,7 @@ const x: PlatformAdapter = {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: text.slice(0, 280),
+          text,
           ...(mediaId ? { media: { media_ids: [mediaId] } } : {}),
         }),
       });

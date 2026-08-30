@@ -353,3 +353,106 @@ test("a hostile suggestion is rendered as text and never as markup", async t => 
   assert.equal(app.$("#pm_text").value, payload);
   assert.equal(app.eval("window.__pwnHits"), 0);
 });
+
+/* ---------- ADR 0005 decision 13: rewrite targets the focused variant ---------- */
+
+const variantBox = (app, net) => app.$(`#pm_variants textarea[data-net="${net}"]`);
+
+/** Open the per-network panel with `nets` selected, and put the caret in one. */
+async function focusVariant(app, net, nets) {
+  for (const box of app.$$("#pm_nets input")) await app.check(box, nets.includes(box.value));
+  await app.check("#pm_percustom", true);
+  await app.waitFor(() => variantBox(app, net), { label: `the ${net} section` });
+  variantBox(app, net).focus();                 // the real path: a caret, not a keystroke
+  await app.flush();
+}
+
+test("rewrite retargets to the focused network however many are selected", async t => {
+  const app = await bootComposer({
+    aiAssist: request => request.action === "rewrite"
+      ? { suggestions: ["Old text, but in 40 characters."] } : { suggestions: [] },
+  });
+  t.after(() => app.close());
+  const rewrite = () => assistButton(app, "Rewrite for network");
+
+  // Two networks selected: before this decision, rewrite was simply blocked.
+  await focusVariant(app, "x", ["instagram", "x"]);
+  assert.equal(rewrite().disabled, false,
+    "the caret names the network, so the one-network restriction is retired");
+
+  await app.click(rewrite());
+  assert.deepEqual(calls(app, "aiAssist").map(c => c.args).at(-1), [
+    "b1", { action: "rewrite", text: "Old text", network: "x" },
+  ], "an empty variant inherits, so the base text is what the model is given — for X");
+
+  await app.click(app.$("#pm_ai .ai-sugg"));
+  assert.equal(variantBox(app, "x").value, "Old text, but in 40 characters.",
+    "the suggestion lands in the variant the caret was in");
+  assert.equal(app.$("#pm_text").value, "Old text", "…and the post's own content is untouched");
+  assert.equal(app.toast(), "X / Twitter version replaced");
+  assert.equal(variantBox(app, "instagram").value, "",
+    "the network that was not targeted still inherits");
+});
+
+test("an AI suggestion in a variant is an unsaved change, and saves as per-network copy", async t => {
+  const app = await bootComposer({ aiAssist: { suggestions: ["A tighter X line."] } });
+  t.after(() => app.close());
+
+  await focusVariant(app, "x", ["instagram", "x"]);
+  await app.click(assistButton(app, "Rewrite for network"));
+  await app.click(app.$("#pm_ai .ai-sugg"));
+
+  app.answerConfirm(false);
+  await app.click(app.byText(".modalfoot button", "Cancel"));
+  assert.ok(app.confirms.includes("Discard this post?"),
+    "model output in a variant is an edit like any other");
+  assert.equal(app.modalOpen(), true);
+
+  await app.fill("#pm_media", "https://cdn.example.com/photo.jpg");   // Instagram needs one
+  await app.click(app.byText(".modalfoot button", "Save"));
+  assert.equal(app.modalOpen(), false);
+  const saved = app.db.brands[0].posts.find(p => p.id === "p1");
+  assert.deepEqual({ ...saved.variants }, { x: "A tighter X line." });
+  assert.equal(saved.text, "Old text");
+});
+
+test("a focused variant for a network with no house style is refused, not silently redirected", async t => {
+  const app = await bootComposer();
+  t.after(() => app.close());
+
+  // Google Business is connected and selectable, and the Edge Function has no
+  // conventions for it — a 400 waiting to happen. With the caret in its
+  // section, falling back to the one other selected network would rewrite the
+  // wrong thing, so the button refuses instead.
+  await focusVariant(app, "gbp", ["instagram", "gbp"]);
+  const rewrite = assistButton(app, "Rewrite for network");
+  assert.equal(rewrite.disabled, true);
+  assert.equal(rewrite.title, "AI assist has no house style for that network yet");
+  assert.deepEqual(calls(app, "aiAssist"), []);
+});
+
+test("with no variant focused, rewrite still needs exactly one selected network", async t => {
+  const app = await bootComposer();
+  t.after(() => app.close());
+  const rewrite = () => assistButton(app, "Rewrite for network");
+
+  // The base text has no network of its own, so the original rule governs it.
+  await app.check(app.$('#pm_nets input[value="x"]'), true);
+  assert.equal(rewrite().disabled, true);
+  assert.equal(rewrite().title, "Select exactly one network to rewrite for");
+});
+
+test("moving the caret back to the post's own content retargets the rewrite with it", async t => {
+  const app = await bootComposer();
+  t.after(() => app.close());
+  const rewrite = () => assistButton(app, "Rewrite for network");
+
+  await focusVariant(app, "x", ["instagram", "x"]);
+  assert.equal(rewrite().disabled, false, "the X section is the subject");
+
+  app.$("#pm_text").focus();
+  await app.flush();
+  assert.equal(rewrite().disabled, true);
+  assert.equal(rewrite().title, "Select exactly one network to rewrite for",
+    "the base text is the subject again, and two networks cannot both claim it");
+});

@@ -1,0 +1,17 @@
+{
+  "comment": "Shared truth for the two effectiveText implementations (js/planner.js and supabase/functions/_shared/platforms.ts). Both test suites assert every case; a semantic change to either resolver must update this file, which forces the other side's suite to notice. ADR 0005 decisions 2-3.",
+  "cases": [
+    { "name": "no variants field inherits", "post": { "text": "base" }, "platform": "x", "expect": "base" },
+    { "name": "empty map inherits", "post": { "text": "base", "variants": {} }, "platform": "x", "expect": "base" },
+    { "name": "missing key inherits", "post": { "text": "base", "variants": { "facebook": "fb copy" } }, "platform": "x", "expect": "base" },
+    { "name": "empty string inherits", "post": { "text": "base", "variants": { "x": "" } }, "platform": "x", "expect": "base" },
+    { "name": "whitespace-only inherits", "post": { "text": "base", "variants": { "x": "   \n\t " } }, "platform": "x", "expect": "base" },
+    { "name": "real variant overrides", "post": { "text": "base", "variants": { "x": "short x copy" } }, "platform": "x", "expect": "short x copy" },
+    { "name": "variant sent verbatim with outer whitespace", "post": { "text": "base", "variants": { "x": "  padded  " } }, "platform": "x", "expect": "  padded  " },
+    { "name": "non-string variant inherits", "post": { "text": "base", "variants": { "x": 42 } }, "platform": "x", "expect": "base" },
+    { "name": "array variants object inherits", "post": { "text": "base", "variants": ["x"] }, "platform": "x", "expect": "base" },
+    { "name": "null variants inherits", "post": { "text": "base", "variants": null }, "platform": "x", "expect": "base" },
+    { "name": "null text with no variant is empty", "post": { "text": null, "variants": {} }, "platform": "x", "expect": "" },
+    { "name": "other platform's variant does not leak", "post": { "text": "base", "variants": { "facebook": "fb copy" } }, "platform": "instagram", "expect": "base" }
+  ]
+}

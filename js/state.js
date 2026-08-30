@@ -62,6 +62,16 @@ export const AI_ASSIST_IDLE = Object.freeze({
   busy: null, action: null, items: Object.freeze([]), truncated: false,
 });
 export let aiAssist = AI_ASSIST_IDLE;
+/** The open composer's per-network copy (ADR 0005 decision 2), keyed by network
+    id. Holds what is typed *and* what was retained: a variant for a network the
+    customer has since deselected stays here so re-selecting restores the draft,
+    and is never published. Reset whenever a modal opens or closes, so no
+    composer inherits another one's copy. */
+export let composerVariants = {};
+/** Which per-network section the composer last put the caret in — the target
+    for AI "Rewrite for network" (ADR 0005 decision 13). Null until the customer
+    touches one, which is what makes the base text the default subject. */
+export let composerVariantFocus = null;
 
 export function setDb(value){ db = value; }
 export function setView(value){ view = value; }
@@ -81,6 +91,8 @@ export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
 export function setComposerBaseline(value){ composerBaseline = value; }
 export function setAiAssist(value){ aiAssist = value; }
+export function setComposerVariants(value){ composerVariants = value; }
+export function setComposerVariantFocus(value){ composerVariantFocus = value; }
 
 const SETTERS = {
   db: setDb, view: setView, calCursor: setCalCursor, selectedMsg: setSelectedMsg,
@@ -91,6 +103,8 @@ const SETTERS = {
   roleCache: setRoleCache, teamCache: setTeamCache, inviteCache: setInviteCache,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
+  composerVariants: setComposerVariants,
+  composerVariantFocus: setComposerVariantFocus,
 };
 
 /** Set one field by name. Used by the test seam (js/main.js), which needs to

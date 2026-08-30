@@ -5,8 +5,9 @@ import { NETWORKS, SCHEDULE_TZ } from "./constants.js";
 import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
-  AI_ASSIST_IDLE, aiAssist, calCursor, mediaUploadActive, setAiAssist,
-  setComposerBaseline, setMediaUploadActive,
+  AI_ASSIST_IDLE, aiAssist, calCursor, composerVariantFocus, composerVariants,
+  mediaUploadActive, setAiAssist, setComposerBaseline, setComposerVariantFocus,
+  setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
 import {
@@ -141,8 +142,10 @@ export function openPostModal(id, dateStr){
     ${p?deliveryPanel(p):""}
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}
-      data-input="syncAiAssist">${esc(p?.text||"")}</textarea>
+      data-input="syncComposer" data-focus="focusVariant">${esc(p?.text||"")}</textarea>
+    <div class="charcount" id="pm_count" aria-live="polite"></div>
     ${aiAssistPanel(locked)}
+    ${perNetworkPanel(p, locked)}
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${attr(p?.media_url||"")}" ${locked?"disabled":""} data-change="showMediaPreview">
     <div class="media-preview" id="pm_media_preview"></div>
@@ -190,9 +193,184 @@ export function openPostModal(id, dateStr){
         ${locked?"":`<button class="btn" data-action="savePost" data-arg="${attr(p?.id||"")}">${p?"Save":"Schedule"}</button>`}
       </div>
     </div>`);
+  // openModal() cleared these; the composer's own copy is installed after it.
+  setComposerVariants({...(p?.variants||{})});
+  setComposerVariantFocus(null);
   if(p?.media_url) showMediaPreview(p.media_url);
-  syncAiAssist();                              // the panel was built before #pm_text existed
+  renderVariantSections();                     // #pm_variants was built empty
+  syncComposer();                              // the panels were built before #pm_text existed
   setComposerBaseline(composerSnapshot());     // arms the unsaved-changes guard
+}
+
+/* =============== per-network copy (ADR 0005 decisions 2, 11 and 12) ===============
+
+   One post, one media URL, one schedule — and, optionally, a different string of
+   copy per network. The map lives on the post as `variants`; an entry overrides
+   `text` for that network and anything blank inherits it.
+
+   Two rules shape everything below.
+
+   The resolver is the contract. `effectiveText()` here and `effectiveText()` in
+   supabase/functions/_shared/platforms.ts must agree character for character,
+   because one of them draws the counter that tells the customer their post fits
+   and the other decides what the provider is actually sent.
+
+   The panel is off by default and renders *nothing* when it is off — not hidden
+   markup. A composer with no variants therefore has exactly the DOM it had
+   before this feature existed, which is what keeps the modal's focus trap and
+   the browser tier's tab-order walk describing the same dialog they always did. */
+
+/* Advisory in the composer, except where HARD_TEXT_CAPS repeats the number:
+   those are provider limits that refuse the post rather than trim it. */
+export const NETWORK_TEXT_CAPS = {
+  x: 280, instagram: 2200, pinterest: 500, linkedin: 3000,
+  tiktok: 2200, youtube: 5000, gbp: 1500, facebook: 63206,
+};
+/* ADR 0005 decision 12: X's 280 is refused at save time. The adapter refuses it
+   again at publish time; neither one truncates the customer's words any more. */
+export const HARD_TEXT_CAPS = { x: 280 };
+
+/** The text one network actually receives.
+ *
+ *  Mirrors effectiveText() in supabase/functions/_shared/platforms.ts, and the
+ *  amendment to ADR 0005 decision 3 is the whole reason it is a function rather
+ *  than `post.variants?.[net] ?? post.text`: `??` catches only null and
+ *  undefined, so a variant of "" or "   " would mean "publish nothing here".
+ *  **Missing, empty and whitespace-only variants all inherit the base text.**
+ *  A variant that is not blank is used verbatim, outer whitespace included. */
+export function effectiveText(post, network){
+  const variants=post?.variants;
+  const variant = variants && typeof variants==="object" && !Array.isArray(variants)
+    ? variants[network] : undefined;
+  return (typeof variant==="string" && variant.trim()!=="") ? variant : (post?.text ?? "");
+}
+/** Does this post carry per-network copy worth reopening the panel for? Only a
+    known network's non-blank entry counts — an imported map's junk key is not
+    copy anyone can edit here, and normalizedVariants() drops it on the next
+    save. */
+function hasVariants(p){
+  return NETWORKS.some(n => typeof p?.variants?.[n.id]==="string"
+    && p.variants[n.id].trim()!=="");
+}
+function checkedNets(){
+  return [...document.querySelectorAll("#pm_nets input:checked")].map(i=>i.value);
+}
+/** The variant textarea for one network, when its section is on screen. */
+function variantBox(network){
+  return [...document.querySelectorAll("#pm_variants textarea[data-net]")]
+    .find(box => box.dataset.net===network) || null;
+}
+/** What is typed right now, over what this composer opened with or retained. */
+function currentVariants(){
+  const typed={};
+  for(const box of document.querySelectorAll("#pm_variants textarea[data-net]"))
+    typed[box.dataset.net]=box.value;
+  return {...composerVariants, ...typed};
+}
+/** The map as it is stored: blanks dropped (they mean inherit), keys in one
+    fixed order so the dirty-state baseline compares by value, not by history. */
+function normalizedVariants(map){
+  const out={};
+  for(const n of NETWORKS){
+    const value=map[n.id];
+    if(typeof value==="string" && value.trim()!=="") out[n.id]=value;
+  }
+  return out;
+}
+/* The disclosure itself. Off unless the post already has copy to show, so a
+   post without variants opens exactly as it did before (decision 11). */
+function perNetworkPanel(p, locked){
+  if(locked) return "";
+  return `<label class="percheck"><input type="checkbox" id="pm_percustom"
+      ${hasVariants(p)?"checked":""} data-change="togglePerNetwork"> Customize per network</label>
+    <div class="variants" id="pm_variants"></div>`;
+}
+/* One native <details> per *selected* network — no tabs. Tabs would hide the
+   base text, which is the one thing the customer needs in front of them to know
+   what a network inherits, and they would add a roving-tabindex ARIA pattern to
+   a dialog whose keyboard contract two suites already pin. */
+function variantSection(id){
+  const net=netOf(id);
+  if(!net) return "";
+  const value=composerVariants[id]||"";
+  return `<details class="variant"${value.trim()?" open":""}>
+    <summary tabindex="0" data-focus="focusVariant" data-arg="${attr(id)}">
+      <span style="color:${net.color};font-weight:700">${esc(net.short)}</span> ${esc(net.name)}
+      <span class="variant-state">${value.trim()?"custom":"inherits"}</span>
+    </summary>
+    <textarea id="pm_var_${attr(id)}" data-net="${attr(id)}" data-input="syncVariant" data-focus="focusVariant"
+      data-arg="${attr(id)}" aria-label="${attr(net.name+" version of this post")}"
+      >${esc(value)}</textarea>
+    ${NETWORK_TEXT_CAPS[id]?`<div class="charcount" data-count="${attr(id)}"></div>`:""}
+  </details>`;
+}
+/** Rebuild the sections for the currently selected networks, keeping whatever
+    is already typed — including copy for a network that has just been
+    deselected, which is retained but never published. */
+export function renderVariantSections(){
+  const host=document.getElementById("pm_variants");
+  if(!host) return;
+  setComposerVariants(currentVariants());
+  const on=document.getElementById("pm_percustom")?.checked;
+  const nets=checkedNets();
+  host.innerHTML = !on ? ""
+    : nets.length ? nets.map(variantSection).join("")
+    : `<p class="variant-empty">Pick a network below to write a version just for it.</p>`;
+  // The base counter names the strictest network still inheriting, so it has to
+  // be redrawn even on the path that renders nothing.
+  syncComposerCounts();
+}
+export function togglePerNetwork(){ renderVariantSections(); }
+/** One variant textarea changed: remember it, aim the AI at it, redraw counts. */
+export function syncVariant(el){
+  composerVariants[el.dataset.net]=el.value;
+  setComposerVariantFocus(el.dataset.net);
+  syncComposer();
+}
+/** Any caret landing inside a per-network section aims the AI at that network,
+    and a caret back in the post's own content aims it at the base text again
+    (ADR 0005 decision 13). Deliberately *not* cleared by focus moving anywhere
+    else: pressing the Rewrite button moves focus to the button, and clearing
+    the target there would destroy the very thing the press is about. */
+export function focusVariant(network){
+  setComposerVariantFocus(network || null);
+  syncAiAssist();
+}
+/* The counters. The base one answers "does what I typed fit the strictest
+   network still inheriting it?", which is the question decision 12 makes
+   load-bearing for X; each section's own answers it for that network's copy. */
+export function syncComposerCounts(){
+  const base=document.getElementById("pm_text")?.value ?? "";
+  const values=currentVariants();
+  for(const box of document.querySelectorAll("#pm_variants textarea[data-net]")){
+    const id=box.dataset.net, section=box.closest("details");
+    box.placeholder = base || "Leave this empty to use the main content";
+    const state=section?.querySelector(".variant-state");
+    if(state) state.textContent = box.value.trim() ? "custom" : "inherits";
+    paintCount(section?.querySelector("[data-count]"), box.value.length, NETWORK_TEXT_CAPS[id]);
+  }
+  const meter=document.getElementById("pm_count");
+  if(!meter) return;
+  const inheriting=checkedNets()
+    .filter(id => NETWORK_TEXT_CAPS[id] && !(values[id]||"").trim())
+    .sort((a,b) => NETWORK_TEXT_CAPS[a]-NETWORK_TEXT_CAPS[b]);
+  const tightest=inheriting[0];
+  paintCount(meter, base.length, NETWORK_TEXT_CAPS[tightest],
+    tightest ? " · " + netOf(tightest).name : "");
+}
+/* Amber approaching the cap, red past it. Red past a cap the composer does not
+   refuse (Instagram's 2200, say) is still the truth: the provider will reject
+   it. What "advisory" buys those networks is that saving is allowed anyway. */
+function paintCount(el, length, cap, suffix=""){
+  if(!el) return;
+  if(!cap){ el.textContent=""; el.className="charcount"; return; }
+  el.textContent = `${length} / ${cap}${suffix}`;
+  el.className = "charcount" + (length>cap ? " over" : length>=cap*0.9 ? " near" : "");
+}
+/** Everything beside the content boxes that has to react while typing. */
+export function syncComposer(){
+  syncComposerCounts();
+  syncAiAssist();
 }
 
 /* =============== AI assist (cloud + signed in only) =============== */
@@ -222,7 +400,17 @@ const AI_RESULT_LABEL = {
 const AI_NETWORKS = ["x","linkedin","instagram","facebook","pinterest","youtube","tiktok"];
 const AI_MAX_INPUT = 4000;                     // MAX_INPUT_CHARS, server-side
 
-function aiText(){ return document.getElementById("pm_text")?.value.trim() || ""; }
+/** The box the assist reads from and writes into: the per-network section the
+    caret is in, when there is one, or the post's own content (decision 13). */
+function aiBox(){
+  return (composerVariantFocus && variantBox(composerVariantFocus))
+    || document.getElementById("pm_text");
+}
+function aiText(){
+  // A blank variant inherits, so the base text is what the model works from.
+  return aiBox()?.value.trim()
+    || document.getElementById("pm_text")?.value.trim() || "";
+}
 function aiCheckedNets(){
   return [...document.querySelectorAll("#pm_nets input:checked")].map(i=>i.value);
 }
@@ -230,6 +418,27 @@ function aiCheckedNets(){
 function aiNetwork(){
   const nets=aiCheckedNets();
   return nets.length===1 && AI_NETWORKS.includes(nets[0]) ? nets[0] : null;
+}
+/** The per-network section the caret is in, when that section is on screen. */
+function focusedVariantNetwork(){
+  return (composerVariantFocus && variantBox(composerVariantFocus))
+    ? composerVariantFocus : null;
+}
+/** Which network the assist writes for (ADR 0005 decision 13).
+ *
+ *  The focused per-network section wins, however many networks are selected —
+ *  that is the retarget, and it is what retires "Select exactly one network"
+ *  as rewrite's most-hit blocker. A focused section whose network the Edge
+ *  Function has no house style for resolves to nothing rather than quietly
+ *  falling back: the customer is plainly working on *that* network.
+ *
+ *  With no section focused the subject is the base text, and base text has no
+ *  network of its own — so the original rule still governs it: exactly one
+ *  selected network, and one the assist knows a house style for. */
+function aiTargetNetwork(){
+  const focused=focusedVariantNetwork();
+  if(focused) return AI_NETWORKS.includes(focused) ? focused : null;
+  return aiNetwork();
 }
 /** Why this button cannot run yet — shown as its title — or "" when it can. */
 export function aiAssistBlocked(action){
@@ -239,8 +448,8 @@ export function aiAssistBlocked(action){
     : "Write some content first";
   if(text.length>AI_MAX_INPUT)
     return `AI assist reads up to ${AI_MAX_INPUT} characters — this is ${text.length}`;
-  if(action==="rewrite" && !aiNetwork())
-    return aiCheckedNets().length===1
+  if(action==="rewrite" && !aiTargetNetwork())
+    return focusedVariantNetwork() || aiCheckedNets().length===1
       ? "AI assist has no house style for that network yet"
       : "Select exactly one network to rewrite for";
   return "";
@@ -288,7 +497,7 @@ export async function runAiAssist(action){
   const blocked=aiAssistBlocked(action);
   if(blocked) return toast(blocked);
   const request = action==="caption" ? {action, topic:aiText()} : {action, text:aiText()};
-  const network=aiNetwork();
+  const network=aiTargetNetwork();
   if(network) request.network=network;
   setAiAssist({...aiAssist, busy:action});
   paintAiAssist();
@@ -320,13 +529,20 @@ export function aiAssistMessage(error){
    exactly as openPostModal armed it, so a composer whose text came from the
    model still asks before it is discarded. */
 export function useAiSuggestion(index){
-  const box=document.getElementById("pm_text");
+  const box=aiBox();
   const suggestion=(aiAssist.items||[])[Number(index)];
   if(!box || box.disabled || suggestion===undefined) return;
+  const network=box.dataset.net || "";
+  // Appending to a blank variant would replace what it inherits with one
+  // hashtag. Append to the text it actually stands for instead.
+  const existing = network && !box.value.trim()
+    ? (document.getElementById("pm_text")?.value || "") : box.value;
   box.value = aiAssist.action==="hashtags"
-    ? appendHashtag(box.value, suggestion) : suggestion;
-  syncAiAssist();
-  toast(aiAssist.action==="hashtags" ? "Hashtag added" : "Content replaced");
+    ? appendHashtag(existing, suggestion) : suggestion;
+  if(network) composerVariants[network]=box.value;
+  syncComposer();
+  toast(aiAssist.action==="hashtags" ? "Hashtag added"
+    : network ? `${netOf(network).name} version replaced` : "Content replaced");
 }
 function appendHashtag(text, tag){
   const clean=String(tag).trim(), body=String(text).replace(/\s+$/,"");
@@ -340,7 +556,10 @@ export function readPostForm(){
   const date=document.getElementById("pm_date").value, time=document.getElementById("pm_time").value;
   const status=document.getElementById("pm_status").value;
   const media_url=document.getElementById("pm_media").value.trim();
-  return {text,nets,date,time,status,media_url};
+  // Variants are part of the form, so composerSnapshot() sees an edit to one
+  // and the Escape guard asks before discarding it (ADR 0005 dirty-state note).
+  const variants=normalizedVariants(currentVariants());
+  return {text,nets,date,time,status,media_url,variants};
 }
 export function showMediaPreview(url,contentType=""){
   const box=document.getElementById("pm_media_preview");
@@ -402,10 +621,26 @@ export async function uploadPostMedia(input){
     input.value="";
   }
 }
-export function validatePostForm({text,nets,date,time,media_url}){
+export function validatePostForm({text,nets,date,time,media_url,variants={}}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
   if(!date || !time) return toast("Choose a date and time");
+  /* ADR 0005 decision 12. Every selected network is checked against the text it
+     will actually receive, so a blank variant is validated as the base text it
+     inherits rather than as "publish nothing". Only a hard cap refuses the
+     save: X's 280 used to be a silent `text.slice(0, 280)` in the adapter, and
+     losing the end of a customer's sentence without telling them is worse than
+     refusing to save it. */
+  for(const id of nets){
+    const cap=HARD_TEXT_CAPS[id];
+    if(!cap) continue;
+    const length=effectiveText({text,variants}, id).length;
+    if(length<=cap) continue;
+    const name=netOf(id).name;
+    return toast((variants[id]||"").trim()
+      ? `${name} allows ${cap} characters — that version is ${length}. Shorten it.`
+      : `${name} allows ${cap} characters — this post is ${length}. Shorten it, or give ${name} its own shorter version.`);
+  }
   if(media_url){
     try{ const u=new URL(media_url); if(u.protocol!=="https:") throw 0; }
     catch(e){ return toast("Media must use a valid https:// URL"); }
