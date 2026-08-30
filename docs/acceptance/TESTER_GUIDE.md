@@ -751,8 +751,9 @@ devices, as in Script 6. Run this **after Script 6 and before Script 8.**
 
 Tester 1 owns a workspace. Tester 2 is invited into it as an **editor**. This
 proves an editor can do the everyday work — write posts, schedule them, reply in
-the Inbox — but cannot delete the brand, disconnect Tester 1's social accounts,
-change which account publishes, or publish the SmartLinks page.
+the Inbox — and can walk out of the workspace whenever they choose, but cannot
+delete the brand, disconnect Tester 1's social accounts, change which account
+publishes, or publish the SmartLinks page.
 
 Before you start, **Tester 1 must have at least one social account connected**
 (reconnect one from Script 1, 2 or 4 if you disconnected them all), otherwise
@@ -825,8 +826,8 @@ dropdown first).
 
 **Part E — what the editor must NOT be able to do**
 
-Still Tester 2, still inside Tester 1's workspace. In each step, **try the
-control** — do not just look at it.
+Steps 18 to 20 and step 22 are Tester 2, inside Tester 1's workspace; step 21
+needs both of you. In each step, **try the control** — do not just look at it.
 
 18. **Settings → Brands.** The red **✕** button next to Tester 1's brand is
     greyed out and does nothing when clicked. Hover it: a tooltip reads *"Only
@@ -845,13 +846,37 @@ control** — do not just look at it.
     this workspace. Only its owners can claim a link name or publish this
     page."* Click the greyed-out button and try to type in the box — nothing
     must happen, and the public link must not change. Screenshot the card.
-21. **Try to leave the workspace.** Look through **Settings**, including the
-    **Team** card, for any control that would remove you from Tester 1's
-    workspace — a *Leave*, *Remove me*, or an **✕** beside your own name. **In
-    this release there is none.** Write down exactly where you looked and what
-    you found. If you do find such a control, use it once, screenshot what
-    happens, and note whether you were removed — that is a result the release
-    owner needs.
+21. **Leaving the workspace — and the one person who cannot.** This step needs
+    **both** testers, and it puts the workspace back the way it was before step
+    22. Do all four parts in order.
+
+    a. **Tester 1** (the owner): open **Settings → Team**. At the bottom of the
+       card there is a **Leave workspace** button. Because you are this
+       workspace's only owner, it is **greyed out**. Hover it — a tooltip reads
+       *"You're this workspace's only owner. Make somebody else an owner first,
+       or delete the workspace from Settings → Brands."* The same sentence is
+       printed in grey underneath it. Click it anyway: nothing must happen, and
+       you must still be in the workspace afterwards. Screenshot the card.
+
+    b. **Tester 2** (the editor, inside Tester 1's workspace): on that same
+       **Team** card, the **Leave workspace** button is **not** greyed out.
+       Click it. A box asks *"Leave this workspace? You'll lose access until
+       re-invited."* — click OK. A message reads *"You've left that workspace"*,
+       and Tester 1's workspace **disappears from your Brand dropdown**. Open
+       the dropdown and screenshot it. Try to reach Tester 1's workspace again —
+       you must not be able to.
+
+    c. **Tester 1**: reload the page and open **Settings → Team** again. Tester
+       2's address is **gone** from the list; only Tester 1 remains. Screenshot
+       the card.
+
+    d. **Put the workspace back before you continue.** Tester 1 invites Tester
+       2's address one more time as **Editor**; Tester 2 reloads, clicks
+       **Accept** in the **Invitations** card, and picks Tester 1's workspace in
+       the **Brand** dropdown. Both of you check that **Settings → Team** lists
+       both people again. Step 22 assumes Tester 2 is back inside Tester 1's
+       workspace as an editor.
+
 22. Tester 2: switch the **Brand** dropdown back to **your own** workspace and
     confirm it still behaves normally — your own brand can still be deleted,
     your own account disconnected. Screenshot it. Being an editor somewhere else
@@ -859,8 +884,9 @@ control** — do not just look at it.
 
 If at any point Tester 2 succeeds at something Part E says must be blocked —
 deleting the brand, disconnecting or re-selecting an account, claiming or
-publishing the SmartLinks page — stop immediately, screenshot it, note the time,
-and tell the release owner. That is a serious finding.
+publishing the SmartLinks page — or Tester 1's greyed-out **Leave workspace**
+actually removes the workspace's only owner, stop immediately, screenshot it,
+note the time, and tell the release owner. That is a serious finding.
 
 **Evidence to capture (Script 9)**
 
@@ -892,8 +918,14 @@ and tell the release owner. That is a serious finding.
       publishing anywhere, with the owner-only line visible
 - [ ] Screenshot: **SmartLinks → Public page** as the editor, controls greyed
       out, with the owner-only line visible
-- [ ] Note: exactly where you looked for a way to leave the workspace, and what
-      you found
+- [ ] Screenshot: Tester 1's **Team** card with **Leave workspace** greyed out
+      and the only-owner sentence visible
+- [ ] Screenshot: Tester 2's **Brand** dropdown after leaving, without Tester
+      1's workspace
+- [ ] Screenshot: Tester 1's **Team** card after the editor left, listing only
+      Tester 1
+- [ ] Note: that Tester 2 was re-invited and accepted again before step 22, with
+      the date and time
 - [ ] Screenshot: Tester 2 back in their own workspace, controls working again
 - [ ] Note: date, time and time zone for each screenshot, and confirmation that
       two separate devices were used

@@ -40,7 +40,8 @@ import {
   installPhoneApp, renameBrand, resetData,
 } from "./settings.js";
 import {
-  acceptInvite, declineInvite, inviteMember, revokeInvite, simulatedTeamAction,
+  acceptInvite, declineInvite, inviteMember, leaveBrand, revokeInvite,
+  simulatedTeamAction,
 } from "./team.js";
 
 export const ACTIONS = {
@@ -133,6 +134,9 @@ export const ACTIONS = {
   revokeInvite:          el => revokeInvite(el.dataset.arg),
   acceptInvite:          el => acceptInvite(el.dataset.arg),
   declineInvite:         el => declineInvite(el.dataset.arg),
+  /* No data-arg: leaving is always about the *active* brand and the caller's
+     own membership, so there is no id for the markup to carry or to get wrong. */
+  leaveBrand:            () => leaveBrand(),
   simulatedTeamAction:   () => simulatedTeamAction(),
 };
 function actionTarget(ev, name){ return ev.target?.closest?.(`[data-${name}]`) || null; }

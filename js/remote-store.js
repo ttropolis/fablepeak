@@ -338,6 +338,48 @@ export const RemoteAdapter = {
     if(error) throw new Error(error.message);
     return data || { ok:false, error:"unknown_error" };
   },
+  /** Leave a workspace: delete the caller's OWN brand_members row.
+      Not an RPC, because there is nothing for one to authorise —
+      20260830100000_owner_role_enforcement.sql §4 writes members_delete as
+      `is_owner(brand_id) or user_id = auth.uid()`, so the self-delete path is
+      already the policy. The user_id filter is therefore not decoration: an
+      owner's unfiltered DELETE would match every row that policy admits, which
+      is the whole roster.
+      The last owner of a workspace that still has members is refused by the
+      brand_members_keep_an_owner trigger with errcode 23514. That refusal is a
+      result somebody has to read, so it becomes a sentence here rather than a
+      raw Postgres message — and it is the guarantee the disabled control in
+      js/team.js only advertises. */
+  async leaveBrand(brandId){
+    if(!this.user) throw new Error("Sign in first — your session may have expired.");
+    const { error } = await this._sb.from("brand_members")
+      .delete().eq("brand_id", brandId).eq("user_id", this.user.id);
+    if(error) throw new Error(
+      error.code === "23514" || /at least one owner/i.test(error.message || "")
+        ? "You're this workspace's only owner — make somebody else an owner first, or delete the workspace instead."
+        : error.message);
+    // The workspace is no longer this account's, so it must not outlive the
+    // departure in the diff baseline or the offline cache: persist() would
+    // otherwise open the next save by asking the server to delete a brand that
+    // is not ours to delete, and load() would serve it back from localStorage
+    // — including the "your cloud workspace is empty, upload this device's
+    // data?" prompt to somebody who has just left their only one.
+    if(this._snap) this._snap = {
+      brands: this._snap.brands.filter(b => b.id !== brandId),
+      posts:  this._snap.posts.filter(p => p.brand_id !== brandId),
+      inbox:  this._snap.inbox.filter(t => t.brand_id !== brandId),
+    };
+    try{
+      const cached = JSON.parse(localStorage.getItem(LS_KEY));
+      if(cached?.brands?.length){
+        cached.brands = cached.brands.filter(b => b.id !== brandId);
+        if(cached.activeBrand === brandId) cached.activeBrand = cached.brands[0]?.id || "";
+        localStorage.setItem(LS_KEY, JSON.stringify(cached));
+      }
+    }catch(e){}
+    if(localStorage.getItem("fablepeak_pref_activeBrand") === brandId)
+      localStorage.removeItem("fablepeak_pref_activeBrand");
+  },
   /** opens the platform's consent screen; resolves when the popup reports back */
   async startOAuth(platform, brandId){
     const jwt = await this._jwt();

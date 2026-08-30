@@ -19,10 +19,10 @@
 import { OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc } from "./escape.js";
 import {
-  inviteCache, setInviteCache, setTeamCache, teamCache, view,
+  inviteCache, setInviteCache, setRoleCache, setTeamCache, teamCache, view,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
-import { brand, isOwner, load } from "./workspace.js";
+import { brand, isOwner, load, myRole } from "./workspace.js";
 import { render, toast } from "./shell.js";
 
 /* create_invite's typed refusals, mapped to what an owner should read. An
@@ -151,6 +151,36 @@ function pendingRow(i){
     <button class="btn ghost mini" data-action="revokeInvite" data-arg="${attr(i.id)}">Revoke</button>
   </div>`;
 }
+/* ---------- leaving a workspace ---------- */
+/* The UI half of members_delete's self-delete arm
+   (20260830100000_owner_role_enforcement.sql §4). Offered to every member,
+   because every member can use it; disabled for exactly one person — the
+   workspace's only owner, whose departure brand_members_keep_an_owner refuses.
+   Disabling is the affordance, the trigger is the guarantee, which is why an
+   unanswered role lookup leaves the control live rather than blocked: myRole()
+   is null then, and null is not "owner". */
+const LAST_OWNER_TITLE =
+  "You're this workspace's only owner. Make somebody else an owner first, " +
+  "or delete the workspace from Settings → Brands.";
+/** Am *I* the last owner? Read off the roster brand_member_list already
+    returned — every member may read it (decision 12), so this needs no second
+    lookup and no owner-only data. A roster that failed to load counts nobody,
+    which leaves the control live and the refusal to the trigger. */
+function onlyOwner(){
+  return myRole() === "owner"
+    && teamCache.members.filter(m => m.member_role === "owner").length === 1;
+}
+function leaveRow(){
+  const blocked = onlyOwner();
+  return `<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+    <button class="btn ghost mini" data-action="leaveBrand"
+      ${blocked ? `disabled title="${attr(LAST_OWNER_TITLE)}"` : ""}>Leave workspace</button>
+    <div style="color:var(--muted);font-size:11.5px;margin-top:6px">${
+      blocked ? esc(LAST_OWNER_TITLE)
+        : "You'll lose access to this workspace until somebody invites you back."}</div>
+  </div>`;
+}
+
 /* The simulated card. Two members and one pending invite, exactly as ADR 0006
    §5 specifies, labelled so nobody mistakes it for a real team — and every
    control routes to simulatedTeamAction(), which toasts and touches nothing. */
@@ -179,6 +209,11 @@ function simulatedTeamCard(){
     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
       <input type="text" id="teamEmail" placeholder="teammate@example.com" style="flex:1;min-width:150px">
       <button class="btn mini" data-action="simulatedTeamAction">Invite</button>
+    </div>
+    <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+      <button class="btn ghost mini" data-action="simulatedTeamAction">Leave workspace</button>
+      <div style="color:var(--muted);font-size:11.5px;margin-top:6px">
+        Simulated — there is no membership here to give up, so this changes nothing.</div>
     </div>
   </div>`;
 }
@@ -225,6 +260,7 @@ export function renderTeamCard(){
     : `<div style="color:var(--muted);font-size:12px;margin-top:12px"
          title="${attr(OWNER_ONLY_TITLE)}">
         You're an editor in this workspace. Only its owners can invite or remove people.</div>`}
+    ${leaveRow()}
   </div>`;
 }
 
@@ -264,6 +300,31 @@ export async function acceptInvite(id){
     reloadTeam();
     render();
     toast("You've joined the workspace ✔");
+  }catch(e){ toast(String(e.message||e).slice(0,120)); }
+}
+/* Leaving is acceptInvite() run backwards: the caller's own brand_members row
+   goes, so the workspace the app is holding is out of date by exactly one
+   brand. Re-read it rather than splice `db` by hand — load() is the one
+   function that knows how to build a workspace from the server, and it is also
+   what picks the brand to land on. When the one that just went was the last,
+   that is the onboarding screen, which is the honest state for an account with
+   no workspace left. Nothing here calls save(): the departed brand is still in
+   the local snapshot for a moment, and persisting it would ask the server to
+   delete a brand this account no longer has any business deleting. */
+export async function leaveBrand(){
+  const active = brand();
+  if(!active) return;
+  if(!confirm("Leave this workspace? You'll lose access until re-invited.")) return;
+  try{
+    await store.leaveBrand(active.id);
+    // The role and the roster were answers about a workspace this account is no
+    // longer in; both are re-read for whichever brand load() lands on.
+    setRoleCache({ brandId:null, role:null, loaded:false, loading:false });
+    setTeamCache({ brandId:null, members:[], invites:[], loaded:false, loading:false, error:null });
+    await load();
+    reloadTeam();
+    render();
+    toast("You've left that workspace");
   }catch(e){ toast(String(e.message||e).slice(0,120)); }
 }
 export async function declineInvite(id){

@@ -456,6 +456,13 @@ async function signIn(api, cloud) {
   store.revokeInvite = async id => { record("revokeInvite", [id]); return api.intoPage(cloud.revokeResult ?? { ok: true }); };
   store.acceptInvite = async id => { record("acceptInvite", [id]); return api.intoPage(cloud.acceptResult ?? { ok: true, role: "editor" }); };
   store.declineInvite = async id => { record("declineInvite", [id]); return api.intoPage(cloud.declineResult ?? { ok: true }); };
+  /* Leaving is a plain RLS DELETE, so it resolves with nothing and reports a
+     refusal by throwing — `cloud.leaveError` is the last-owner sentence the
+     brand_members_keep_an_owner trigger produces. */
+  store.leaveBrand = async brandId => {
+    record("leaveBrand", [brandId]);
+    if (cloud.leaveError) throw new api.window.Error(String(cloud.leaveError));
+  };
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 

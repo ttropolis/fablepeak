@@ -168,6 +168,103 @@ test("an editor reads the roster but is offered no way to manage it", async t =>
   assert.match(card.textContent, /Only its owners can invite or remove people/);
 });
 
+/* ---------- leaving a workspace ----------
+   The guarantee is the members_delete policy's `user_id = auth.uid()` arm and
+   the brand_members_keep_an_owner trigger (test/team-roles.test.mjs and the CI
+   database rebuild cover those). What follows is the half a person touches:
+   that the way out is offered, that the one member who cannot use it is told
+   why instead of being refused after the fact, and that leaving re-reads the
+   workspace rather than patching it in the browser. */
+const leaveButton = app => app.byText("button", "Leave workspace", teamCard(app));
+/** open Settings and wait for the roster the leave control is decided on */
+async function openTeam(app) {
+  await app.waitFor(() => app.state.roleCache.loaded, { label: "the role lookup" });
+  await openSettings(app);
+  await app.waitFor(() => app.state.teamCache.loaded, { label: "the team lookup" });
+  await app.flush();
+}
+
+test("an editor can leave, and the workspace list is re-read rather than patched", async t => {
+  const twoBrands = { activeBrand: "b1", brands: [brand("b1", "Acme"), brand("b2", "My Studio")] };
+  const app = await bootApp({
+    mode: "cloud", cloud: cloud({ db: twoBrands, role: "editor", invites: [] }),
+  });
+  t.after(() => app.close());
+  await openTeam(app);
+
+  const leave = leaveButton(app);
+  assert.ok(leave, "every member is offered a way out of a workspace");
+  assert.equal(leave.disabled, false);
+  assert.match(teamCard(app).textContent, /lose access to this workspace until somebody invites you back/);
+
+  // Leaving deletes a brand_members row server-side, so the workspace has to
+  // come back from the server — the mirror image of accepting an invitation.
+  const loadsBefore = app.storeCalls.filter(c => c.name === "load").length;
+  app.store.load = async () => {
+    app.storeCalls.push({ name: "load", args: [] });
+    return app.intoPage({ activeBrand: "b2", brands: [brand("b2", "My Studio")] });
+  };
+  app.store.listMembers = async () => app.intoPage([]);
+
+  await app.click(leave);
+  await app.waitFor(() => app.storeCalls.some(c => c.name === "leaveBrand"),
+    { label: "the leave call" });
+  assert.deepEqual(app.storeCalls.find(c => c.name === "leaveBrand").args, ["b1"]);
+  assert.match(app.confirms.at(-1), /Leave this workspace\? You'll lose access until re-invited\./);
+
+  await app.waitFor(() => app.$$("#brandSel option").length === 1,
+    { label: "the workspace list to follow" });
+  assert.ok(app.storeCalls.filter(c => c.name === "load").length > loadsBefore,
+    "the workspace was reloaded, not spliced in the browser");
+  assert.deepEqual(app.$$("#brandSel option").map(o => o.textContent), ["My Studio"]);
+  assert.match(app.toast(), /left that workspace/);
+});
+
+test("leaving the last workspace lands on the onboarding screen", async t => {
+  const app = await bootApp({ mode: "cloud", cloud: cloud({ role: "editor", invites: [] }) });
+  t.after(() => app.close());
+  await openTeam(app);
+
+  app.store.load = async () => app.intoPage({ activeBrand: null, brands: [] });
+  await app.click(leaveButton(app));
+  await app.waitFor(() => app.$("#ob_name"),
+    { label: "the first-brand onboarding screen" });
+  assert.deepEqual(app.storeCalls.find(c => c.name === "leaveBrand").args, ["b1"]);
+  assert.deepEqual(app.$$("#brandSel option"), [], "and no workspace is left to switch to");
+});
+
+test("the workspace's only owner is shown the control disabled, and told why", async t => {
+  // One member, who is an owner: the trigger would refuse this DELETE, so the
+  // control says so up front instead of letting the person discover it.
+  const app = await bootApp({
+    mode: "cloud", cloud: cloud({ members: [MEMBERS[0]], invites: [] }),
+  });
+  t.after(() => app.close());
+  await openTeam(app);
+
+  const leave = leaveButton(app);
+  assert.ok(leave, "the control is shown, not hidden — the rule is explained, not concealed");
+  assert.equal(leave.disabled, true);
+  assert.match(leave.getAttribute("title"), /only owner/);
+  // and the same sentence is readable without hovering anything
+  assert.match(teamCard(app).textContent, /only owner.*Make somebody else an owner first/s);
+  assert.equal(app.storeCalls.some(c => c.name === "leaveBrand"), false);
+});
+
+test("declining the confirmation leaves you in the workspace", async t => {
+  const app = await bootApp({ mode: "cloud", cloud: cloud({ role: "editor", invites: [] }) });
+  t.after(() => app.close());
+  await openTeam(app);
+
+  app.answerConfirm(false);
+  await app.click(leaveButton(app));
+  await app.flush();
+  assert.match(app.confirms.at(-1), /Leave this workspace/);
+  assert.equal(app.storeCalls.some(c => c.name === "leaveBrand"), false,
+    "a declined confirmation reaches no backend at all");
+  assert.deepEqual(app.$$("#brandSel option").map(o => o.textContent), ["Acme"]);
+});
+
 test("an invitee is offered Accept or Decline, and accepting brings the workspace", async t => {
   const invitation = {
     invite_id: "inv-9", brand_name: "Beta Studio", invite_role: "editor",
@@ -276,6 +373,12 @@ test("demo mode simulates the team, says so, and reaches no network", async t =>
   assert.match(app.toast(), /Simulated team/);
   await app.click(app.byText("button", "Revoke", card));
   assert.match(app.toast(), /Simulated team/);
+  // including the way out: there is no membership here to give up
+  const leave = app.byText("button", "Leave workspace", card);
+  assert.ok(leave, "the simulated card offers the control too");
+  await app.click(leave);
+  assert.match(app.toast(), /Simulated team/);
+  assert.equal(app.db.brands.length, 1, "and nothing actually left the workspace");
   assert.equal(app.$("#inviteBanner"), null, "no invitations without an account");
   assert.deepEqual(app.blockedRequests, []);
 });
