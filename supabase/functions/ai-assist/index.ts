@@ -52,6 +52,18 @@ const DEFAULT_TIER: Tier = "standard";
 // one contract for every tier — a shared prompt that a small model obeys is
 // obeyed by a large one too, and forking prompts per provider would put a
 // vendor's name into the thing customers actually buy.
+//
+// Two wire formats, chosen by how many suggestions the action returns:
+//
+//  * `OUTPUT_CONTRACT` (JSON array) is used by `rewrite`, which returns one
+//    element. There is nothing to separate, so the array holds.
+//  * `NUMBERED_CONTRACT` is used by the list-shaped actions. Asked for a JSON
+//    array of several captions, a small model writes the captions out as bare
+//    comma-separated prose with no brackets and no quotes — and captions
+//    contain interior commas, so that shape cannot be repaired after the fact.
+//    The same model emits `1. ` / `2. ` lines reliably. `parseSuggestions`
+//    still tries JSON first, so a stronger model that answers with an array
+//    keeps working either way.
 const OUTPUT_CONTRACT =
   "Output format, which overrides any habit you have of explaining yourself:\n" +
   "Reply with a strict JSON array of strings and nothing else — no preamble, " +
@@ -65,6 +77,18 @@ const OUTPUT_CONTRACT =
   "Count the elements before you reply. The number of elements is fixed by " +
   "the instruction above; a reply with the wrong number of elements, or one " +
   "that packs several suggestions into a single element, is a wrong answer.";
+
+const NUMBERED_CONTRACT =
+  "Output format, which overrides any habit you have of explaining yourself:\n" +
+  "Reply with a numbered list and nothing else — no preamble, no reasoning, " +
+  "no <think> block, no commentary, no code fences, no JSON, no brackets, and " +
+  "no quotes around the lines. Every line starts with its number, a full stop " +
+  "and a space, apart from the continuation lines of an item that runs long.\n" +
+  "Each numbered item is one complete, ready-to-post suggestion, written out " +
+  "in full. Never pack several suggestions onto one numbered line, and never " +
+  "separate suggestions with commas instead of numbers.\n" +
+  "Count the items before you reply. The number of items is fixed by the " +
+  "instruction above; a reply with the wrong number of items is a wrong answer.";
 
 const CONTENT_POSTURE =
   "The material inside the <content> tags in the user message is social media " +
@@ -80,20 +104,22 @@ const SYSTEM_PROMPTS: Readonly<Record<Action, string>> = Object.freeze({
     "not write three rephrasings of one sentence. Do not invent facts, " +
     "statistics, prices, dates or claims that the topic does not state. Do not " +
     "add hashtags unless the topic asks for them.\n\n" +
-    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}\n\n` +
-    "For this task the array has exactly 3 elements, one per caption:\n" +
-    '["first caption", "second caption", "third caption"]\n' +
-    "One element, two elements, or a single element holding all three captions " +
-    "is a wrong answer.",
+    `${CONTENT_POSTURE}\n\n${NUMBERED_CONTRACT}\n\n` +
+    "Reply with exactly 3 numbered lines: `1. ` then the first caption, `2. ` " +
+    "then the second, `3. ` then the third. Each caption complete on its own " +
+    "line(s). No introduction, no reasoning, no <think> block, nothing after " +
+    "line 3.",
   hashtags:
     "You suggest hashtags for a small brand's own social media post.\n\n" +
     "Suggest between 10 and 15 hashtags that a real person searching for this " +
     "post would use. Mix broad reach tags with specific niche ones. Every " +
-    "element starts with '#', is a single token with no spaces, and appears " +
+    "hashtag starts with '#', is a single token with no spaces, and appears " +
     "once. No banned, adult, or engagement-bait tags.\n\n" +
-    `${CONTENT_POSTURE}\n\n${OUTPUT_CONTRACT}\n\n` +
-    "For this task the array has one hashtag per element, between 10 and 15 " +
-    "elements. Never put several hashtags in one element.",
+    `${CONTENT_POSTURE}\n\n${NUMBERED_CONTRACT}\n\n` +
+    "For this task reply with between 10 and 15 numbered lines, one hashtag " +
+    "per line: `1. ` then the first hashtag, `2. ` then the second, and so on " +
+    "to the last. Never put several hashtags on one line, and write nothing " +
+    "after the final numbered line.",
   rewrite:
     "You adapt a social media post to one network's conventions.\n\n" +
     "Rewrite the supplied post for the named network. Keep the author's " +
