@@ -309,6 +309,14 @@ for the record.
   `platforms.ts` line in decision 6's effort table, the X reply assertion in
   decision 7's test plan, and the fourth consequence ("X reply-to-self ships
   dormant").* Unshippable code is unverifiable code; build it when X unfreezes.
+- **Probe result (2026-08-30): DENIED.** The live probe against the internal
+  brand's own Page (post `…_122111105709416585`, via the owner-gated
+  `probe_fb_comment` action) returned Graph error `(#200) You do not have
+  sufficient permissions to perform this action` — `pages_manage_engagement`
+  is required. Held permissions do not suffice, so the conditional release
+  below never triggers: Facebook first comments join Instagram's in the later
+  Meta permission submission (delivery item 6), and the current submission is
+  unaffected.
 - **Facebook may ship on held permissions (see 6) — clarified 2026-08-30.**
   A successful live probe using permissions **already granted to and approved
   for the app**, with no additional scopes requested, releases Facebook first
