@@ -52,7 +52,7 @@ plus the backend it talks to.** Do not restructure the UI.
   brands: [{
     id, name, seed,                       // seed: number, drives demo metrics
     connections: {instagram: "@handle", ...},   // subset of 8 network ids
-    posts:  [{id, date:"YYYY-MM-DD", time:"HH:MM", text, networks:[...], status:"draft|scheduled|publishing|published"}],
+    posts:  [{id, date:"YYYY-MM-DD", time:"HH:MM", text, networks:[...], status:"draft|pending_approval|scheduled|publishing|published|failed"}],
     inbox:  [{id, net, from, resolved, unread, msgs:[{who:"them|me", text}]}],
     smartlink: {title, bio, avatar, color, links:[{id, title, url, clicks}]}
   }],
@@ -69,6 +69,10 @@ create table brands (
   seed int not null,
   connections jsonb not null default '{}',
   smartlink jsonb not null default '{}',
+  smartlink_slug text,                 -- public SmartLinks URL name, globally unique
+  smartlink_public bool not null default false,   -- publication is opt-in
+  approval_required bool not null default false,  -- posts need an owner's approval
+  client_id text,               -- writer's client id, for realtime echo suppression
   updated_at timestamptz not null default now()
 );
 create table posts (
@@ -76,7 +80,16 @@ create table posts (
   brand_id text not null references brands(id) on delete cascade,
   date date not null, time text not null,
   text text not null, networks jsonb not null,
-  status text not null check (status in ('draft','scheduled','publishing','published')),
+  media_url text,
+  variants jsonb not null default '{}'  -- per-network copy, {network: text}
+    check (valid_post_variants(variants)),
+  status text not null check (status in ('draft','pending_approval','scheduled',
+                                         'publishing','published','failed')),
+  publish_claimed_at timestamptz,      -- set when the publisher claims the post
+  approval_note text,                  -- the one overwritten rejection note
+  approved_by uuid references auth.users(id) on delete set null,
+  approved_at timestamptz,
+  client_id text,
   updated_at timestamptz not null default now()
 );
 create table inbox_threads (
@@ -85,6 +98,7 @@ create table inbox_threads (
   net text not null, sender text not null,
   resolved bool not null default false, unread bool not null default true,
   msgs jsonb not null default '[]',
+  client_id text,
   updated_at timestamptz not null default now()
 );
 create table brand_members (         -- who can see which brand
@@ -93,12 +107,31 @@ create table brand_members (         -- who can see which brand
   role text not null default 'editor' check (role in ('owner','editor')),
   primary key (brand_id, user_id)
 );
+create table brand_invites (         -- an owner's offer, addressed to an email
+  id uuid primary key default gen_random_uuid(),
+  brand_id text not null references brands(id) on delete cascade,
+  email text not null,               -- normalised at rest (lower/trimmed)
+  role text not null default 'editor' check (role in ('owner','editor')),
+  status text not null default 'pending'
+    check (status in ('pending','accepted','declined','revoked','expired')),
+  invited_by uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '14 days',
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_at timestamptz
+);
 ```
 
 RLS: enable on all tables; a user may select/insert/update/delete rows
 whose `brand_id` is in their `brand_members`. Creating a brand inserts an
 `owner` membership for the creator in the same transaction (use a
-`security definer` function or a trigger).
+`security definer` function or a trigger). Deleting a brand, managing
+members and invites, publishing a SmartLinks page and changing
+`approval_required` are owner-only, and a trigger refuses any write that
+would leave a workspace without an owner. A second trigger guards
+`posts.status`: only the publisher (service role) may move a post into
+`publishing`/`published`, and while a brand's `approval_required` is on
+only an owner may move a post to `scheduled`.
 
 ## 4. RemoteAdapter contract (frozen — implement exactly)
 
@@ -161,7 +194,7 @@ Upstash QStash + Cloudflare R2. Reviewed 2026-07-12; decisions:
   each minute. PostgreSQL atomically claims due `scheduled` posts as
   `publishing`, using the configured IANA timezone, before the function calls
   platform APIs. Only a confirmed platform delivery may change the post to
-  `published`. Interrupted claims return to `draft` after 15 minutes; confirmed
+  `published`. Interrupted claims become `failed` after 15 minutes; confirmed
   platform targets are never sent twice, while uncertain targets require a
   human to verify the provider before retrying. The client ticker is
   simulation-only and must never advance a signed-in cloud post.
