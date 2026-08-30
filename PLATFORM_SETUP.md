@@ -287,6 +287,26 @@ only for a future phase.
 2. Add the **Content Posting API** product, request `video.publish`.
 3. Add the callback URL above as a redirect URI.
 
+**Registration state (2026-08-30).** The developer app exists: **FablePeak**,
+app id `7679509465791776776`, Individual ownership under the ttropolis@gmail.com
+developer account (a Gmail primary was chosen deliberately for account
+recovery; TikTok allows transferring the app to an organization later).
+Configured in the draft: category Productivity, description, Web platform with
+`https://fablepeak.com`, terms/privacy URLs, Login Kit with the standard
+callback redirect URI, Content Posting API with **Direct Post enabled**, scopes
+`user.info.basic` + `video.publish` + `video.upload`, and the app-review
+product/scope explanation text. Domain verification for `fablepeak.com` is a
+DNS TXT record at Hostinger
+(`tiktok-developers-site-verification=ZNKudTrEO1iJqk3Cx1tu3g0LPmX0rmVP`, added
+2026-08-30); TikTok's verify re-check clears the three "URL is not verified"
+errors once their resolvers see it. The draft cannot be **saved** until every
+form error clears — the last one is the mandatory **demo video** showing the
+end-to-end TikTok flow, which can only be recorded after the compliance UX
+(creator-info-driven privacy picker with no default, comment/duet/stitch
+toggles, duration validation, consent, publish-status polling) is built and
+exercised against TikTok's Sandbox. If the browser draft is lost, re-entering
+the fields above takes minutes; the app id and credentials persist server-side.
+
 ```
 TIKTOK_CLIENT_KEY=<...>
 TIKTOK_CLIENT_SECRET=<...>
