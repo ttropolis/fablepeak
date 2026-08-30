@@ -1,6 +1,7 @@
 # ADR 0006: Team collaboration — invites, role enforcement, post approval
 
-- Status: proposed — decisions required (runbook item 8.8)
+- Status: accepted with amendments — see "Decisions (2026-08-30)" (runbook
+  item 8.8)
 - Date: 2026-08-30
 
 ## Context
@@ -269,3 +270,99 @@ brand, then decide on wider rollout.
     a new view? yes/no
 14. Re-run acceptance row 6 with an owner-vs-editor axis as a release gate for
     step 4? yes/no
+
+## Decisions (2026-08-30)
+
+Answers to "Decisions required", in order. All fourteen are accepted, with the
+nuances and amendments recorded below. Where an answer amends the body above,
+the amendment governs; the body text is left as written for the record.
+
+1. **Yes, in split phases.** Team collaboration ships during the invite-only
+   beta, but not as one release. **Roles and invitations ship for the external
+   beta; approval follows later as a controlled phase.** *Amends decision 8's
+   sequencing in the body,* which reads as one continuous run: steps 1–4 are
+   beta scope, step 5 onward is a separate, gated phase (see decision 9 and the
+   delivery order below).
+2. **Yes.** In-app `brand_invites` claimed at sign-in against a confirmed
+   email, rather than Supabase auth invite emails or a share code.
+3. **Yes, for the invite-only beta.** Owners notify invitees out of band; there
+   is **no mail provider in v1**. This is accepted because the beta is
+   hand-onboarded per ADR 0001, and it is revisited when onboarding stops being
+   manual.
+4. **Yes.** Acceptance is an explicit Accept/Decline. Typing an address never
+   silently joins a stranger to a workspace.
+5. **Yes.** Exactly two roles — no `viewer`, no `approver`.
+6. **Yes.** Enforcement starts: editors lose brand deletion, social
+   disconnect/re-select and SmartLinks publishing. This is a visible capability
+   removal and needs a release note.
+7. **Yes.** `brand_members` gains member-management write policies gated on
+   `is_owner`, with self-removal (leave) allowed.
+8. **Yes.** The last-owner trigger lands and ownerless brands are backfilled
+   **before** any predicate change, so `brands_delete → is_owner` cannot strand
+   an undeletable brand.
+9. **Yes, and sequenced.** `pending_approval` is opt-in per brand via
+   `approval_required` defaulting off — and it is **enabled only after roles
+   and invitations have been proven internally**. *Reinforces decision 1 above
+   and amends decision 8's sequencing:* approval is not part of the external
+   beta release.
+10. **Yes, with a safeguard.** Status transitions are enforced in a `posts`
+    trigger, including forbidding client-written `publishing`/`published`.
+    *Amends the escape hatch in decision 6 of the body:* the trigger must
+    verify an **actual service-role or dedicated publishing execution
+    context** — `auth.uid() is null` **alone is not sufficient** and must not
+    be the sole condition on the bypass branch. Any unauthenticated path that
+    reaches the trigger would otherwise inherit publish rights.
+11. **Yes.** Rejection is one overwritten `approval_note`. No comment thread in
+    v1.
+12. **Yes, with a disclosure requirement.** `brand_member_list` exposes
+    co-members' email addresses to each other, and **that visibility must be
+    stated in the privacy disclosure** before it ships. It is the ADR's only
+    new PII exposure and must not be an undocumented one.
+13. **Yes.** Approval surfaces in the existing planner — amber chip, Needs
+    approval filter, nav badge — not a new view.
+14. **Yes, mandatory.** Acceptance matrix row 6 is re-run with an
+    owner-vs-editor axis, and that re-run is a **release gate**, not a
+    follow-up task.
+
+### Amendments carried by these answers
+
+- **Expired invites must not block re-invitation.** An expired pending
+  invitation must never prevent re-inviting the same address. *Amends the
+  schema in decision 4 of the body:* `unique index on (brand_id, email) where
+  status = 'pending'` blocks a fresh invite while a stale, past-`expires_at`
+  row still reads `pending`. Either the partial index must also exclude expired
+  rows, or expiry must move the row out of `pending` — but re-inviting must
+  work.
+- **One revoked-invite model, not two.** Pick **either** deleting the row
+  **or** `status = 'revoked'` — never both, and never inconsistently. *Amends
+  the mismatch between decision 1 of the body ("Revocation is deleting the
+  pending row") and decision 4's `status` CHECK, which includes `'revoked'`.*
+  Whichever is chosen, the RPCs, the policies, the UI's pending list and the
+  tests must all use the same one.
+- **Approval trigger proven internally first.** The posts status trigger must
+  be proven on an internal brand **without interrupting scheduled publishing**
+  before any wider rollout. *Reinforces decision 6 of the body ("the one change
+  that can break delivery") and gates decision 8's step 6.* Evidence of
+  uninterrupted scheduled delivery under the trigger is the precondition for
+  enabling `approval_required` anywhere else.
+
+### Delivery order (2026-08-30)
+
+The release owner's order of work, gated on the existing beta-readiness gates —
+nothing below starts ahead of them:
+
+1. **Owner/editor enforcement + owner backfill + final-owner protection.**
+2. **In-app invitations.**
+3. **Per-network variants + focused AI rewrites** (ADR 0005).
+4. **Facebook comment-permission probe** (ADR 0005 decision 5).
+5. **Internal approval pilot** — `approval_required` on one internal brand.
+6. **First comments via a later Meta submission** (ADR 0005 decision 6).
+
+Rationale for the ordering:
+
+- **Role enforcement is a beta safety requirement.** External beta users must
+  not reach a workspace where an editor can delete the brand or disconnect a
+  customer's Page, so items 1 and 2 come before feature depth.
+- **Instagram comments must not delay the current Meta review.** First comments
+  sit last, behind a later submission, so nothing in this plan puts core
+  publishing approval at risk.

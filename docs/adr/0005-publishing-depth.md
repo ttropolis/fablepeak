@@ -1,6 +1,6 @@
 # ADR 0005: Publishing depth — per-network copy and first comments
 
-- Status: proposed
+- Status: accepted with amendments — see "Decisions (2026-08-30)"
 - Date: 2026-08-30
 
 ## Context
@@ -237,3 +237,83 @@ resolution → composer → AI rewrite retarget → *(gate: decision 6)* → ada
 12. Refuse to save an over-280-character X variant instead of letting the adapter silently truncate? yes/no
 13. AI "Rewrite for network" retargets to the focused variant, dropping the one-network-selected restriction? yes/no
 14. Accept the v1 cuts — no carousels, no X threads, no stories, no per-network media or scheduling? yes/no
+
+## Decisions (2026-08-30)
+
+Answers to "Decisions required", in order. All fourteen are accepted as
+recommended, with the nuances and amendments recorded below. Where an answer
+amends the body above, the amendment governs; the body text is left as written
+for the record.
+
+1. **Yes, conditionally.** Publishing depth is the next feature after
+   SmartLinks, but it does not jump ahead of ADR 0001's release gates —
+   reliability and monitoring, Meta acceptance, and accessibility. Those gates
+   keep their priority; this work fills the capacity around them.
+2. **Yes.** Per-network text is a `variants` jsonb map on `posts`. Per-network
+   post rows are rejected for the reasons given in the body.
+3. **Yes, with an amendment to the resolver.** Existing posts must publish
+   byte-identically, enforced by test. *Amends the resolution expression in
+   decisions 1 and 4 of the body:* `post.variants?.[platform] ?? post.text` is
+   **insufficient**. The effective-text resolver must treat a **missing, empty
+   and whitespace-only** variant alike as inheritance of the base text. `??`
+   only catches null/undefined, so a variant of `""` or `"   "` would publish
+   an empty or blank post to that network.
+4. **Yes.** First comments are stored as a per-network `first_comment` map. No
+   single shared string; a "copy to every network" control supplies the
+   ergonomics.
+5. **Yes.** Run the Facebook `pages_manage_engagement` probe on the internal
+   brand before acting on decision 6. It costs minutes and it decides whether
+   Facebook first comments are a permission question at all.
+6. **No — do not add comment permissions to the imminent submission.** If
+   adding `instagram_business_manage_comments` (or
+   `pages_manage_engagement`) could delay approval of core publishing, it does
+   not go into the current Meta App Review submission. Instagram first comments
+   move to a **later, separate submission**. *Amends the framing of decision 2
+   and the third consequence:* Meta App Review timing is not moved by this
+   work. **Conditional exception:** if the decision-5 probe succeeds on
+   permissions the app **already holds**, Facebook first comments may ship
+   **without another Meta review**; Instagram stays deferred either way.
+7. **Yes — split the release, variants first.** Variants need no provider
+   permission and land during App Review. First comments follow the permission
+   answer, per decision 6. The sequencing in decision 6 of the body stands.
+8. **Yes.** A comment failure never fails its target. `status='published'` with
+   `comment_status='failed'` is the partial-outcome state; `posts_status_check`
+   and `postVisibleStatus` are untouched.
+9. **Yes.** Comment retry is manual only in v1 and refuses unknown comment
+   outcomes. A duplicate public comment is a real harm, not a cosmetic one.
+10. **Yes.** On stale-claim recovery, a never-attempted comment
+    (`comment_status is null`) on an already-published target is attempted. The
+    post and the comment are separate idempotency domains.
+11. **Yes.** An off-by-default "Customize per network" disclosure, not tabs. A
+    post with no variants looks exactly as it does today.
+12. **Yes.** An over-280-character X variant is refused at save time rather
+    than silently truncated by the adapter.
+13. **Yes.** AI "Rewrite for network" retargets to the focused variant and the
+    one-network-selected restriction is dropped.
+14. **Yes.** The v1 cuts stand — no carousels, no X threads, no stories, no
+    per-network media, no per-network scheduling.
+
+### Amendments carried by these answers
+
+- **Inheritance rule (see 3).** Missing, empty and whitespace-only variants all
+  mean "inherit the base text". *Amends decision 1's backward-compatibility
+  paragraph and decision 4's resolution note in the body.*
+- **Server-side validation.** Network keys, value types and length limits are
+  validated **server-side**, not only in the composer. *Amends the storage
+  rules in decision 1 and the validation note in decision 3,* which describe
+  those limits as composer-side behaviour: the database and publish path must
+  not trust a client-authored `variants` or `first_comment` map.
+- **No dormant X comment adapter.** Do **not** build a dormant X comment
+  adapter while X is production-frozen. *Amends the X row of decision 2's
+  capability table ("Build dormant, ship never until X unfreezes"), the
+  `platforms.ts` line in decision 6's effort table, the X reply assertion in
+  decision 7's test plan, and the fourth consequence ("X reply-to-self ships
+  dormant").* Unshippable code is unverifiable code; build it when X unfreezes.
+- **Facebook may ship on held permissions (see 6).** A successful probe on
+  permissions already held releases Facebook first comments without a further
+  Meta review. Instagram first comments remain gated on a later submission.
+
+**Closing rationale.** The governing constraint is protecting the current Meta
+submission. Nothing in this ADR may put core publishing approval at risk, so
+scope that needs a new Meta permission is deferred to a later submission, and
+scope that needs none — variants first — ships in the meantime.
