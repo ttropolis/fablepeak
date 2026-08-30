@@ -2,8 +2,10 @@
 
 - Release candidate: FablePeak 1.5.0
 - Decision: internal tool now; external access remains invite-only
-- Provider freeze: Facebook, Instagram and YouTube only
-- Last updated: 2026-08-30
+- Provider freeze: Facebook, Instagram and YouTube only (TikTok is
+  additionally reachable in sandbox-only mode while its app review runs;
+  production TikTok publishing stays frozen until approval and beta GO)
+- Last updated: 2026-08-31
 
 This record is the release gate. A blank human-evidence row is a blocker, not
 an implied pass. Never paste access tokens, passwords or customer personal data
