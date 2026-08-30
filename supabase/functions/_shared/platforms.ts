@@ -1399,7 +1399,9 @@ export const ADAPTERS: Record<string, PlatformAdapter> = {
  *  adapter check. Edge Functions run with an explicit `--allow-env` allowlist,
  *  and a name outside it raises rather than answering undefined. */
 const deploymentEnv = (key: string): string | undefined => {
-  try { return Deno.env.get(key); } catch { return undefined; }
+  // Trimmed because dashboard-pasted values can carry a stray newline, which
+  // makes a credential (or the sandbox flag's exact-match check) silently wrong.
+  try { return Deno.env.get(key)?.trim(); } catch { return undefined; }
 };
 
 /** May this deployment connect and publish through this adapter?

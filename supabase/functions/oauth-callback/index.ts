@@ -6,7 +6,10 @@ import { providerConnectionError } from "../_shared/oauth-errors.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
 import { withSupabase } from "jsr:@supabase/server@1.4.1";
 
-const env = (k: string) => Deno.env.get(k);
+// Secrets pasted into the dashboard can carry stray whitespace or a
+// newline from the copy; a credential sent with either is silently
+// invalid at the provider, so every env read is trimmed.
+const env = (k: string) => Deno.env.get(k)?.trim();
 
 // Hosted Supabase Edge Functions rewrite text/html GET responses to text/plain.
 // Redirect to the app's static completion page so the browser can render it.

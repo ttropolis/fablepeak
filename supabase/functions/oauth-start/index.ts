@@ -5,7 +5,10 @@ import {
 } from "../_shared/platforms.ts";
 import { getUser, isMember, sbDelete, sbInsert } from "../_shared/db.ts";
 
-const env = (k: string) => Deno.env.get(k);
+// Secrets pasted into the dashboard can carry stray whitespace or a
+// newline from the copy; a credential sent with either is silently
+// invalid at the provider, so every env read is trimmed.
+const env = (k: string) => Deno.env.get(k)?.trim();
 const CORS = {
   "Access-Control-Allow-Origin": env("APP_ORIGIN") ?? "*",
   "Access-Control-Allow-Headers": "authorization, content-type, apikey",
