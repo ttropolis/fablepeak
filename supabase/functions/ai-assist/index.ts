@@ -320,7 +320,15 @@ const CLOUDFLARE_DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const cloudflareAdapter: Adapter = dependencies => {
   const account = dependencies.env("CLOUDFLARE_ACCOUNT_ID");
   const token = dependencies.env("CLOUDFLARE_AI_TOKEN");
-  if (!account || !token) throw new AssistError(503, NOT_CONFIGURED);
+  if (!account || !token) {
+    // Names only, never values: tell the operator which secret is absent.
+    const missingNames = [
+      account ? null : "CLOUDFLARE_ACCOUNT_ID",
+      token ? null : "CLOUDFLARE_AI_TOKEN",
+    ].filter(Boolean).join(", ");
+    console.error("ai-assist cloudflare unconfigured: missing " + missingNames);
+    throw new AssistError(503, NOT_CONFIGURED);
+  }
   const model = dependencies.env("AI_MODEL")?.trim() || CLOUDFLARE_DEFAULT_MODEL;
   // Operator-controlled values, but they land in a URL path: hold them to the
   // shapes Cloudflare actually uses so a mis-set secret cannot re-route the call.
