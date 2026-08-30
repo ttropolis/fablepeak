@@ -33,6 +33,9 @@ export let metricsCache = {
 /** real connected accounts for one brand. `loaded:false` means "not known
     yet", never "nothing connected" — see connectionsKnown(). */
 export let connCache = { brandId:null, available:[], accounts:[], loaded:false };
+/** the signed-in user's own role in one brand — "owner" | "editor" | null.
+    `loaded:false` means "not known yet", never "not an owner": see isOwner(). */
+export let roleCache = { brandId:null, role:null, loaded:false, loading:false };
 /** public SmartLink slug, publish flag and real click aggregates for one brand */
 export let slCache = { brandId:null, slug:"", published:false, totals:{},
                        loaded:false, loading:false, error:null };
@@ -61,6 +64,7 @@ export function setMediaUploadActive(value){ mediaUploadActive = value; }
 export function setDeferredInstallPrompt(value){ deferredInstallPrompt = value; }
 export function setMetricsCache(value){ metricsCache = value; }
 export function setConnCache(value){ connCache = value; }
+export function setRoleCache(value){ roleCache = value; }
 export function setSlCache(value){ slCache = value; }
 export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
@@ -73,6 +77,7 @@ const SETTERS = {
   mediaUploadActive: setMediaUploadActive,
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,
+  roleCache: setRoleCache,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
 };

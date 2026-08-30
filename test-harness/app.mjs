@@ -386,6 +386,10 @@ async function signIn(api, cloud) {
     available = [],
     targets = [],
     metrics = [],
+    // The caller's own brand_members row (ADR 0006). "owner" is the default
+    // because every brand's creator is one; pass "editor" to exercise the
+    // owner-gated affordances, or null for "the lookup failed".
+    role = "owner",
   } = cloud;
 
   const store = api.store;
@@ -405,6 +409,7 @@ async function signIn(api, cloud) {
   store.verifyAccounts = async brandId => { record("verifyAccounts", [brandId]); return api.intoPage([]); };
   store.listTargets = async brandId => { record("listTargets", [brandId]); return api.intoPage(targets); };
   store.listMetrics = async brandId => { record("listMetrics", [brandId]); return api.intoPage(metrics); };
+  store.myRole = async brandId => { record("myRole", [brandId]); return cloud.roleFor?.(brandId) ?? role; };
   store.disconnectAccount = async id => { record("disconnectAccount", [id]); };
   store.selectAccount = async id => { record("selectAccount", [id]); };
   store.ensureBrandSynced = async brand => { record("ensureBrandSynced", [brand.id]); };

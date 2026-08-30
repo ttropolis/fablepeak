@@ -1,9 +1,9 @@
 /* =============== CONNECTIONS =============== */
-import { NETWORKS } from "./constants.js";
+import { NETWORKS, OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, safeUrl } from "./escape.js";
 import { connCache, setConnCache, view } from "./state.js";
 import { liveMode, store } from "./store.js";
-import { brand, netOf, save } from "./workspace.js";
+import { brand, isOwner, netOf, save } from "./workspace.js";
 import { render, toast } from "./shell.js";
 
 /* Honest, user-facing constraints per platform (from each platform's own docs). */
@@ -70,6 +70,12 @@ export function renderConnections(m){
   const byPlatform = {};
   connCache.accounts.forEach(a => { (byPlatform[a.platform] ||= []).push(a); });
   const anyConfigured = connCache.available.length > 0;
+  /* Disconnecting and choosing the publishing account are owner-only (ADR 0006):
+     disconnect_account and select_social_account both check is_owner, and
+     connection-health refuses a non-owner's revoke. Hidden rather than disabled
+     — a row of dead buttons on every account reads as a broken page. Connecting
+     is unchanged: an editor may still authorize a new profile. */
+  const owner = isOwner();
 
   m.innerHTML = `
   <h1>Connections</h1>
@@ -102,7 +108,7 @@ export function renderConnections(m){
             <strong style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name || "Connected account")}</strong>
             ${a.is_default && a.status==="active"
               ? `<span style="color:var(--chip-pub);font-size:11px">✓ Publishing account</span>`
-              : a.status==="active"
+              : a.status==="active" && owner
                 ? `<button class="btn ghost mini" data-action="selectReal" data-arg="${attr(a.id)}">Use for publishing</button>`
                 : ""}
             ${a.last_verified_at && a.status==="active"
@@ -111,7 +117,9 @@ export function renderConnections(m){
               ? `<span style="color:var(--danger);font-size:12px">⚠️ Needs reconnecting</span>`
               : a.status==="error"
                 ? `<span style="color:var(--danger);font-size:12px">⚠️ Connection check failed</span>` : ""}
-            <button class="btn ghost mini" data-action="disconnectReal" data-arg="${attr(a.id)}">Disconnect</button>
+            ${owner
+              ? `<button class="btn ghost mini" data-action="disconnectReal" data-arg="${attr(a.id)}">Disconnect</button>`
+              : ""}
           </div>
           ${a.last_error ? `<div style="color:var(--danger);font-size:11px">${esc(a.last_error)}</div>` : ""}`).join("")}
         ${ready && !accounts.length
@@ -122,6 +130,9 @@ export function renderConnections(m){
       </div>`;
     }).join("")}
   </div>
+  ${owner?"":`<div style="color:var(--muted);font-size:12px;margin-top:12px" title="${attr(OWNER_ONLY_TITLE)}">
+    You're an editor in this workspace. Only its owners can disconnect an account
+    or change which one publishes.</div>`}
   <div style="color:var(--muted);font-size:12px;margin-top:12px">Every planned network is shown here. A disabled card names the exact setup, approval or implementation gate that remains.</div>`;
 }
 

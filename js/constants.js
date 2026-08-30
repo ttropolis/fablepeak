@@ -20,6 +20,11 @@ export const VIEWS = [
   {id:"connections",ic:"🔌", name:"Connections"},
   {id:"settings",   ic:"⚙️", name:"Settings"},
 ];
+/* ADR 0006 decision 6: the one sentence every owner-gated control explains
+   itself with. The database is what enforces the rule — this is the affordance,
+   so it must say the same thing everywhere it appears. */
+export const OWNER_ONLY_TITLE = "Only workspace owners can change this.";
+
 export const APP_VERSION = "1.5.0";
 export const LS_KEY = "fablepeak_v1";
 export const LEGACY_KEYS = ["metricoolito_v1"];

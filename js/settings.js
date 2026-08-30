@@ -1,10 +1,10 @@
 /* =============== SETTINGS =============== */
-import { LS_KEY } from "./constants.js";
+import { LS_KEY, OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, slColorOf } from "./escape.js";
 import { todayStr } from "./util.js";
 import { db, deferredInstallPrompt, setDb, setDeferredInstallPrompt } from "./state.js";
 import { store } from "./store.js";
-import { defaultBrand, save, seedDemo } from "./workspace.js";
+import { defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
 import { render, toast } from "./shell.js";
 
 export function installedApp(){
@@ -28,6 +28,10 @@ function mobileInstallCard(){
     You can choose media from Photos/Gallery or use the camera inside New post.</p>`;
 }
 export function renderSettings(m){
+  /* Deleting a brand is owner-only (ADR 0006): the brands_delete policy is
+     is_owner(id), so an editor's delete would match no row and silently do
+     nothing. Disable rather than hide, and say why. */
+  const owner=isOwner();
   m.innerHTML=`
   <h1>Settings</h1>
   <div class="sub">Manage brands, cloud sync, and backups.</div>
@@ -37,8 +41,12 @@ export function renderSettings(m){
       ${db.brands.map(b=>`
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
           <input type="text" value="${attr(b.name)}" data-change="renameBrand" data-arg="${attr(b.id)}">
-          <button class="btn dangerb mini" ${db.brands.length<2?"disabled":""} data-action="deleteBrand" data-arg="${attr(b.id)}">✕</button>
+          <button class="btn dangerb mini" ${db.brands.length<2||!owner?"disabled":""}
+            ${owner?"":`title="${attr(OWNER_ONLY_TITLE)}"`}
+            data-action="deleteBrand" data-arg="${attr(b.id)}">✕</button>
         </div>`).join("")}
+      ${owner?"":`<div style="color:var(--muted);font-size:12px;margin-top:4px">
+        You're an editor in this workspace. Only its owners can delete a brand.</div>`}
       <div style="display:flex;gap:8px;margin-top:10px">
         <input type="text" id="newBrand" placeholder="New brand name">
         <button class="btn mini" data-action="addBrand">Add</button>

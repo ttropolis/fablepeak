@@ -94,3 +94,18 @@ export async function isMember(brandId: string, userId: string): Promise<boolean
     `select=brand_id&brand_id=eq.${encodeURIComponent(brandId)}&user_id=eq.${userId}`);
   return !!row;
 }
+
+/** True when the user is an *owner* of the brand (ADR 0006 decision 6).
+ *
+ * The Edge-Function mirror of public.is_owner(text): same table, same two keys,
+ * plus role = 'owner'. It is a separate function rather than an argument to
+ * isMember so that a caller has to name which authorization it wants, and so a
+ * grep for `isOwner` finds every owner-gated path in the functions.
+ *
+ * These queries run with the service role and therefore bypass RLS, exactly
+ * like isMember: the filter is the authorization. */
+export async function isOwner(brandId: string, userId: string): Promise<boolean> {
+  const row = await sbOne("brand_members",
+    `select=role&brand_id=eq.${encodeURIComponent(brandId)}&user_id=eq.${userId}&role=eq.owner`);
+  return !!row;
+}

@@ -252,6 +252,20 @@ export const RemoteAdapter = {
       "This brand isn't linked to your account yet. Sign out and back in, then retry.");
   },
 
+  /** The caller's own role in one brand — "owner", "editor", or null when the
+      row cannot be read. The cheapest honest source there is: `members_select`
+      already lets every member read their own brand_members row, so this is one
+      primary-key lookup and no new backend surface. Filtering on user_id as
+      well as brand_id keeps it to a single row in a shared workspace.
+      The role decides which controls are *offered*; ADR 0006 puts the actual
+      enforcement in RLS, triggers and the definer RPCs, never here. */
+  async myRole(brandId){
+    if(!this.user) return null;
+    const { data, error } = await this._sb.from("brand_members")
+      .select("role").eq("brand_id", brandId).eq("user_id", this.user.id).maybeSingle();
+    if(error) return null;
+    return data?.role || null;
+  },
   /** opens the platform's consent screen; resolves when the popup reports back */
   async startOAuth(platform, brandId){
     const jwt = await this._jwt();
@@ -388,15 +402,18 @@ export const RemoteAdapter = {
   /** Claim or rename the public slug. Returns the RPC's typed jsonb result
       ({ok:true,slug,changed} | {ok:false,error}) — a taken name is a result,
       not an exception. Writing brands.smartlink_slug directly is refused by the
-      brands_guard_smartlink_slug trigger, so this RPC is the only way in. */
+      brands_guard_smartlink_slug trigger, so this RPC is the only way in.
+      Owner-only since ADR 0006: an editor's call raises 42501. */
   async setSmartlinkSlug(brandId, slug){
     const { data, error } = await this._sb.rpc("set_smartlink_slug",
       { p_brand_id: brandId, p_slug: slug });
     if(error) throw new Error(error.message);
     return data || { ok:false, error:"unknown_error" };
   },
-  /** Publish / unpublish. Only smartlink_slug is trigger-gated, so this column
-      is a plain member UPDATE under the brands_update policy. */
+  /** Publish / unpublish. A plain UPDATE under the member-level brands_update
+      policy, but brands_guard_smartlink_slug refuses a change to this column
+      from anyone who is not an owner (ADR 0006): RLS is row-level and cannot
+      express a column rule, so the trigger is where that lives. */
   async setSmartlinkPublic(brandId, isPublic){
     const { error } = await this._sb.from("brands")
       .update({ smartlink_public: !!isPublic }).eq("id", brandId);

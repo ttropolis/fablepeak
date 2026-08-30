@@ -2,7 +2,7 @@
    every view asks about the brand it is rendering. */
 import { LEGACY_KEYS, LS_KEY, NETWORKS } from "./constants.js";
 import { fmtDate, uid } from "./util.js";
-import { db, connCache, metricsCache, slCache, setDb, view } from "./state.js";
+import { db, connCache, metricsCache, roleCache, setDb, setRoleCache, slCache, view } from "./state.js";
 import { demoMode, liveMode, store } from "./store.js";
 import { RemoteAdapter } from "./remote-store.js";
 import { render, toast } from "./shell.js";
@@ -110,6 +110,45 @@ export function connectedNets(){
   }
   return NETWORKS.filter(n=>brand().connections[n.id]);
 }
+/* ---------- roles (ADR 0006 decision 6) ---------- */
+/* Owners delete brands, disconnect and re-select social accounts, and control
+   SmartLinks publication; editors do everything else. Every one of those rules
+   is enforced in Postgres — an RLS predicate, a trigger, or a security-definer
+   RPC. What follows decides only which controls are *offered*, so that an
+   editor is not handed a button whose only outcome is "not authorised".
+
+   Fetched once per brand, the same shape as ensureMetricsLoaded and
+   ensureSmartlinkLoaded, and re-fetched whenever the active brand changes. */
+export function ensureRoleLoaded(brandId){
+  if(!liveMode() || !brandId) return;
+  if(roleCache.brandId===brandId && (roleCache.loaded || roleCache.loading)) return;
+  setRoleCache({ brandId, role:null, loaded:false, loading:true });
+  Promise.resolve(store.myRole?.(brandId))
+    .then(role => {
+      if(roleCache.brandId !== brandId) return;   // brand switched mid-flight
+      setRoleCache({ brandId, role: role || null, loaded:true, loading:false });
+      render();
+    })
+    .catch(() => {
+      // Unknown is not "editor": leaving the controls as they were keeps an
+      // owner working through a blip, and the backend still refuses an editor.
+      if(roleCache.brandId !== brandId) return;
+      setRoleCache({ brandId, role:null, loaded:true, loading:false });
+    });
+}
+/** the caller's role in the active brand, or null while it is not known */
+export function myRole(){
+  if(!liveMode()) return "owner";               // local/demo has no accounts
+  return roleCache.loaded && roleCache.brandId===brand().id ? roleCache.role : null;
+}
+/** Show an owner-only control? Unknown answers yes: this is an affordance, not
+    the guarantee, and hiding a control from an owner because a lookup is still
+    in flight would be a worse lie than briefly showing one to an editor. */
+export function isOwner(){
+  const role = myRole();
+  return role === null || role === "owner";
+}
+
 /* In live mode the real accounts arrive asynchronously, and connectedNets()
    falls back to the simulated ones until they do. An unloaded cache means
    "not known yet", not "nothing connected" — never warn on it. */

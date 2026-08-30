@@ -4,11 +4,12 @@
    brands.smartlink_public, and per-link counts come from smartlink_click_totals
    — never from the jsonb `clicks` field, which stays a local/demo simulation
    (decision 11). The canonical public URL lives on its own origin (decision 2). */
+import { OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, slColorOf } from "./escape.js";
 import { uid } from "./util.js";
 import { setSlCache, slCache, view } from "./state.js";
 import { liveMode, store } from "./store.js";
-import { brand, save } from "./workspace.js";
+import { brand, isOwner, save } from "./workspace.js";
 import { render, toast } from "./shell.js";
 
 export const SL_PUBLIC_BASE = "https://links.fablepeak.com/";
@@ -86,6 +87,13 @@ function slPublishCard(){
     </div>`;
   }
   const url=slPublicUrl();
+  /* Whether this page is public, and the name it is public at, are one owner
+     decision (ADR 0006): set_smartlink_slug checks is_owner, and
+     brands_guard_smartlink_slug refuses a non-owner's smartlink_public change.
+     Both controls stay visible so an editor can still see the page's real
+     state — they are disabled, and they say who can change them. */
+  const owner=isOwner();
+  const ownerOnly=owner ? "" : ` disabled title="${attr(OWNER_ONLY_TITLE)}"`;
   return `<div class="card" style="margin-bottom:14px">
     <strong>Public page</strong>
     ${slCache.error
@@ -96,13 +104,16 @@ function slPublishCard(){
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="color:var(--muted);font-size:12px">${esc(SL_PUBLIC_BASE)}?b=</span>
       <input type="text" id="sl_slug" value="${attr(slCache.slug)}" placeholder="your-brand"
-        maxlength="30" style="flex:1;min-width:150px" data-change="slSlugCheck" data-enter="slClaim">
-      <button class="btn mini" data-action="slClaim">${slCache.slug?"Change":"Claim"}</button>
+        maxlength="30" style="flex:1;min-width:150px" data-change="slSlugCheck" data-enter="slClaim"${ownerOnly}>
+      <button class="btn mini" data-action="slClaim"${ownerOnly}>${slCache.slug?"Change":"Claim"}</button>
     </div>
     <div id="sl_slug_hint" style="color:var(--muted);font-size:11.5px;margin-top:6px"></div>
+    ${owner?"":`<div style="color:var(--muted);font-size:12px;margin-top:8px">
+      You're an editor in this workspace. Only its owners can claim a link name
+      or publish this page.</div>`}
     ${slCache.slug
       ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px">
-           <input type="checkbox" id="sl_public" ${slCache.published?"checked":""} data-change="slPublish">
+           <input type="checkbox" id="sl_public" ${slCache.published?"checked":""} data-change="slPublish"${ownerOnly}>
            Publish this page</label>`
       : `<div style="color:var(--muted);font-size:12px;margin-top:10px">Claim a link name before you can publish.</div>`}
     ${slCache.published && url
@@ -195,8 +206,10 @@ export async function slClaim(){
     toast(out.changed===false ? "That is already your link name" : "Link name saved ✔");
   }catch(e){ toast(e.message); }
 }
-/* The slug guard trigger only gates brands.smartlink_slug, so a member may set
-   smartlink_public directly under the brands_update policy. */
+/* A direct column update under the member-level brands_update policy, refused
+   for non-owners by brands_guard_smartlink_slug (ADR 0006). The checkbox is
+   already disabled for an editor; if the trigger refuses anyway, the checkbox
+   is put back the way it was and the database's message is shown. */
 export async function slPublish(el){
   const wanted=!!el.checked;
   const b=brand();

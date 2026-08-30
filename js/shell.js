@@ -9,7 +9,7 @@ import {
   setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
-import { defaultBrand, save, tickPublish } from "./workspace.js";
+import { defaultBrand, ensureRoleLoaded, save, tickPublish } from "./workspace.js";
 import { openPostModal, readPostForm, renderPlanner } from "./planner.js";
 import { renderAnalytics } from "./analytics.js";
 import { renderInbox } from "./inbox.js";
@@ -90,6 +90,10 @@ export function render(){
   tickPublish(); renderNav();
   const m=document.getElementById("main");
   if(!db.brands.length){ renderOnboarding(m); return; }    // fresh account, no brand yet
+  // Three views gate controls on the caller's role. Asking here rather than in
+  // each of them means the answer is already settled by the time one is opened,
+  // and one cache invalidation covers switching brands. Idempotent per brand.
+  ensureRoleLoaded(db.activeBrand || db.brands[0].id);
   ({planner:renderPlanner, analytics:renderAnalytics, inbox:renderInbox,
     smartlinks:renderSmartlinks, reports:renderReports,
     connections:renderConnections, settings:renderSettings}[view])(m);
