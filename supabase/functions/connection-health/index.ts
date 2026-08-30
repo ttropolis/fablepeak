@@ -111,6 +111,41 @@ function classify(error: { code: number | null; type: string; message: string })
   return { probe: "error", permission_hint: "unknown" };
 }
 
+/* TikTok creator info — the read the composer cannot make itself.
+ *
+ * TikTok's Direct Post guidelines require the post form to be built from the
+ * creator's own account settings: their nickname, the privacy levels their
+ * account offers, which of comment/duet/stitch their account disables, and the
+ * longest video they may post. That answer lives behind the connection's
+ * access token, and the browser never sees a token — so the read happens here,
+ * beside verify, and the response carries only the fields the form renders.
+ *
+ * Member-gated, exactly like verification and for the same reason: it is a
+ * read that every member composing a post needs. It writes nothing, on TikTok
+ * or in the database, so the owner-gating that revoke and the Facebook comment
+ * probe carry (both of which cause a side effect) would buy nothing here. */
+type CreatorInfo = {
+  ok: boolean;
+  creator: {
+    nickname: string;
+    avatar_url: string;
+    privacy_level_options: string[];
+    comment_disabled: boolean;
+    duet_disabled: boolean;
+    stitch_disabled: boolean;
+    max_video_post_duration_sec: number | null;
+  } | null;
+  error?: string;
+};
+
+/** TikTok's four documented audiences. The composer must offer exactly what
+ *  the creator's own account offers, so an unrecognised value is dropped
+ *  rather than rendered — a privacy level we cannot label is one the customer
+ *  cannot make an informed choice about. */
+const TIKTOK_PRIVACY_LEVELS = [
+  "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY",
+];
+
 export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies: Dependencies = {
     env: (key: string) => Deno.env.get(key),
@@ -231,6 +266,80 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
     }
   }
 
+  /** Ask TikTok what this creator's account allows, and return only that.
+   *
+   *  The token is fetched, used as a bearer header, and never returned or
+   *  logged — the failure paths below report a status and nothing else, the
+   *  same discipline the Facebook probe uses, because TikTok's error bodies
+   *  echo request context we have no reason to forward to a browser. */
+  async function tiktokCreatorInfo(connections: Connection[]): Promise<CreatorInfo> {
+    const empty: CreatorInfo = { ok: false, creator: null };
+    const tiktok = connections.filter((c) => c.platform === "tiktok");
+    // The publish loop picks the default connection and falls back to the
+    // oldest active one; the composer must be shown the same account, or the
+    // nickname on screen is not the account that gets posted to.
+    const connection = tiktok.find((c) => c.is_default === true) ??
+      tiktok.find((c) => c.status === "active") ?? tiktok[0];
+    if (!connection) {
+      return { ...empty, error: "Connect a TikTok account before composing for TikTok." };
+    }
+    if (connection.status !== "active") {
+      return { ...empty, error: "That TikTok account needs attention — verify or reconnect it." };
+    }
+
+    let token: string;
+    try {
+      token = await dependencies.freshConnectionToken(connection, env);
+    } catch {
+      return { ...empty, error: "That TikTok account needs attention — verify or reconnect it." };
+    }
+
+    let response: Response;
+    try {
+      response = await dependencies.fetch(
+        "https://open.tiktokapis.com/v2/post/publish/creator_info/query/", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json; charset=UTF-8",
+          },
+        });
+    } catch {
+      return { ...empty, error: "TikTok could not be reached. Try again shortly." };
+    }
+    if (!response.ok) {
+      return { ...empty, error: `TikTok could not answer (HTTP ${response.status}).` };
+    }
+    let body: any = null;
+    try { body = await response.json(); } catch { body = null; }
+    const data = body?.data;
+    if (!data || typeof data !== "object") {
+      return { ...empty, error: "TikTok returned no creator information." };
+    }
+    const levels = Array.isArray(data.privacy_level_options)
+      ? data.privacy_level_options
+        .filter((level: unknown) => typeof level === "string" && TIKTOK_PRIVACY_LEVELS.includes(level))
+      : [];
+    // No audiences means no legal post: the composer must not render a select
+    // that cannot produce a valid choice.
+    if (!levels.length) {
+      return { ...empty, error: "TikTok offered no privacy options for this account." };
+    }
+    const duration = Number(data.max_video_post_duration_sec);
+    return {
+      ok: true,
+      creator: {
+        nickname: String(data.creator_nickname ?? "TikTok"),
+        avatar_url: String(data.creator_avatar_url ?? ""),
+        privacy_level_options: levels,
+        comment_disabled: data.comment_disabled === true,
+        duet_disabled: data.duet_disabled === true,
+        stitch_disabled: data.stitch_disabled === true,
+        max_video_post_duration_sec: Number.isFinite(duration) && duration > 0 ? duration : null,
+      },
+    };
+  }
+
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
     if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -290,6 +399,13 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
       if (action === "probe_fb_comment") {
         return json(await probeFacebookComment(
           (connections as Connection[])[0], String(post_remote_id)));
+      }
+
+      // Member-gated, like verification: the membership check above is the
+      // whole authorization, and a provider refusal is a *result* the composer
+      // renders rather than an HTTP error it has to interpret.
+      if (action === "tiktok_creator_info") {
+        return json(await tiktokCreatorInfo(connections as Connection[]));
       }
 
       const results = [];

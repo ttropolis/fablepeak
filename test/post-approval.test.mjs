@@ -184,7 +184,7 @@ test("the frontend vocabulary gains the status, and nothing it must not write", 
   // A column FIELDS.posts does not name is invisible to the app, which is how
   // the note reaches the server and how the attribution stays out of reach.
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note"\]/);
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note","tiktok_options"\]/);
   // approved_by/at are written by the trigger from auth.uid() and now(); the
   // row builder must not learn them, or a client could clear the attribution.
   const rowBuilder = adapter.slice(adapter.indexOf("_dbToRows(data){"),

@@ -275,13 +275,43 @@ make Pinterest appear in production discovery.
 
 ---
 
-## 5. TikTok (deferred)
+## 5. TikTok (sandbox testing only — production still deferred)
 
 TikTok is intentionally not part of the current release. Leave
 `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` unset. FablePeak also blocks the
 adapter in OAuth discovery and publishing, so adding secrets alone cannot
 accidentally expose an incomplete integration. The steps below are retained
 only for a future phase.
+
+**The compliance UX now exists** (composer panel + adapter + `creator_info`
+proxy), which is what the demo video below was waiting on. What has *not*
+changed is the production freeze: the adapter is still `productionEnabled:
+false`, and TikTok has not approved this app for Direct Post.
+
+To exercise the workflow against **TikTok's Sandbox** on a non-production
+deployment, set one extra Edge Function secret alongside the sandbox client
+credentials:
+
+```
+TIKTOK_SANDBOX=1
+```
+
+Read exactly, as the string `1`. It makes `oauth-start` offer TikTok in
+discovery and lets the publish loop reach the adapter; it does **not** flip
+`productionEnabled`, and it must never be set on the production project. With
+it unset — the default, and every CI run — TikTok stays exactly as unreachable
+as it has always been.
+
+What the workflow does, end to end: the composer queries `creator_info` through
+the member-gated `tiktok_creator_info` action on `connection-health`, shows the
+destination nickname, offers only that account's privacy levels with **nothing
+preselected**, disables the comment/duet/stitch toggles the account disables,
+collects the commercial-content disclosure (with branded content barred from a
+private audience), probes the video's duration against
+`max_video_post_duration_sec`, and renders TikTok's consent line beside Save.
+The adapter maps those choices into `post_info`, calls `video/init/`, then
+polls `status/fetch/` for up to 60 seconds and reports success **only** on
+`PUBLISH_COMPLETE`.
 
 1. <https://developers.tiktok.com> → create an app.
 2. Add the **Content Posting API** product, request `video.publish`.
@@ -301,22 +331,24 @@ DNS TXT record at Hostinger
 2026-08-30); TikTok's verify re-check clears the three "URL is not verified"
 errors once their resolvers see it. The draft cannot be **saved** until every
 form error clears — the last one is the mandatory **demo video** showing the
-end-to-end TikTok flow, which can only be recorded after the compliance UX
-(creator-info-driven privacy picker with no default, comment/duet/stitch
-toggles, duration validation, consent, publish-status polling) is built and
-exercised against TikTok's Sandbox. If the browser draft is lost, re-entering
-the fields above takes minutes; the app id and credentials persist server-side.
+end-to-end TikTok flow. That compliance UX (creator-info-driven privacy picker
+with no default, comment/duet/stitch toggles, duration validation, consent,
+publish-status polling) is now built; the demo video can be recorded by running
+a sandbox deployment with `TIKTOK_SANDBOX=1` and the sandbox client
+credentials. If the browser draft is lost, re-entering the fields above takes
+minutes; the app id and credentials persist server-side.
 
 ```
 TIKTOK_CLIENT_KEY=<...>
 TIKTOK_CLIENT_SECRET=<...>
 ```
 
-Before enabling it, the export screen must query current creator info, display
-the destination account and allowed privacy/interaction settings, collect
-explicit user consent, validate video duration, and track the final publish
-status. Unaudited clients are additionally limited to private posts and a small
-daily active-user cap.
+The export-screen requirements — query current creator info, display the
+destination account and allowed privacy/interaction settings, collect explicit
+user consent, validate video duration, and track the final publish status — are
+implemented. What remains before production is TikTok's own audit: unaudited
+clients are limited to private posts and a small daily active-user cap, so
+`productionEnabled` stays `false` until that clears.
 
 ---
 

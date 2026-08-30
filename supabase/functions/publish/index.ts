@@ -163,6 +163,12 @@ export async function publishPost(
       const out = await adapter.publish({
         text: effectiveText(post, platform), mediaUrl: post.media_url ?? null,
         accessToken: token, connection: conn,
+        /* TikTok's per-post privacy and disclosure choices ride here for the
+           same reason `variants` resolves here: the claim RPCs return `p.*`,
+           so the column arrives on the post row with no migration to any of
+           them, and the adapter is handed a finished value rather than a post.
+           Adapters that do not publish to TikTok ignore the field. */
+        tiktokOptions: post.tiktok_options ?? null,
       });
       await mark({ status: "published", connection_id: conn.id, attempts: currentAttempt,
         remote_id: out.remote_id, remote_url: out.remote_url ?? null,

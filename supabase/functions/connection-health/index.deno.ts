@@ -374,3 +374,152 @@ Deno.test("the probe refuses a post that is not on the connection's own Page", a
   // public post through FablePeak's infrastructure.
   assertEquals(calls, []);
 });
+
+/* --------------------------------- TikTok creator info (Content Posting API)
+ *
+ * TikTok's Direct Post guidelines make the composer's form a function of the
+ * creator's own account. That answer lives behind an access token the browser
+ * never holds, so the read happens here — member-gated like verification,
+ * because it writes nothing anywhere, and returning only the fields the form
+ * renders.
+ */
+
+const TIKTOK_TOKEN = "tiktok-token-SECRET";
+const TIKTOK_ROWS = [{
+  id: "conn-tt", platform: "tiktok", external_id: "creator-1",
+  status: "active", is_default: true,
+}];
+const CREATOR_INFO = { brand_id: "brand-1", action: "tiktok_creator_info" };
+const TIKTOK_ANSWER = {
+  data: {
+    creator_avatar_url: "https://cdn.example/avatar.png",
+    creator_nickname: "@fablepeak",
+    creator_username: "fablepeak",
+    privacy_level_options: ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"],
+    comment_disabled: false,
+    duet_disabled: true,
+    stitch_disabled: false,
+    max_video_post_duration_sec: 600,
+  },
+};
+
+/** The handler with a TikTok connection and a stubbed provider. */
+function creatorHarness(responses: Response[], roles: Roles = { rows: TIKTOK_ROWS }) {
+  const calls: Call[] = [];
+  const queue = [...responses];
+  const base = harness(roles, {
+    freshConnectionToken: async () => TIKTOK_TOKEN,
+    fetch: async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: String(init?.method ?? "GET"),
+        body: init?.body ? String(init.body) : "",
+      });
+      const next = queue.shift();
+      if (!next) throw new Error("no stubbed response left");
+      return next;
+    },
+  });
+  return { ...base, calls };
+}
+
+Deno.test("creator info returns the form's fields and never the credential", async () => {
+  const { handler, calls } = creatorHarness([graphOk(TIKTOK_ANSWER)]);
+  const { result: response, logged } = await withCapturedConsole(() => handler(post(CREATOR_INFO)));
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body, {
+    ok: true,
+    creator: {
+      nickname: "@fablepeak",
+      avatar_url: "https://cdn.example/avatar.png",
+      privacy_level_options: ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"],
+      comment_disabled: false,
+      duet_disabled: true,
+      stitch_disabled: false,
+      max_video_post_duration_sec: 600,
+    },
+  });
+  // `creator_username` was in TikTok's answer and is deliberately not in ours:
+  // the response carries what the form renders and nothing more.
+  assertEquals(JSON.stringify(body).includes("creator_username"), false);
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].url, "https://open.tiktokapis.com/v2/post/publish/creator_info/query/");
+  assertEquals(calls[0].method, "POST");
+  // The token is a bearer header on the way out and appears in nothing else.
+  assertEquals(JSON.stringify(body).includes(TIKTOK_TOKEN), false);
+  assertEquals(logged.includes(TIKTOK_TOKEN), false);
+});
+
+Deno.test("creator info is member-gated, exactly like verification", async () => {
+  const outsider = creatorHarness([], { member: false, rows: TIKTOK_ROWS });
+  const refused = await outsider.handler(post(CREATOR_INFO));
+  assertEquals(refused.status, 403);
+  assertEquals(await refused.json(), { error: "You don't have access to that brand" });
+  assertEquals(outsider.calls, []);
+
+  // An editor — a member who is not an owner — must be able to compose, so
+  // this read is deliberately NOT owner-gated the way revoke and the comment
+  // probe are. Neither of those is a read.
+  const editor = creatorHarness([graphOk(TIKTOK_ANSWER)], { member: true, owner: false, rows: TIKTOK_ROWS });
+  const allowed = await editor.handler(post(CREATOR_INFO));
+  assertEquals(allowed.status, 200);
+  assertEquals((await allowed.json()).ok, true);
+  assertEquals(editor.asked, ["member:brand-1"], "ownership is never even asked about");
+});
+
+Deno.test("a TikTok provider failure is reported by status, never by body", async () => {
+  const failure = creatorHarness([
+    new Response(JSON.stringify({
+      error: { code: "access_token_invalid", message: `bad ${TIKTOK_TOKEN}` },
+    }), { status: 401 }),
+  ]);
+  const { result: response, logged } = await withCapturedConsole(() => failure.handler(post(CREATOR_INFO)));
+  assertEquals(response.status, 200, "a provider refusal is a result the composer renders");
+  const body = await response.json();
+  assertEquals(body, { ok: false, creator: null, error: "TikTok could not answer (HTTP 401)." });
+  assertEquals(JSON.stringify(body).includes(TIKTOK_TOKEN), false);
+  assertEquals(logged.includes(TIKTOK_TOKEN), false);
+
+  const unreachable = creatorHarness([], {
+    rows: TIKTOK_ROWS,
+  });
+  // No stubbed response left → the stub throws, which is a transport failure.
+  const offline = await unreachable.handler(post(CREATOR_INFO));
+  assertEquals(await offline.json(),
+    { ok: false, creator: null, error: "TikTok could not be reached. Try again shortly." });
+});
+
+Deno.test("creator info answers honestly when there is no usable TikTok account", async () => {
+  const none = creatorHarness([], { rows: [{ id: "c1", platform: "facebook", external_id: "1" }] });
+  assertEquals(await (await none.handler(post(CREATOR_INFO))).json(), {
+    ok: false, creator: null,
+    error: "Connect a TikTok account before composing for TikTok.",
+  });
+  assertEquals(none.calls, [], "no provider call without a TikTok connection");
+
+  const broken = creatorHarness([], {
+    rows: [{ id: "conn-tt", platform: "tiktok", external_id: "creator-1", status: "expired" }],
+  });
+  assertEquals(await (await broken.handler(post(CREATOR_INFO))).json(), {
+    ok: false, creator: null,
+    error: "That TikTok account needs attention — verify or reconnect it.",
+  });
+  assertEquals(broken.calls, []);
+
+  // An account TikTok offers no audience for cannot produce a legal post, so
+  // the composer is told that rather than handed an empty select.
+  const noLevels = creatorHarness([graphOk({ data: { ...TIKTOK_ANSWER.data, privacy_level_options: [] } })]);
+  assertEquals(await (await noLevels.handler(post(CREATOR_INFO))).json(), {
+    ok: false, creator: null,
+    error: "TikTok offered no privacy options for this account.",
+  });
+
+  // An audience we cannot label is one the customer cannot choose knowingly.
+  const unknownLevel = creatorHarness([graphOk({
+    data: { ...TIKTOK_ANSWER.data, privacy_level_options: ["PUBLIC_TO_EVERYONE", "SOMETHING_NEW"] },
+  })]);
+  assertEquals((await (await unknownLevel.handler(post(CREATOR_INFO))).json())
+    .creator.privacy_level_options, ["PUBLIC_TO_EVERYONE"]);
+});

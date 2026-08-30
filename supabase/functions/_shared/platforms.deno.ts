@@ -1,10 +1,14 @@
 import {
   ADAPTERS,
   effectiveText,
+  configuredPlatforms,
   exchangeAuthorizationCode,
+  platformConnectionEnabled,
   ProviderRequestError,
   PublishOutcomeUnknownError,
   refreshPlatformToken,
+  TIKTOK_OPTIONS_REQUIRED,
+  TIKTOK_STATUS_POLL,
   X_TEXT_LIMIT,
 } from "./platforms.ts";
 import { INTERRUPTED, publishPost } from "../publish/index.ts";
@@ -1352,5 +1356,213 @@ Deno.test("platforms.ts effectiveText matches the shared fixture table", async (
     if (got !== c.expect) {
       throw new Error(`${c.name}: expected ${JSON.stringify(c.expect)}, got ${JSON.stringify(got)}`);
     }
+  }
+});
+
+/* ------------------------------------------- TikTok Content Posting API ---
+ *
+ * The compliance workflow's server half. What these assert is the difference
+ * between the adapter that was frozen and the one that replaced it: the
+ * creator's own choices reach `post_info` instead of a hardcoded SELF_ONLY, a
+ * target with no choices fails cleanly instead of inventing them, and "the
+ * upload was accepted" is no longer reported as "the video is on TikTok".
+ */
+
+/** This suite throws its own errors rather than pulling in an assertion
+ *  library; the TikTok cases compare enough small values that one helper earns
+ *  its place. Same shape as the one in connection-health/index.deno.ts. */
+const assertEquals = (actual: unknown, expected: unknown, message = "values differ") => {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${message}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
+  }
+};
+
+/** The status poll is a real minute in production. Shrink it around one test
+ *  and always put it back, so a timeout case costs milliseconds and no other
+ *  test inherits the change. */
+async function withFastPolling<T>(run: () => Promise<T>, timeoutMs = 30): Promise<T> {
+  const original = { ...TIKTOK_STATUS_POLL };
+  TIKTOK_STATUS_POLL.intervalMs = 1;
+  TIKTOK_STATUS_POLL.timeoutMs = timeoutMs;
+  try { return await run(); } finally { Object.assign(TIKTOK_STATUS_POLL, original); }
+}
+
+const TIKTOK_OPTIONS = {
+  privacy_level: "MUTUAL_FOLLOW_FRIENDS",
+  disable_comment: true,
+  disable_duet: false,
+  disable_stitch: true,
+  disclose_commercial: true,
+  brand_organic: false,
+  brand_content: true,
+};
+
+/** Answers init once, then every status poll from `states` in order (the last
+ *  entry repeats). Records what was sent so the mapping can be read back. */
+function tiktokFetch(states: unknown[], calls: { url: string; body: any }[]) {
+  let polls = 0;
+  return (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+    calls.push({ url, body });
+    if (url.endsWith("/video/init/")) {
+      return Promise.resolve(json({ data: { publish_id: "publish-1" } }));
+    }
+    if (url.endsWith("/status/fetch/")) {
+      const state = states[Math.min(polls++, states.length - 1)];
+      return Promise.resolve(json({ data: state }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+}
+
+Deno.test("TikTok sends the creator's own choices, never a hardcoded privacy level", async () => {
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch([{ status: "PROCESSING_UPLOAD" }, { status: "PUBLISH_COMPLETE" }], calls);
+  try {
+    const result = await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Behind the scenes",
+      mediaUrl: "https://cdn.example/clip.mp4",
+      accessToken: "token",
+      connection: { external_id: "creator-1", meta: {} },
+      tiktokOptions: TIKTOK_OPTIONS,
+    }));
+    const info = calls[0].body.post_info;
+    assertEquals(info.privacy_level, "MUTUAL_FOLLOW_FRIENDS");
+    assertEquals(info.disable_comment, true);
+    assertEquals(info.disable_duet, false);
+    assertEquals(info.disable_stitch, true);
+    assertEquals(info.brand_content_toggle, true);
+    assertEquals(info.brand_organic_toggle, false);
+    assertEquals(info.title, "Behind the scenes");
+    assertEquals(calls[0].body.source_info,
+      { source: "PULL_FROM_URL", video_url: "https://cdn.example/clip.mp4" });
+    // Not published until TikTok says so: the first poll was still processing.
+    assertEquals(calls.map(c => c.url.split("/v2/")[1]),
+      ["post/publish/video/init/", "post/publish/status/fetch/", "post/publish/status/fetch/"]);
+    assertEquals(calls[1].body, { publish_id: "publish-1" });
+    assertEquals(result, { remote_id: "publish-1" });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a TikTok target with no usable options fails before any request", async () => {
+  let called = false;
+  globalThis.fetch = () => { called = true; return Promise.reject(new Error("must not run")); };
+  try {
+    for (const tiktokOptions of [
+      null,
+      undefined,
+      {},
+      "PUBLIC_TO_EVERYONE",
+      [{ privacy_level: "PUBLIC_TO_EVERYONE" }],
+      { privacy_level: "" },
+      { privacy_level: "PUBLIC_TO_ANYONE_AT_ALL" },
+      // disclosure with nothing declared, and private branded content: TikTok
+      // refuses both, so storing or sending them is never the honest option.
+      { privacy_level: "PUBLIC_TO_EVERYONE", disclose_commercial: true },
+      { privacy_level: "SELF_ONLY", disclose_commercial: true, brand_content: true },
+    ]) {
+      await ADAPTERS.tiktok.publish({
+        text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token",
+        connection: { external_id: "creator-1", meta: {} }, tiktokOptions,
+      }).then(
+        () => { throw new Error(`accepted ${JSON.stringify(tiktokOptions)}`); },
+        (error) => {
+          assertEquals(error.name, "Error",
+            "a composer problem is a plain permanent failure, not an ambiguous outcome");
+          assertEquals(error.message, TIKTOK_OPTIONS_REQUIRED);
+        },
+      );
+    }
+    if (called) throw new Error("no provider request may be made without the creator's choices");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("TikTok reports a FAILED publish with its own reason and nothing else", async () => {
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch(
+    [{ status: "FAILED", fail_reason: "video_duration_check_failed" }], calls);
+  try {
+    await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token-SECRET",
+      connection: { external_id: "creator-1", meta: {} }, tiktokOptions: TIKTOK_OPTIONS,
+    })).then(
+      () => { throw new Error("a FAILED status must not resolve"); },
+      (error) => {
+        assertEquals(error.name, "Error");
+        assertEquals(error.message, "TikTok rejected this video (video_duration_check_failed).");
+        if (String(error.message).includes("token-SECRET")) {
+          throw new Error("a credential must never reach a failure message");
+        }
+      },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a TikTok upload that never finishes is ambiguous, not published", async () => {
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch([{ status: "PROCESSING_UPLOAD" }], calls);
+  try {
+    await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token",
+      connection: { external_id: "creator-1", meta: {} }, tiktokOptions: TIKTOK_OPTIONS,
+    })).then(
+      () => { throw new Error("a timeout must not report success"); },
+      (error) => {
+        if (!(error instanceof PublishOutcomeUnknownError)) {
+          throw new Error(`expected an unknown outcome, got ${error.name}: ${error.message}`);
+        }
+      },
+    );
+    if (calls.length < 2) throw new Error("the adapter should have polled at least once");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("the TikTok sandbox gate opens testing only, and only for TikTok", async () => {
+  const off = () => undefined;
+  const on = (key: string) => (key === "TIKTOK_SANDBOX" ? "1" : undefined);
+  // The freeze, unchanged: with no sandbox variable TikTok is exactly as
+  // unreachable as every other production-disabled adapter.
+  for (const id of ["tiktok", "pinterest", "x", "linkedin"]) {
+    assertEquals(platformConnectionEnabled(ADAPTERS[id], off), false, `${id} without the gate`);
+  }
+  assertEquals(platformConnectionEnabled(ADAPTERS.tiktok, on), true);
+  // …and it is TikTok's gate alone. No other frozen provider may ride it.
+  for (const id of ["pinterest", "x", "linkedin"]) {
+    assertEquals(platformConnectionEnabled(ADAPTERS[id], on), false, `${id} must not ride the gate`);
+  }
+  // Production adapters are unaffected either way.
+  for (const id of ["facebook", "instagram", "youtube"]) {
+    assertEquals(platformConnectionEnabled(ADAPTERS[id], off), true, `${id} stays enabled`);
+  }
+  // The exact string "1", so a stray value cannot open it by accident.
+  for (const value of ["", "0", "true", "false", "yes", " 1", "1 "]) {
+    assertEquals(platformConnectionEnabled(ADAPTERS.tiktok, () => value), false,
+      `TIKTOK_SANDBOX=${JSON.stringify(value)} must not enable TikTok`);
+  }
+  // productionEnabled is untouched by the gate: this is a testing opening on a
+  // non-production deployment, never a production enable.
+  assertEquals(ADAPTERS.tiktok.productionEnabled, false);
+});
+
+Deno.test("discovery offers TikTok only when the sandbox variable is really set", () => {
+  // configuredPlatforms() asks platformConnectionEnabled() with no env
+  // argument, so this is the default deployment-variable path — the one
+  // oauth-start actually takes.
+  const secrets: Record<string, string> = {
+    SOCIAL_TOKEN_ENCRYPTION_KEY: "key",
+    TIKTOK_CLIENT_KEY: "sandbox-key",
+    TIKTOK_CLIENT_SECRET: "sandbox-secret",
+  };
+  const env = (key: string) => secrets[key];
+  const had = Deno.env.get("TIKTOK_SANDBOX");
+  try {
+    Deno.env.delete("TIKTOK_SANDBOX");
+    assertEquals(configuredPlatforms(env), [], "the freeze holds with no sandbox variable");
+    Deno.env.set("TIKTOK_SANDBOX", "1");
+    assertEquals(configuredPlatforms(env), ["tiktok"]);
+  } finally {
+    if (had === undefined) Deno.env.delete("TIKTOK_SANDBOX");
+    else Deno.env.set("TIKTOK_SANDBOX", had);
   }
 });

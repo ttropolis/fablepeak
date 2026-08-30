@@ -54,6 +54,11 @@ export const RemoteAdapter = {
           // name is invisible to the app even when it exists, so `variants`
           // needs all three edits — here, in _dbToRows, and in FIELDS.posts.
           variants: p.variants || {},
+          // TikTok Direct Post options. Same three-edit rule as `variants`, and
+          // nullable rather than defaulted on purpose: TikTok's guidelines
+          // forbid a preselected privacy level, so "no choices recorded" has to
+          // stay distinguishable from "these are the choices".
+          tiktok_options: p.tiktok_options || null,
           targets: targets.filter(t => t.post_id===p.id) })),
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
@@ -75,6 +80,11 @@ export const RemoteAdapter = {
         time:p.time||"10:00", text:p.text, networks:p.networks||[], status:p.status,
         media_url:p.media_url || null, variants:p.variants || {},
         approval_note:p.approval_note || null,
+        /* Written only for posts that actually target TikTok. A post that no
+           longer names tiktok has no TikTok choices to make, and carrying a
+           stale object forward would be a claim about an audience nobody
+           picked for this post — so the column is cleared with the target. */
+        tiktok_options:(p.networks || []).includes("tiktok") ? (p.tiktok_options || null) : null,
         client_id:this._clientId });
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
@@ -129,7 +139,7 @@ export const RemoteAdapter = {
          status trigger writes them from auth.uid() and now(), and a column this
          list does not name is one no client payload can carry — which is what
          keeps an approval attributable to the account that made it. */
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note"],
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note","tiktok_options"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));
@@ -452,6 +462,25 @@ export const RemoteAdapter = {
     const out = await r.json();
     if(!r.ok) throw new Error(out.error || "Could not verify connections");
     return out.results || [];
+  },
+  /** What TikTok says this creator's account allows (Content Posting API's
+      creator_info query), proxied by connection-health because the read needs
+      the connection's access token and the browser never holds one.
+      Resolves to {ok, creator, error?} — a provider refusal is a result the
+      composer renders, not an exception, exactly like the RPC calls above.
+      Only ever called with the brand the composer is open in. */
+  async tiktokCreatorInfo(brandId){
+    const jwt = await this._jwt();
+    if(!jwt) throw new Error("Sign in first");
+    const r = await fetch(`${this._fnBase}/connection-health`, {
+      method:"POST",
+      headers:{ Authorization:`Bearer ${jwt}`, apikey:window.FABLEPEAK_BACKEND.anonKey,
+                "Content-Type":"application/json" },
+      body:JSON.stringify({ brand_id:brandId, action:"tiktok_creator_info" }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if(!r.ok) throw new Error(out.error || "Could not read your TikTok account settings");
+    return { ok:!!out.ok, creator:out.creator || null, error:out.error || "" };
   },
   async deleteAccount(password){
     const jwt=await this._jwt();

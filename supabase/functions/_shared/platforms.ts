@@ -32,6 +32,12 @@ export interface PublishInput {
   mediaUrl?: string | null;
   accessToken: string;
   connection: { external_id: string; meta: Record<string, any> };
+  /** `posts.tiktok_options` for this post, or null. Threaded through the same
+   * way `text` is: the publish loop resolves it per target from the claimed
+   * post row (which the claim RPCs already return as `p.*`) and hands the
+   * adapter the finished value, so no adapter has to know what a post row looks
+   * like. Only the TikTok adapter reads it; every other adapter ignores it. */
+  tiktokOptions?: unknown;
 }
 
 export interface PublishResult { remote_id: string; remote_url?: string; }
@@ -1003,6 +1009,88 @@ const linkedin: PlatformAdapter = {
 };
 
 /* -------------------------------------------------------------------- TikTok */
+
+/** The four audiences TikTok documents for Direct Post. The composer only ever
+ *  offers the subset `creator_info` returns for *this* creator; this is the
+ *  closed set that any of those subsets can be drawn from, and the same list
+ *  the posts_tiktok_options_valid CHECK constraint names. */
+export const TIKTOK_PRIVACY_LEVELS = [
+  "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY",
+] as const;
+
+export interface TikTokPostOptions {
+  privacy_level: string;
+  disable_comment: boolean;
+  disable_duet: boolean;
+  disable_stitch: boolean;
+  disclose_commercial: boolean;
+  brand_organic: boolean;
+  brand_content: boolean;
+}
+
+/** The sentence a TikTok target fails with when the post carries no usable
+ *  options. Exported because it is a contract between this adapter and the
+ *  composer that is supposed to have collected them, and a test pins it. */
+export const TIKTOK_OPTIONS_REQUIRED =
+  "TikTok post needs its privacy and disclosure options";
+
+/** Read `posts.tiktok_options` into the shape the request body needs.
+ *
+ *  Returns null for anything that is missing, malformed, or self-contradictory.
+ *  There is deliberately no fallback: the adapter used to hardcode
+ *  `privacy_level: "SELF_ONLY"`, which published a customer's video to nobody
+ *  and told them it had gone out. TikTok's guidelines require the creator to
+ *  choose an audience with nothing preselected, so "no choice recorded" can
+ *  only ever be a refusal. */
+export function readTikTokOptions(value: unknown): TikTokPostOptions | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const privacy = raw.privacy_level;
+  if (typeof privacy !== "string" ||
+      !(TIKTOK_PRIVACY_LEVELS as readonly string[]).includes(privacy)) return null;
+  const flag = (key: string) => raw[key] === true;
+  const options: TikTokPostOptions = {
+    privacy_level: privacy,
+    disable_comment: flag("disable_comment"),
+    disable_duet: flag("disable_duet"),
+    disable_stitch: flag("disable_stitch"),
+    disclose_commercial: flag("disclose_commercial"),
+    brand_organic: flag("brand_organic"),
+    brand_content: flag("brand_content"),
+  };
+  // Disclosure on with neither box ticked says "this is commercial content, in
+  // no way", which TikTok's own form refuses. So does branded content that
+  // nobody but the creator can see.
+  if (options.disclose_commercial && !options.brand_organic && !options.brand_content) return null;
+  if (options.brand_content && options.privacy_level === "SELF_ONLY") return null;
+  return options;
+}
+
+/** How long the adapter waits for TikTok to finish processing an uploaded
+ *  video, and how often it asks. A mutable object rather than two constants so
+ *  the Deno suite can exercise the timeout path without spending a real minute
+ *  on it; production never touches it. */
+export const TIKTOK_STATUS_POLL = { intervalMs: 3_000, timeoutMs: 60_000 };
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** TikTok Sandbox testing gate — NEVER a production enable.
+ *
+ *  `productionEnabled: false` on the TikTok adapter is the provider freeze and
+ *  it stays false: TikTok has not approved this app for Direct Post, and no
+ *  secret may lift that. What `TIKTOK_SANDBOX=1` buys is the ability to run the
+ *  completed compliance workflow against TikTok's own sandbox credentials on a
+ *  deployment that is not production — discovery offers TikTok, OAuth starts,
+ *  and the publish loop reaches this adapter. Unset (the default, including
+ *  every CI run), TikTok is exactly as unreachable as it has always been.
+ *
+ *  The value is checked for the exact string "1" rather than for truthiness, so
+ *  a stray `TIKTOK_SANDBOX=false` or an empty deployment variable cannot open
+ *  it by accident. */
+export function tiktokSandboxEnabled(env: (k: string) => string | undefined): boolean {
+  return env("TIKTOK_SANDBOX") === "1";
+}
+
 const tiktok: PlatformAdapter = {
   id: "tiktok",
   label: "TikTok",
@@ -1014,9 +1102,12 @@ const tiktok: PlatformAdapter = {
   clientIdEnv: "TIKTOK_CLIENT_KEY",
   clientSecretEnv: "TIKTOK_CLIENT_SECRET",
   requiresMedia: true,
-  // TikTok requires creator-info-driven privacy/interaction controls, explicit
-  // consent, duration validation, and final-status tracking. Keep OAuth and
-  // publishing unreachable until that complete user flow exists.
+  // The creator-info-driven privacy/interaction controls, the explicit consent
+  // line, duration validation and final-status tracking now all exist (see
+  // publish() below and the composer's TikTok panel). What does NOT exist is
+  // TikTok's approval of this app for Direct Post, so the freeze stays exactly
+  // where it was: production remains disabled, and the only way to reach this
+  // adapter is the TIKTOK_SANDBOX testing gate above.
   productionEnabled: false,
 
   async identify(t) {
@@ -1027,8 +1118,30 @@ const tiktok: PlatformAdapter = {
     return { external_id: u.open_id, display_name: u.display_name ?? "TikTok", avatar_url: u.avatar_url };
   },
 
-  async publish({ text, mediaUrl, accessToken }) {
+  /* Direct Post, TikTok's way round.
+   *
+   *  Two things separate this from every other adapter here.
+   *
+   *  The creator's choices are the post. `privacy_level` used to be a hardcoded
+   *  `SELF_ONLY`, which quietly published a customer's video to an audience of
+   *  one and reported success. TikTok's UX guidelines require the creator to
+   *  pick an audience with nothing preselected, to be told which interactions
+   *  their account allows, and to declare commercial content explicitly — so
+   *  those choices travel on the post and a target without them fails cleanly
+   *  instead of falling back to anything at all.
+   *
+   *  `video/init/` is not a publish. It hands TikTok a URL to pull from and
+   *  returns a `publish_id`; the video is not on the profile until
+   *  `status/fetch/` says PUBLISH_COMPLETE. Reporting success at init would
+   *  mark posts published that TikTok later rejected for a duration, format or
+   *  policy reason nobody would ever see. */
+  async publish({ text, mediaUrl, accessToken, tiktokOptions }) {
     if (!mediaUrl) throw new Error("TikTok requires a video URL.");
+    const options = readTikTokOptions(tiktokOptions);
+    // Before the network, and before any state changes: an unusable options
+    // object is the customer's composer to fix, not a provider failure, so it
+    // is a plain Error (the publish loop classifies that as permanent).
+    if (!options) throw new Error(TIKTOK_OPTIONS_REQUIRED);
     const safeMediaUrl = publicMediaUrl(mediaUrl, "TikTok");
     let response: Response;
     try {
@@ -1036,7 +1149,15 @@ const tiktok: PlatformAdapter = {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          post_info: { title: text.slice(0, 150), privacy_level: "SELF_ONLY" },
+          post_info: {
+            title: text.slice(0, 150),
+            privacy_level: options.privacy_level,
+            disable_comment: options.disable_comment,
+            disable_duet: options.disable_duet,
+            disable_stitch: options.disable_stitch,
+            brand_content_toggle: options.brand_content,
+            brand_organic_toggle: options.brand_organic,
+          },
           source_info: { source: "PULL_FROM_URL", video_url: safeMediaUrl },
         }),
       });
@@ -1051,9 +1172,58 @@ const tiktok: PlatformAdapter = {
       rethrowFinalPublishFailure(error, response,
         "TikTok may have accepted this video. Verify the profile before retrying.");
     }
-    return { remote_id: d.data?.publish_id ?? "unknown" };
+    const publishId = d.data?.publish_id;
+    if (!publishId) {
+      throw new PublishOutcomeUnknownError(
+        "TikTok may have accepted this video. Verify the profile before retrying.");
+    }
+    return await tiktokAwaitPublished(String(publishId), accessToken);
   },
 };
+
+/** Poll `status/fetch/` until TikTok has actually posted the video.
+ *
+ *  Three outcomes, and no fourth:
+ *    PUBLISH_COMPLETE  the only success. Its `publish_id` is the remote id —
+ *                      TikTok gives no permalink here, and inventing one from a
+ *                      display name would produce a link that 404s.
+ *    FAILED            reported with TikTok's `fail_reason` code and nothing
+ *                      else. The code is a documented enum, so it is the whole
+ *                      answer; the response body is never forwarded.
+ *    timeout           ambiguous by construction — the upload was accepted and
+ *                      may still complete — so it is a PublishOutcomeUnknown,
+ *                      which the publish loop refuses to retry automatically
+ *                      rather than risk a duplicate public video. */
+async function tiktokAwaitPublished(
+  publishId: string,
+  accessToken: string,
+): Promise<PublishResult> {
+  const unknown = () => new PublishOutcomeUnknownError(
+    "TikTok is still processing this video. Check the profile before retrying.");
+  const deadline = Date.now() + TIKTOK_STATUS_POLL.timeoutMs;
+  for (;;) {
+    await delay(TIKTOK_STATUS_POLL.intervalMs);
+    let status: any = null;
+    try {
+      status = await j(await fetch("https://open.tiktokapis.com/v2/post/publish/status/fetch/", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ publish_id: publishId }),
+      }), "tiktok publish status");
+    } catch {
+      // A single unreadable status answer says nothing about the video; keep
+      // asking until the deadline, then report the ambiguity honestly.
+      status = null;
+    }
+    const state = String(status?.data?.status ?? "");
+    if (state === "PUBLISH_COMPLETE") return { remote_id: publishId };
+    if (state === "FAILED") {
+      const reason = String(status?.data?.fail_reason ?? "").slice(0, 100);
+      throw new Error(`TikTok rejected this video${reason ? ` (${reason})` : ""}.`);
+    }
+    if (Date.now() >= deadline) throw unknown();
+  }
+}
 
 /* ---------------------------------------------------------------- Pinterest */
 async function pinterestToken(
@@ -1225,8 +1395,31 @@ export const ADAPTERS: Record<string, PlatformAdapter> = {
   youtube, x, instagram, facebook, linkedin, tiktok, pinterest,
 };
 
-export function platformConnectionEnabled(adapter: PlatformAdapter) {
-  return adapter.productionEnabled !== false;
+/** Reading a deployment variable must never be the thing that breaks an
+ *  adapter check. Edge Functions run with an explicit `--allow-env` allowlist,
+ *  and a name outside it raises rather than answering undefined. */
+const deploymentEnv = (key: string): string | undefined => {
+  try { return Deno.env.get(key); } catch { return undefined; }
+};
+
+/** May this deployment connect and publish through this adapter?
+ *
+ *  `productionEnabled: false` is the provider freeze and is the answer for
+ *  every frozen adapter. The one exception is TikTok's sandbox gate, which is
+ *  a *testing* opening on a non-production deployment and not a production
+ *  enable — see tiktokSandboxEnabled(). With TIKTOK_SANDBOX unset, which is
+ *  every CI run and every production deployment, this returns exactly what it
+ *  returned before the gate existed.
+ *
+ *  `env` is a parameter with a default rather than a required argument so that
+ *  the three call sites — configuredPlatforms() below, oauth-start and the
+ *  publish loop — keep asking the question the same way they always have. */
+export function platformConnectionEnabled(
+  adapter: PlatformAdapter,
+  env: (k: string) => string | undefined = deploymentEnv,
+) {
+  if (adapter.productionEnabled !== false) return true;
+  return adapter.id === "tiktok" && tiktokSandboxEnabled(env);
 }
 
 /** Which platforms have credentials configured in this deployment. */

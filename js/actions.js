@@ -23,10 +23,10 @@ import {
 } from "./welcome.js";
 import {
   approvePost, calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost,
-  focusVariant, openPostModal, publishNow, rejectPost, renderVariantSections,
-  retryPost, runAiAssist, savePost, setApprovalScope, showMediaPreview,
-  syncAiAssist, syncComposer, syncVariant, togglePerNetwork, uploadPostMedia,
-  useAiSuggestion,
+  focusVariant, openPostModal, publishNow, rejectPost, renderTikTokPanel,
+  renderVariantSections, retryPost, runAiAssist, savePost, setApprovalScope,
+  setTikTokOption, showMediaPreview, syncAiAssist, syncComposer, syncVariant,
+  togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
 import {
@@ -77,13 +77,18 @@ export const ACTIONS = {
   dupPost:               el => dupPost(el.dataset.arg),
   publishNow:            el => publishNow(el.dataset.arg),
   retryPost:             el => retryPost(el.dataset.arg),
-  showMediaPreview:      el => showMediaPreview(el.value),
+  showMediaPreview:      el => { showMediaPreview(el.value); renderTikTokPanel(); },
   uploadPostMedia:       el => uploadPostMedia(el),
   toggleNet:             el => {
     el.parentElement.classList.toggle("on", el.checked);
     renderVariantSections();                   // one section per selected network
+    renderTikTokPanel();                       // …and TikTok's own form, or none
     syncAiAssist();
   },
+  /* composer → TikTok Direct Post options. One entry for every control in the
+     panel; which one is being changed travels in data-arg, so the conditional
+     rules the guidelines impose live in one function instead of six. */
+  tiktokOption:          el => setTikTokOption(el),
   /* composer → per-network copy (ADR 0005 decisions 11-13) */
   togglePerNetwork:      () => togglePerNetwork(),
   syncVariant:           el => syncVariant(el),

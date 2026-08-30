@@ -470,6 +470,25 @@ async function signIn(api, cloud) {
     record("leaveBrand", [brandId]);
     if (cloud.leaveError) throw new api.window.Error(String(cloud.leaveError));
   };
+  /* TikTok creator info (connection-health action "tiktok_creator_info").
+     `cloud.tiktokCreator` is either the creator object the composer's form is
+     built from, or {error} for the refusal path — the real method resolves a
+     result rather than throwing for a provider-side "no", so this does too.
+     Absent, it answers a plain account with every audience and no interaction
+     disabled, which is the case most composer tests are about. */
+  store.tiktokCreatorInfo = async brandId => {
+    record("tiktokCreatorInfo", [brandId]);
+    const answer = cloud.tiktokCreator ?? {
+      nickname: "@fablepeak", avatar_url: "",
+      privacy_level_options: [
+        "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY",
+      ],
+      comment_disabled: false, duet_disabled: false, stitch_disabled: false,
+      max_video_post_duration_sec: 600,
+    };
+    if (answer.error) return api.intoPage({ ok: false, creator: null, error: answer.error });
+    return api.intoPage({ ok: true, creator: answer, error: "" });
+  };
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 

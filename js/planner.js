@@ -5,10 +5,10 @@ import { NETWORKS, SCHEDULE_TZ } from "./constants.js";
 import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
-  AI_ASSIST_IDLE, aiAssist, approvalFilter, calCursor, composerVariantFocus,
-  composerVariants, mediaUploadActive, setAiAssist, setApprovalFilter,
-  setComposerBaseline, setComposerVariantFocus, setComposerVariants,
-  setMediaUploadActive,
+  AI_ASSIST_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist, approvalFilter, calCursor,
+  composerTikTok, composerVariantFocus, composerVariants, mediaUploadActive,
+  setAiAssist, setApprovalFilter, setComposerBaseline, setComposerTikTok,
+  setComposerVariantFocus, setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
 import {
@@ -219,6 +219,7 @@ export function openPostModal(id, dateStr){
     <div class="charcount" id="pm_count" aria-live="polite"></div>
     ${aiAssistPanel(locked)}
     ${perNetworkPanel(p, locked)}
+    ${tiktokPanelHost(locked)}
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
     <input type="url" id="pm_media" placeholder="https://… (optional for X, Facebook, LinkedIn)" value="${attr(p?.media_url||"")}" ${locked?"disabled":""} data-change="showMediaPreview">
     <div class="media-preview" id="pm_media_preview"></div>
@@ -256,6 +257,7 @@ export function openPostModal(id, dateStr){
           ${statusOptions.map(s=>`<option value="${attr(s)}" ${p?.status===s?"selected":""}>${esc(statusLabel(s))}</option>`).join("")}
         </select></div>
     </div>
+    ${tiktokConsentHost(locked)}
     <div class="modalfoot">
       <div>${p?`${p.status!=="publishing"?`<button class="btn dangerb mini" data-action="deletePost" data-arg="${attr(p.id)}">Delete</button>`:""}
                ${p.status!=="publishing"?`<button class="btn ghost mini" data-action="dupPost" data-arg="${attr(p.id)}">Duplicate</button>`:""}
@@ -269,8 +271,14 @@ export function openPostModal(id, dateStr){
   // openModal() cleared these; the composer's own copy is installed after it.
   setComposerVariants({...(p?.variants||{})});
   setComposerVariantFocus(null);
+  /* A post that already recorded TikTok choices reopens showing them. The
+     no-preselected-default rule is about a *new* composer having no audience
+     chosen for it, not about hiding a choice the customer already made. */
+  setComposerTikTok({...COMPOSER_TIKTOK_IDLE,
+    options:{...COMPOSER_TIKTOK_IDLE.options, ...readStoredTikTokOptions(p)}});
   if(p?.media_url) showMediaPreview(p.media_url);
   renderVariantSections();                     // #pm_variants was built empty
+  renderTikTokPanel();                         // …and so was #pm_tiktok
   syncComposer();                              // the panels were built before #pm_text existed
   setComposerBaseline(composerSnapshot());     // arms the unsaved-changes guard
 }
@@ -516,6 +524,298 @@ export function syncComposer(){
   syncAiAssist();
 }
 
+/* =============== TikTok Direct Post options ===============
+
+   TikTok's Content Posting API guidelines do not describe an API surface here;
+   they describe a *form*. A Direct Post integration must show the creator who
+   they are posting as, offer only the audiences their own account offers with
+   none of them preselected, disable the interaction toggles their account
+   disables, collect a commercial-content declaration, show a consent line next
+   to the button that posts, and refuse a video longer than their account
+   allows. All of that is what this section is.
+
+   It follows the per-network disclosure above exactly: one host div rendered
+   into the composer, filled by a function the network picker re-runs, and
+   nothing at all in the DOM when TikTok is not a selected network — so a
+   composer that never mentions TikTok has the markup it always had.
+
+   Two rules matter more than the rest.
+
+   Nothing is preselected. `options.privacy_level` starts as "" and the select
+   opens on a prompt, because a preselected audience is a choice the customer
+   did not make. validatePostForm() refuses the save rather than picking one,
+   and the posts_tiktok_options_valid CHECK constraint refuses the row.
+
+   The form is a function of the account, not of us. `creator_info` decides
+   which audiences appear and which toggles are available, so the panel renders
+   a loading line, then either the real form or the reason there isn't one. */
+
+export const TIKTOK_PRIVACY_LABELS = {
+  PUBLIC_TO_EVERYONE: "Everyone",
+  MUTUAL_FOLLOW_FRIENDS: "Friends",
+  FOLLOWER_OF_CREATOR: "Followers",
+  SELF_ONLY: "Only you",
+};
+export const TIKTOK_BRANDED_POLICY_URL =
+  "https://www.tiktok.com/legal/page/global/bc-policy/en";
+export const TIKTOK_MUSIC_USAGE_URL =
+  "https://www.tiktok.com/legal/page/global/music-usage-confirmation/en";
+/* A local or demo workspace has no TikTok connection and must reach no
+   network, so the panel is rendered from this fixed stand-in and says so — the
+   same shape settings.js gives the approval switch when there is no cloud
+   workspace to enforce it. Every audience is offered because a simulated
+   account has no real restrictions to honour. */
+const SIMULATED_TIKTOK_CREATOR = Object.freeze({
+  nickname: "your TikTok account",
+  avatar_url: "",
+  privacy_level_options: Object.freeze([
+    "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY",
+  ]),
+  comment_disabled: false, duet_disabled: false, stitch_disabled: false,
+  max_video_post_duration_sec: 600,
+});
+const VIDEO_URL = /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i;
+
+/** The stored options of the post being edited, keys we know only. */
+function readStoredTikTokOptions(p){
+  const stored=p?.tiktok_options;
+  if(!stored || typeof stored!=="object" || Array.isArray(stored)) return {};
+  const out={};
+  for(const key of Object.keys(COMPOSER_TIKTOK_IDLE.options)){
+    if(stored[key]!==undefined) out[key]=stored[key];
+  }
+  return out;
+}
+function tiktokSelected(){ return checkedNets().includes("tiktok"); }
+/* Rendered empty, filled by renderTikTokPanel() — the variants pattern. Both
+   hosts are absent for a locked post: a delivered video has no options left to
+   choose, and TikTok's consent line belongs beside a button that posts. */
+function tiktokPanelHost(locked){
+  return locked ? "" : `<div class="tiktok" id="pm_tiktok"></div>`;
+}
+function tiktokConsentHost(locked){
+  return locked ? "" : `<div class="tiktok-consent" id="pm_tt_consent"></div>`;
+}
+/** Fetch the creator's account settings once per composer, lazily — only when
+    TikTok is actually one of the selected networks. */
+function ensureTikTokCreator(){
+  if(composerTikTok.loaded || composerTikTok.loading) return;
+  if(!liveMode()){
+    setComposerTikTok({...composerTikTok, loaded:true, simulated:true,
+      creator:SIMULATED_TIKTOK_CREATOR});
+    return;
+  }
+  setComposerTikTok({...composerTikTok, loading:true, error:""});
+  store.tiktokCreatorInfo(brand().id).then(out => {
+    const creator=out?.ok ? out.creator : null;
+    setComposerTikTok({...composerTikTok, loading:false, loaded:true, creator,
+      error:creator ? "" : String(out?.error||"TikTok did not return your account settings."),
+      // An interaction the account disables is off and stays off, in the state
+      // as well as in the markup: the request body must say what the form says.
+      options:{...composerTikTok.options,
+        disable_comment:composerTikTok.options.disable_comment || !!creator?.comment_disabled,
+        disable_duet:composerTikTok.options.disable_duet || !!creator?.duet_disabled,
+        disable_stitch:composerTikTok.options.disable_stitch || !!creator?.stitch_disabled}});
+  }).catch(e => {
+    setComposerTikTok({...composerTikTok, loading:false, loaded:true, creator:null,
+      error:String(e?.message||e).slice(0,160)});
+  }).then(() => {
+    // The composer may have been closed while TikTok answered; renderTikTokPanel
+    // is a no-op without its host, so no answer repopulates another post's form.
+    renderTikTokPanel();
+  });
+}
+/** How long the selected video is, when the browser can tell us.
+ *
+ *  We only ever hold a URL, so the honest options are "ask the browser to read
+ *  the metadata" or "guess". A URL that cannot be probed — CORS, a redirect, a
+ *  host that refuses a range request — resolves to null and the panel says the
+ *  duration is unverified, because the provider's answer at publish time is the
+ *  truth and refusing a post over a length we could not measure would be a
+ *  guess dressed up as a rule. */
+export function probeVideoDuration(url){
+  return new Promise(resolve => {
+    let settled=false;
+    const video=document.createElement("video");
+    const finish=value => {
+      if(settled) return;
+      settled=true; clearTimeout(timer); video.removeAttribute("src");
+      resolve(Number.isFinite(value) && value>0 ? value : null);
+    };
+    const timer=setTimeout(() => finish(null), 8000);
+    video.preload="metadata";
+    video.addEventListener("loadedmetadata", () => finish(video.duration));
+    video.addEventListener("error", () => finish(null));
+    try{ video.src=url; }catch(e){ finish(null); }
+  });
+}
+function ensureTikTokDuration(){
+  const url=document.getElementById("pm_media")?.value.trim() || "";
+  if(composerTikTok.durationUrl===url) return;
+  setComposerTikTok({...composerTikTok, durationUrl:url, duration:null});
+  if(!url || !VIDEO_URL.test(url)) return;
+  probeVideoDuration(url).then(duration => {
+    if(composerTikTok.durationUrl!==url) return;   // the customer moved on
+    setComposerTikTok({...composerTikTok, duration});
+    renderTikTokPanel();
+  });
+}
+/** The panel, rebuilt for the currently selected networks and creator info. */
+export function renderTikTokPanel(){
+  const host=document.getElementById("pm_tiktok");
+  const consent=document.getElementById("pm_tt_consent");
+  if(!host) return;
+  if(!tiktokSelected()){
+    host.innerHTML=""; if(consent) consent.innerHTML="";
+    return;
+  }
+  ensureTikTokCreator();
+  ensureTikTokDuration();
+  // A change handler rebuilds this panel, which would drop the caret; put it
+  // back on the control the customer was using.
+  const focused=document.activeElement?.id || "";
+  host.innerHTML=tiktokPanelInner();
+  if(consent) consent.innerHTML=tiktokConsentInner();
+  if(focused) document.getElementById(focused)?.focus?.();
+}
+function tiktokPanelInner(){
+  const {loading, error, creator, simulated, duration, options}=composerTikTok;
+  const head=`<h4>TikTok</h4>`;
+  const shell=body => `<section class="tiktok-panel" aria-label="TikTok posting options">
+    ${head}${body}</section>`;
+  if(loading) return shell(`<p class="tiktok-note">Reading your TikTok account settings…</p>`);
+  if(!creator) return shell(`<p class="tiktok-note">${esc(error ||
+    "TikTok did not return your account settings, so this post cannot be composed for TikTok yet.")}</p>`);
+
+  const maximum=creator.max_video_post_duration_sec;
+  const tooLong=maximum && duration && duration>maximum;
+  const privacy=`<label class="f" for="pm_tt_privacy">Who can see this video</label>
+    <select class="inp" id="pm_tt_privacy" data-change="tiktokOption" data-arg="privacy_level">
+      <option value=""${options.privacy_level?"":" selected"}>Choose who can see this video…</option>
+      ${creator.privacy_level_options.map(level => {
+        // TikTok does not allow branded content to be private, so the option is
+        // withdrawn rather than left to fail at publish time.
+        const barred=level==="SELF_ONLY" && options.brand_content;
+        return `<option value="${attr(level)}"${options.privacy_level===level?" selected":""}
+          ${barred?"disabled":""}>${esc(TIKTOK_PRIVACY_LABELS[level]||level)}</option>`;
+      }).join("")}
+    </select>`;
+  const toggle=(id, arg, label, off, why) =>
+    `<label class="tiktok-toggle${off?" off":""}" ${off?`title="${attr(why)}"`:""}>
+      <input type="checkbox" id="${attr(id)}" data-change="tiktokOption" data-arg="${attr(arg)}"
+        ${off?"disabled":""} ${!off && !options[arg==="allow_comment"?"disable_comment"
+          :arg==="allow_duet"?"disable_duet":"disable_stitch"]?"checked":""}>
+      ${esc(label)}${off?`<small class="netreason">${esc(why)}</small>`:""}</label>`;
+  const interactions=`<div class="tiktok-toggles">
+    ${toggle("pm_tt_comment","allow_comment","Allow comments",
+      creator.comment_disabled,"This account has comments turned off")}
+    ${toggle("pm_tt_duet","allow_duet","Allow duet",
+      creator.duet_disabled,"This account has duets turned off")}
+    ${toggle("pm_tt_stitch","allow_stitch","Allow stitch",
+      creator.stitch_disabled,"This account has stitches turned off")}
+  </div>`;
+  const disclosure=`<label class="percheck"><input type="checkbox" id="pm_tt_disclose"
+      ${options.disclose_commercial?"checked":""} data-change="tiktokOption"
+      data-arg="disclose_commercial"> Disclose video content</label>
+    ${options.disclose_commercial ? `<div class="tiktok-brands" id="pm_tt_brands">
+      <p class="tiktok-note">Tell viewers what this video promotes. Pick at least one.</p>
+      <label class="tiktok-toggle"><input type="checkbox" id="pm_tt_brand_organic"
+        ${options.brand_organic?"checked":""} data-change="tiktokOption"
+        data-arg="brand_organic"> Your brand
+        <small class="netreason">You are promoting yourself or your own business.</small></label>
+      <label class="tiktok-toggle"><input type="checkbox" id="pm_tt_brand_content"
+        ${options.brand_content?"checked":""} data-change="tiktokOption"
+        data-arg="brand_content"> Branded content
+        <small class="netreason">A paid partnership with another brand. TikTok does not
+          allow branded content to be private.</small></label>
+    </div>` : ""}`;
+  const durationNote=!maximum ? ""
+    : tooLong
+      ? `<p class="tiktok-note over">This video is ${Math.round(duration)} seconds.
+          ${esc(creator.nickname)} can post up to ${maximum} seconds.</p>`
+      : duration
+        ? `<p class="tiktok-note">${Math.round(duration)} of ${maximum} seconds allowed.</p>`
+        : `<p class="tiktok-note">Videos up to ${maximum} seconds. This one's length could not be
+            checked here, so TikTok's own answer at publish time is the final word.</p>`;
+
+  return shell(`
+    ${simulated ? `<p class="tiktok-note"><strong>Simulated — posting to TikTok needs a cloud
+      workspace and a connected TikTok account.</strong> These controls behave exactly as the
+      real ones do; nothing here contacts TikTok.</p>` : ""}
+    <p class="tiktok-creator">Posting to <strong>${esc(creator.nickname)}</strong></p>
+    ${privacy}
+    ${interactions}
+    ${disclosure}
+    ${durationNote}`);
+}
+/** The consent line, beside the button that posts. Its wording is TikTok's and
+    changes with the declaration: branded content adds the Branded Content
+    Policy to the Music Usage Confirmation every post carries. */
+function tiktokConsentInner(){
+  if(!composerTikTok.creator) return "";
+  const music=`<a href="${TIKTOK_MUSIC_USAGE_URL}" target="_blank" rel="noopener">Music Usage Confirmation</a>`;
+  return composerTikTok.options.brand_content
+    ? `<p>By posting, you agree to TikTok's
+       <a href="${TIKTOK_BRANDED_POLICY_URL}" target="_blank" rel="noopener">Branded Content Policy</a>
+       and ${music}.</p>`
+    : `<p>By posting, you agree to TikTok's ${music}.</p>`;
+}
+/** One control changed. Everything the guidelines make conditional is applied
+    here rather than left to the markup, so the state the post is saved from and
+    the form on screen can never disagree. */
+export function setTikTokOption(el){
+  const key=el.dataset.arg;
+  const options={...composerTikTok.options};
+  let message="";
+  if(key==="privacy_level") options.privacy_level=el.value;
+  else if(key==="allow_comment") options.disable_comment=!el.checked;
+  else if(key==="allow_duet") options.disable_duet=!el.checked;
+  else if(key==="allow_stitch") options.disable_stitch=!el.checked;
+  else if(key==="disclose_commercial"){
+    options.disclose_commercial=el.checked;
+    // Turning the declaration off retracts both claims with it: leaving
+    // "branded content" set on an undisclosed post would send TikTok a
+    // partnership flag the customer just said was not there.
+    if(!el.checked){ options.brand_organic=false; options.brand_content=false; }
+  }
+  else if(key==="brand_organic") options.brand_organic=el.checked;
+  else if(key==="brand_content"){
+    options.brand_content=el.checked;
+    if(el.checked && options.privacy_level==="SELF_ONLY"){
+      options.privacy_level="";
+      message="TikTok doesn't allow branded content to be private — choose who can see it.";
+    }
+  }
+  else return;
+  setComposerTikTok({...composerTikTok, options});
+  renderTikTokPanel();
+  syncComposer();
+  if(message) toast(message);
+}
+/** The options this composer would save, or null when TikTok is not a target.
+ *  Deliberately not "whatever the panel happens to hold": a post that does not
+ *  publish to TikTok has no TikTok choices, and writing them would be a claim
+ *  about an audience nobody picked for it. */
+function tiktokOptionsForSave(nets){
+  if(!nets.includes("tiktok")) return null;
+  return {...composerTikTok.options};
+}
+/** Why this post cannot go to TikTok yet, as a sentence — or "" when it can. */
+export function tiktokBlocked(nets, options){
+  if(!nets.includes("tiktok")) return "";
+  if(!options || !TIKTOK_PRIVACY_LABELS[options.privacy_level])
+    return "Choose who can see this video on TikTok";
+  if(options.disclose_commercial && !options.brand_organic && !options.brand_content)
+    return "Say what this video promotes — your brand, branded content, or both";
+  if(options.brand_content && options.privacy_level==="SELF_ONLY")
+    return "TikTok doesn't allow branded content to be private — choose a different audience";
+  const maximum=composerTikTok.creator?.max_video_post_duration_sec;
+  const duration=composerTikTok.duration;
+  if(maximum && duration && duration>maximum)
+    return `TikTok allows ${maximum} seconds — this video is ${Math.round(duration)}. Trim it.`;
+  return "";
+}
+
 /* =============== AI assist (cloud + signed in only) =============== */
 /* The composer's writing help, backed by supabase/functions/ai-assist. Two
    rules shape everything below.
@@ -706,7 +1006,12 @@ export function readPostForm(){
      absent key leaves the post's own note alone, where a key holding "" would
      erase somebody else's feedback on every unrelated save. */
   const noteBox=document.getElementById("pm_approval_note");
-  return {text,nets,date,time,status,media_url,variants,
+  /* TikTok's choices are part of the form too, so an edit to one is an unsaved
+     change the Escape guard defends — and, unlike the approval note, the key is
+     always present: null is the meaningful value for a post that does not
+     target TikTok, and writing it is how deselecting TikTok clears them. */
+  const tiktok_options=tiktokOptionsForSave(nets);
+  return {text,nets,date,time,status,media_url,variants,tiktok_options,
     ...(noteBox ? {approval_note:noteBox.value.trim()} : {})};
 }
 export function showMediaPreview(url,contentType=""){
@@ -769,7 +1074,7 @@ export async function uploadPostMedia(input){
     input.value="";
   }
 }
-export function validatePostForm({text,nets,date,time,media_url,variants={}}){
+export function validatePostForm({text,nets,date,time,media_url,variants={},tiktok_options=null}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
   if(!date || !time) return toast("Choose a date and time");
@@ -807,6 +1112,14 @@ export function validatePostForm({text,nets,date,time,media_url,variants={}}){
     return toast("Pinterest video Pins are not supported yet — choose an image or remove Pinterest");
   if(nets.includes("youtube") && /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test(new URL(media_url).hostname))
     return toast("YouTube needs a direct video file URL, not a YouTube watch link");
+  /* TikTok's guidelines, refused here rather than defaulted: an audience nobody
+     chose, an undeclared declaration, private branded content, or a video the
+     creator's account is not allowed to post. The adapter refuses the first
+     three again at publish time and the CHECK constraint refuses the row, so
+     this is the sentence the customer gets rather than the only line of
+     defence. */
+  const tiktokProblem=tiktokBlocked(nets, tiktok_options);
+  if(tiktokProblem) return toast(tiktokProblem);
   return true;
 }
 export function savePost(id){

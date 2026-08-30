@@ -414,6 +414,133 @@ test("incomplete provider workflows cannot be enabled by secrets alone", async (
   assert.match(publish, /!dependencies\.platformConnectionEnabled\(adapter\)/);
 });
 
+/* The TikTok compliance workflow shipped the *product* work that adapter was
+   frozen for. The freeze did not move: TikTok has not approved this app for
+   Direct Post, and the only opening is a sandbox testing gate on a
+   non-production deployment. These assertions are what stops that gate from
+   quietly becoming a production enable. */
+test("the TikTok sandbox gate is a testing opening, never a production enable", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+
+  // Nothing anywhere in the adapter file flips a frozen provider on.
+  assert.doesNotMatch(platforms, /productionEnabled:\s*true/,
+    "productionEnabled is only ever written false; an enabled adapter simply omits it");
+
+  // The gate is one function, reads one variable, and compares it to the exact
+  // string "1" — so a stray `TIKTOK_SANDBOX=false` cannot open anything.
+  assert.match(platforms, /export function tiktokSandboxEnabled\(/);
+  assert.match(platforms, /env\("TIKTOK_SANDBOX"\) === "1"/);
+  assert.match(platforms, /TikTok Sandbox testing gate — NEVER a production enable/);
+
+  // …and it is scoped to TikTok alone: no other frozen provider may ride it.
+  const gate = platforms.match(
+    /export function platformConnectionEnabled\([\s\S]*?\n\}/)?.[0];
+  assert.ok(gate, "platformConnectionEnabled should be findable");
+  assert.match(gate, /adapter\.productionEnabled !== false/);
+  assert.match(gate, /adapter\.id === "tiktok" && tiktokSandboxEnabled\(env\)/);
+  assert.doesNotMatch(gate, /pinterest|linkedin|"x"/);
+});
+
+test("the TikTok adapter cannot go back to a hardcoded audience or an unconfirmed publish", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const tiktok = platforms.slice(platforms.indexOf("const tiktok: PlatformAdapter = {"),
+                                platforms.indexOf("/* ---------------------------------------------------------------- Pinterest */"));
+  assert.ok(tiktok.length > 500, "the TikTok adapter should be findable");
+
+  // The bug this feature existed to remove: publishing every customer's video
+  // to an audience of one and calling it success.
+  assert.doesNotMatch(tiktok, /privacy_level:\s*"SELF_ONLY"/,
+    "the audience comes from the post's options, never from a literal");
+  assert.match(tiktok, /privacy_level: options\.privacy_level/);
+  for (const field of [
+    "disable_comment", "disable_duet", "disable_stitch",
+    "brand_content_toggle", "brand_organic_toggle",
+  ]) assert.match(tiktok, new RegExp(`${field}: options\\.`), `${field} is mapped from the post`);
+
+  // No silent default: a target with no usable options is a clean refusal.
+  assert.match(platforms, /export const TIKTOK_OPTIONS_REQUIRED =\s*\n?\s*"TikTok post needs its privacy and disclosure options";/);
+  assert.match(tiktok, /if \(!options\) throw new Error\(TIKTOK_OPTIONS_REQUIRED\)/);
+
+  // init is not a publish: only PUBLISH_COMPLETE is success.
+  assert.match(platforms, /post\/publish\/status\/fetch\//);
+  assert.match(platforms, /state === "PUBLISH_COMPLETE"/);
+  assert.match(platforms, /state === "FAILED"/);
+  assert.match(platforms, /fail_reason/);
+
+  // …and the options reach the adapter the way the resolved text does.
+  assert.match(publish, /tiktokOptions: post\.tiktok_options \?\? null/);
+});
+
+test("the TikTok options column is guarded by a CHECK, not by client discipline", async () => {
+  const migration = await read("supabase/migrations/20260831090000_tiktok_options.sql");
+
+  // Nullable: TikTok forbids a preselected audience, so "no choices recorded"
+  // must stay distinguishable from "these are the choices".
+  assert.match(migration,
+    /alter table public\.posts\s+add column if not exists tiktok_options jsonb;/);
+  assert.doesNotMatch(migration, /tiktok_options jsonb not null/);
+
+  // The same seam posts.variants uses, for the same reason: the browser writes
+  // this column directly under RLS, and RLS does not answer "is this
+  // well-formed?". A CHECK is declarative and cannot be turned off by a
+  // session_replication_role that disables triggers — which is exactly why
+  // this migration has no trigger and needs no service-execution bypass.
+  assert.match(migration, /create or replace function public\.valid_post_tiktok_options\(v jsonb\)/);
+  assert.match(migration, /immutable/, "a CHECK constraint may only call an IMMUTABLE function");
+  assert.match(migration,
+    /add constraint posts_tiktok_options_valid\s+check \(public\.valid_post_tiktok_options\(tiktok_options\)\)/);
+  assert.doesNotMatch(migration, /create trigger|returns trigger|service_role/,
+    "a CHECK needs no service-execution marker, so this migration must not grow one");
+
+  // The closed key set, TikTok's four audiences, and the two rules TikTok
+  // itself imposes on a combination of them.
+  for (const key of [
+    "privacy_level", "disable_comment", "disable_duet", "disable_stitch",
+    "disclose_commercial", "brand_organic", "brand_content",
+  ]) assert.match(migration, new RegExp(`'${key}'`), `${key} is a key the composer collects`);
+  for (const level of [
+    "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY",
+  ]) assert.match(migration, new RegExp(level));
+  assert.match(migration, /v \? 'privacy_level'/, "an audience is required, never defaulted");
+  assert.match(migration, /disclose_commercial/);
+  assert.match(migration, /brand_content'\)::boolean, false\)\s*\n?\s*and v ->> 'privacy_level' = 'SELF_ONLY'/,
+    "TikTok disallows private branded content, and the row is refused too");
+
+  // The claim RPCs stay shape-agnostic: `p.*` already carries the new column.
+  assert.doesNotMatch(migration, /claim_post_for_publish|claim_due_posts/);
+});
+
+test("the composer's TikTok form is the one TikTok's guidelines describe", async () => {
+  const planner = await read("js/planner.js");
+  const health = await read("supabase/functions/connection-health/index.ts");
+
+  // Built from the creator's account, read through the member-gated action —
+  // never from a list this app made up.
+  assert.match(health, /action === "tiktok_creator_info"/);
+  assert.match(health, /creator_info\/query\//);
+  assert.match(planner, /store\.tiktokCreatorInfo\(brand\(\)\.id\)/);
+  assert.match(planner, /creator\.privacy_level_options\.map/);
+
+  // No preselected audience, and the four labels TikTok publishes.
+  assert.match(planner, /<option value=""\$\{options\.privacy_level\?"":" selected"\}>/);
+  assert.match(planner, /PUBLIC_TO_EVERYONE: "Everyone"/);
+  assert.match(planner, /MUTUAL_FOLLOW_FRIENDS: "Friends"/);
+  assert.match(planner, /FOLLOWER_OF_CREATOR: "Followers"/);
+  assert.match(planner, /SELF_ONLY: "Only you"/);
+
+  // The consent line, with TikTok's own two documents linked.
+  assert.match(planner, /https:\/\/www\.tiktok\.com\/legal\/page\/global\/bc-policy\/en/);
+  assert.match(planner, /https:\/\/www\.tiktok\.com\/legal\/page\/global\/music-usage-confirmation\/en/);
+  assert.match(planner, /By posting, you agree to TikTok's\s*\n?\s*<a href="\$\{TIKTOK_BRANDED_POLICY_URL\}/);
+
+  // Duration is measured, not assumed, and an unmeasurable one warns rather
+  // than refuses — the provider's answer at publish time is the truth.
+  assert.match(planner, /export function probeVideoDuration\(url\)/);
+  assert.match(planner, /loadedmetadata/);
+  assert.match(planner, /length could not be\s+checked here/);
+});
+
 test("provider expansion remains frozen for the internal-first beta milestone", async () => {
   const platforms = await read("supabase/functions/_shared/platforms.ts");
   const decision = await read("docs/adr/0001-internal-first-external-beta-readiness.md");
@@ -579,11 +706,18 @@ test("per-network variants are validated where posts are actually written", asyn
 
 test("a column the sync whitelist does not name is invisible, so variants is named three times", async () => {
   const adapter = await read("js/remote-store.js");
+  /* An exact list on purpose: a column added to the whitelist is a deliberate
+     widening of what the browser may write, and it should have to be stated
+     here as well as there. `tiktok_options` is the second such widening. */
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note","tiktok_options"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter, /variants: p\.variants \|\| \{\}/, "server row -> app post");
   assert.match(adapter, /variants:p\.variants \|\| \{\}/, "app post -> server row");
+  assert.match(adapter, /tiktok_options: p\.tiktok_options \|\| null/, "server row -> app post");
+  assert.match(adapter,
+    /tiktok_options:\(p\.networks \|\| \[\]\)\.includes\("tiktok"\) \? \(p\.tiktok_options \|\| null\) : null/,
+    "app post -> server row, and only for a post that actually targets TikTok");
 });
 
 test("the effective-text resolver is one rule, shared by the publish path and mirrored in the composer", async () => {

@@ -185,6 +185,22 @@ const POST_STATUSES = ["draft","pending_approval","scheduled","publishing","publ
 const isText = v => typeof v === "string";
 const isId = v => typeof v === "string" && v.length > 0 && v.length <= 200;
 const isPlainObject = v => !!v && typeof v === "object" && !Array.isArray(v);
+/* The seven keys posts_tiktok_options_valid names, and nothing else. The four
+   privacy levels are TikTok's own; a level outside them is not a level the
+   composer could label or the adapter could send. */
+const TIKTOK_PRIVACY = ["PUBLIC_TO_EVERYONE","MUTUAL_FOLLOW_FRIENDS","FOLLOWER_OF_CREATOR","SELF_ONLY"];
+const TIKTOK_FLAGS = ["disable_comment","disable_duet","disable_stitch",
+                      "disclose_commercial","brand_organic","brand_content"];
+export function validBackupTikTokOptions(o){
+  return isPlainObject(o)
+    && Object.keys(o).every(k => k==="privacy_level" || TIKTOK_FLAGS.includes(k))
+    && TIKTOK_PRIVACY.includes(o.privacy_level)
+    && TIKTOK_FLAGS.every(k => o[k]===undefined || typeof o[k]==="boolean")
+    // The two rules TikTok itself imposes, restated where an untrusted file
+    // lands: an undeclared declaration, and private branded content.
+    && (!o.disclose_commercial || !!o.brand_organic || !!o.brand_content)
+    && !(o.brand_content && o.privacy_level==="SELF_ONLY");
+}
 export function validBackupPost(p){
   return isPlainObject(p) && isId(p.id) && isText(p.text) && isText(p.date)
     && (p.time===undefined || isText(p.time))
@@ -197,6 +213,12 @@ export function validBackupPost(p){
     // refused here, before it can reach `db` and be queued for sync.
     && (p.variants===undefined || (isPlainObject(p.variants)
         && Object.values(p.variants).every(isText)))
+    // TikTok Direct Post options. Null and absent both mean "this post records
+    // no TikTok choices", which is every post that does not target TikTok. An
+    // object is checked against the same closed shape the CHECK constraint
+    // enforces, so a backup cannot smuggle an audience TikTok never offered.
+    && (p.tiktok_options===undefined || p.tiktok_options===null
+        || validBackupTikTokOptions(p.tiktok_options))
     // ADR 0006 decision 11: the rejection note is one optional string, and it
     // is rendered — so it is validated on the way in like every other one.
     && (p.approval_note===undefined || p.approval_note===null || isText(p.approval_note))

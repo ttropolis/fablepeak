@@ -76,6 +76,26 @@ export let composerVariants = {};
     for AI "Rewrite for network" (ADR 0005 decision 13). Null until the customer
     touches one, which is what makes the base text the default subject. */
 export let composerVariantFocus = null;
+/** The open composer's TikTok half: what TikTok said this creator's account
+    allows, and the choices the customer has made about this video.
+    `creator` is null until the lazy creator_info read answers — TikTok's
+    guidelines make the form a function of the account, so there is no form to
+    render before it does. `options.privacy_level` starts as "" and stays that
+    way until the customer picks one: an empty string is "no audience chosen",
+    which is the whole point of the no-preselected-default rule.
+    Reset whenever a modal opens or closes, so no composer inherits another
+    post's audience or disclosure. */
+export const COMPOSER_TIKTOK_IDLE = Object.freeze({
+  loading: false, loaded: false, simulated: false, error: "", creator: null,
+  /** probed duration of the media URL in seconds, or null when unknown */
+  duration: null, durationUrl: "",
+  options: Object.freeze({
+    privacy_level: "", disable_comment: false, disable_duet: false,
+    disable_stitch: false, disclose_commercial: false,
+    brand_organic: false, brand_content: false,
+  }),
+});
+export let composerTikTok = COMPOSER_TIKTOK_IDLE;
 
 export function setDb(value){ db = value; }
 export function setView(value){ view = value; }
@@ -98,6 +118,7 @@ export function setComposerBaseline(value){ composerBaseline = value; }
 export function setAiAssist(value){ aiAssist = value; }
 export function setComposerVariants(value){ composerVariants = value; }
 export function setComposerVariantFocus(value){ composerVariantFocus = value; }
+export function setComposerTikTok(value){ composerTikTok = value; }
 
 const SETTERS = {
   db: setDb, view: setView, calCursor: setCalCursor, selectedMsg: setSelectedMsg,
@@ -111,6 +132,7 @@ const SETTERS = {
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
   composerVariants: setComposerVariants,
   composerVariantFocus: setComposerVariantFocus,
+  composerTikTok: setComposerTikTok,
 };
 
 /** Set one field by name. Used by the test seam (js/main.js), which needs to
