@@ -22,10 +22,11 @@ import {
   completePasswordReset, enterDemo, exitDemo, requestPasswordReset, wSubmit, wTab,
 } from "./welcome.js";
 import {
-  calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost, focusVariant,
-  openPostModal, publishNow, renderVariantSections, retryPost, runAiAssist,
-  savePost, showMediaPreview, syncAiAssist, syncComposer, syncVariant,
-  togglePerNetwork, uploadPostMedia, useAiSuggestion,
+  approvePost, calMove, clearAiAssist, deletePost, dragPost, dropPost, dupPost,
+  focusVariant, openPostModal, publishNow, rejectPost, renderVariantSections,
+  retryPost, runAiAssist, savePost, setApprovalScope, showMediaPreview,
+  syncAiAssist, syncComposer, syncVariant, togglePerNetwork, uploadPostMedia,
+  useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
 import {
@@ -37,7 +38,7 @@ import {
 } from "./connections.js";
 import {
   addBrand, cloudSignOut, deleteBrand, deleteCloudAccount, exportData, importData,
-  installPhoneApp, renameBrand, resetData,
+  installPhoneApp, renameBrand, resetData, simulatedApprovalToggle, toggleApproval,
 } from "./settings.js";
 import {
   acceptInvite, declineInvite, inviteMember, leaveBrand, revokeInvite,
@@ -65,6 +66,11 @@ export const ACTIONS = {
   openPost:              el => openPostModal(el.dataset.arg),
   dragPost:              (el,ev) => dragPost(ev, el.dataset.arg),
   dropPost:              (el,ev) => dropPost(ev, el.dataset.arg),
+  /* approval (ADR 0006 decision 13) — the planner's scope, and the two
+     decisions an owner makes from inside the composer. */
+  approvalScope:         el => setApprovalScope(el.dataset.arg),
+  approvePost:           el => approvePost(el.dataset.arg),
+  rejectPost:            el => rejectPost(el.dataset.arg),
   /* composer */
   savePost:              el => savePost(el.dataset.arg),
   deletePost:            el => deletePost(el.dataset.arg),
@@ -118,6 +124,8 @@ export const ACTIONS = {
   selectReal:            el => selectReal(el.dataset.arg),
   /* settings */
   renameBrand:           el => renameBrand(el.dataset.arg, el.value),
+  toggleApproval:        el => toggleApproval(el),
+  simulatedApprovalToggle: () => simulatedApprovalToggle(),
   addBrand:              () => addBrand(),
   deleteBrand:           el => deleteBrand(el.dataset.arg),
   exportData:            () => exportData(),

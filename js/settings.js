@@ -3,8 +3,8 @@ import { LS_KEY, OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, slColorOf } from "./escape.js";
 import { todayStr } from "./util.js";
 import { db, deferredInstallPrompt, setDb, setDeferredInstallPrompt } from "./state.js";
-import { store } from "./store.js";
-import { defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
+import { liveMode, store } from "./store.js";
+import { approvalRequired, brand, defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
 import { renderTeamCard } from "./team.js";
 import { render, toast } from "./shell.js";
 
@@ -52,6 +52,7 @@ export function renderSettings(m){
         <input type="text" id="newBrand" placeholder="New brand name">
         <button class="btn mini" data-action="addBrand">Add</button>
       </div>
+      ${approvalCard(owner)}
     </div>
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Cloud sync &amp; team accounts</h4>
@@ -103,6 +104,56 @@ export function renderSettings(m){
     <button class="btn dangerb" data-action="deleteCloudAccount">Delete my account</button>
   </div>`:""}`;
 }
+/* ---------- approval opt-in (ADR 0006 decision 9) ---------- */
+/* One switch, scoped to the ACTIVE brand — which is what `owner` above is an
+   answer about, and the reason this is not a per-row control in the list: the
+   role cache holds the caller's role in one brand at a time, so a per-row
+   toggle would gate every other brand's switch on the wrong role.
+
+   Owner-only, disabled-with-a-reason rather than hidden, exactly like brand
+   deletion above and the SmartLinks publish toggle: an editor should be able to
+   see that their workspace requires review and who can change that.
+
+   The guarantee is in Postgres — brands_guard_smartlink_slug refuses a
+   non-owner's write to this column (20260830130000_post_approval.sql §4). */
+function approvalCard(owner){
+  const b=brand();
+  const simulated=!liveMode();
+  const on=approvalRequired();
+  return `<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px">
+      <input type="checkbox" id="brandApproval" ${on?"checked":""} style="margin-top:2px"
+        ${simulated?"":(owner?"":`disabled title="${attr(OWNER_ONLY_TITLE)}"`)}
+        data-change="${simulated?"simulatedApprovalToggle":"toggleApproval"}">
+      <span>Require approval before scheduling
+        <span style="display:block;color:var(--muted);font-size:12px;margin-top:2px">${simulated
+          ? `<strong>Simulated — approval needs a cloud workspace.</strong>
+             There are no accounts here, so there is nobody to approve anything.`
+          : `Editors submit posts in <strong>${esc(b.name)}</strong> for review instead of
+             scheduling them. Only an owner can approve, reject or schedule.`}</span></span>
+    </label>
+    ${!simulated && !owner ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">
+      Only this workspace's owners can turn approval on or off.</div>` : ""}
+  </div>`;
+}
+export async function toggleApproval(el){
+  const b=brand(), want=!!el.checked;
+  try{
+    await store.setApprovalRequired(b.id, want);
+    b.approval_required=want;              // not persisted through save(): the
+    render();                              // column is owner-gated and is never
+    toast(want                             // part of an ordinary brand upsert
+      ? "Posts in this brand now need an owner's approval before scheduling"
+      : "Approval turned off — editors can schedule directly again");
+  }catch(e){
+    render();                              // put the switch back where the server left it
+    toast(String(e.message||e).slice(0,120));
+  }
+}
+export function simulatedApprovalToggle(){
+  render();
+  toast("Simulated — the approval workflow needs a cloud workspace");
+}
 export function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
 export function addBrand(){
   const name=document.getElementById("newBrand").value.trim(); if(!name)return toast("Give it a name");
@@ -125,7 +176,12 @@ export function exportData(){
    whole file is therefore validated against the workspace schema *before* `db`
    is touched, so a rejected import changes nothing in memory or in storage
    (ADR 0003 §2a). Returns the accepted workspace, or null. */
-const POST_STATUSES = ["draft","scheduled","publishing","published","failed"];
+/* ADR 0006 decision 9 widened this vocabulary to six. A workspace holding a
+   post awaiting approval must survive its own backup: without `pending_approval`
+   here, exporting and re-importing such a workspace would reject the whole
+   file. It is the same list as the posts_status_check constraint in
+   20260830130000_post_approval.sql, and it has to stay that way. */
+const POST_STATUSES = ["draft","pending_approval","scheduled","publishing","published","failed"];
 const isText = v => typeof v === "string";
 const isId = v => typeof v === "string" && v.length > 0 && v.length <= 200;
 const isPlainObject = v => !!v && typeof v === "object" && !Array.isArray(v);
@@ -141,6 +197,9 @@ export function validBackupPost(p){
     // refused here, before it can reach `db` and be queued for sync.
     && (p.variants===undefined || (isPlainObject(p.variants)
         && Object.values(p.variants).every(isText)))
+    // ADR 0006 decision 11: the rejection note is one optional string, and it
+    // is rendered — so it is validated on the way in like every other one.
+    && (p.approval_note===undefined || p.approval_note===null || isText(p.approval_note))
     && (p.targets===undefined || Array.isArray(p.targets));
 }
 export function validBackupThread(t){
@@ -157,6 +216,10 @@ export function validBackupSmartlink(sl){
 export function validBackupBrand(b){
   return isPlainObject(b) && isId(b.id) && isText(b.name)
     && (b.seed===undefined || typeof b.seed === "number")
+    // Carried by a cloud export, never *applied* by an import: the flag is
+    // owner-gated server-side and is not part of a brand upsert, so restoring a
+    // backup can describe it but cannot switch it on for anybody.
+    && (b.approval_required===undefined || typeof b.approval_required === "boolean")
     && isPlainObject(b.connections || {})
     && Array.isArray(b.posts) && b.posts.every(validBackupPost)
     && Array.isArray(b.inbox) && b.inbox.every(validBackupThread)

@@ -39,9 +39,17 @@ export const RemoteAdapter = {
     const mappedBrands = brands.map(b => ({
         id: b.id, name: b.name, seed: b.seed,
         connections: b.connections || {}, smartlink: b.smartlink || {},
+        // ADR 0006 decision 9. Read-only here: it is changed through
+        // setApprovalRequired() and is owner-gated by a trigger, so it is
+        // deliberately absent from _dbToRows and from FIELDS.brands — an
+        // ordinary brand save must never carry it.
+        approval_required: !!b.approval_required,
         posts: posts.filter(p => p.brand_id===b.id).map(p => ({
           id: p.id, date: p.date, time: p.time, text: p.text,
           networks: p.networks || [], status: p.status, media_url: p.media_url || "",
+          // ADR 0006 decision 11: the one overwritten rejection note. Normalised
+          // to "" so an app post and the row it round-trips to compare equal.
+          approval_note: p.approval_note || "",
           // ADR 0005 decision 2: per-network copy. A column this file does not
           // name is invisible to the app even when it exists, so `variants`
           // needs all three edits — here, in _dbToRows, and in FIELDS.posts.
@@ -66,6 +74,7 @@ export const RemoteAdapter = {
       for(const p of b.posts) posts.push({ id:p.id, brand_id:b.id, date:p.date,
         time:p.time||"10:00", text:p.text, networks:p.networks||[], status:p.status,
         media_url:p.media_url || null, variants:p.variants || {},
+        approval_note:p.approval_note || null,
         client_id:this._clientId });
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
@@ -116,7 +125,11 @@ export const RemoteAdapter = {
     const cur = this._dbToRows(data), prev = this._snap || {brands:[],posts:[],inbox:[]};
     const FIELDS = {
       brands: ["id","name","seed","connections","smartlink"],
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants"],
+      /* `approved_by` and `approved_at` are deliberately NOT here: the posts
+         status trigger writes them from auth.uid() and now(), and a column this
+         list does not name is one no client payload can carry — which is what
+         keeps an approval attributable to the account that made it. */
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));
@@ -531,6 +544,17 @@ export const RemoteAdapter = {
   async setSmartlinkPublic(brandId, isPublic){
     const { error } = await this._sb.from("brands")
       .update({ smartlink_public: !!isPublic }).eq("id", brandId);
+    if(error) throw new Error(error.message);
+  },
+  /** Turn this brand's approval workflow on or off (ADR 0006 decision 9).
+      Shaped exactly like setSmartlinkPublic above, and for the same reason: a
+      plain UPDATE under the member-level brands_update policy, with the
+      column rule in brands_guard_smartlink_slug, because RLS is row-level and
+      cannot express "owners only, and only this column". An editor's call
+      raises 42501 from the trigger. */
+  async setApprovalRequired(brandId, isRequired){
+    const { error } = await this._sb.from("brands")
+      .update({ approval_required: !!isRequired }).eq("id", brandId);
     if(error) throw new Error(error.message);
   },
   /** Member-only click aggregates. Approximate by construction — no cookies,

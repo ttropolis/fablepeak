@@ -21,6 +21,10 @@ export let calCursor = new Date();
 /** id of the inbox thread currently open, or null */
 export let selectedMsg = null;
 export let inboxFilter = "all";
+/** planner scope while a brand requires approval: "all" | "pending".
+    Not persisted and reset by nothing — a filter is a way of looking at the
+    month, not a property of the workspace (ADR 0006 decision 13). */
+export let approvalFilter = "all";
 export let analyticsNet = "all";
 /** true while a media upload is in flight — blocks modal close and save */
 export let mediaUploadActive = false;
@@ -78,6 +82,7 @@ export function setView(value){ view = value; }
 export function setCalCursor(value){ calCursor = value; }
 export function setSelectedMsg(value){ selectedMsg = value; }
 export function setInboxFilter(value){ inboxFilter = value; }
+export function setApprovalFilter(value){ approvalFilter = value; }
 export function setAnalyticsNet(value){ analyticsNet = value; }
 export function setMediaUploadActive(value){ mediaUploadActive = value; }
 export function setDeferredInstallPrompt(value){ deferredInstallPrompt = value; }
@@ -96,7 +101,8 @@ export function setComposerVariantFocus(value){ composerVariantFocus = value; }
 
 const SETTERS = {
   db: setDb, view: setView, calCursor: setCalCursor, selectedMsg: setSelectedMsg,
-  inboxFilter: setInboxFilter, analyticsNet: setAnalyticsNet,
+  inboxFilter: setInboxFilter, approvalFilter: setApprovalFilter,
+  analyticsNet: setAnalyticsNet,
   mediaUploadActive: setMediaUploadActive,
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,

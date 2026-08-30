@@ -9,8 +9,12 @@ import {
   setComposerVariants, setPreviousModalFocus, setSelectedMsg, setView, view,
 } from "./state.js";
 import { demoMode, store } from "./store.js";
-import { defaultBrand, ensureRoleLoaded, save, tickPublish } from "./workspace.js";
-import { openPostModal, readPostForm, renderPlanner } from "./planner.js";
+import {
+  approvalRequired, defaultBrand, ensureRoleLoaded, isOwner, save, tickPublish,
+} from "./workspace.js";
+import {
+  openPostModal, pendingApprovalCount, readPostForm, renderPlanner,
+} from "./planner.js";
 import { renderAnalytics } from "./analytics.js";
 import { renderInbox } from "./inbox.js";
 import { renderSmartlinks } from "./smartlinks.js";
@@ -80,12 +84,26 @@ export function handleModalKeydown(event){
   else if(!event.shiftKey&&document.activeElement===last){ event.preventDefault(); first.focus(); }
 }
 
+/* ADR 0006 decision 13: approval surfaces in the existing planner, and the one
+   thing that has to reach an owner who is *not* looking at the planner is that
+   somebody is waiting on them. Owners only — an editor cannot act on the count,
+   and an unanswered role lookup counts as an owner exactly as isOwner() says,
+   because a badge is an affordance and a briefly-shown one is harmless.
+   Guarded on db.brands because renderNav() runs before the onboarding branch. */
+function navBadge(viewId){
+  if(viewId!=="planner" || !db?.brands?.length) return "";
+  if(!approvalRequired() || !isOwner()) return "";
+  const pending=pendingApprovalCount();
+  return pending
+    ? `<span class="navbadge" aria-label="${attr(pending+" waiting for approval")}">${pending}</span>`
+    : "";
+}
 export function renderNav(){
   document.getElementById("demoBadge").innerHTML =
     (store.name==="cloud" && !store.user && demoMode()) ? `<span class="demobadge">DEMO</span>` : "";
   document.getElementById("nav").innerHTML = VIEWS.map(v=>
     `<button class="${v.id===view?'active':''}" data-action="go" data-arg="${attr(v.id)}">
-       <span class="ic">${v.ic}</span>${v.name}</button>`).join("");
+       <span class="ic">${v.ic}</span>${v.name}${navBadge(v.id)}</button>`).join("");
   const sel=document.getElementById("brandSel");
   sel.innerHTML = db.brands.map(b=>`<option value="${attr(b.id)}" ${b.id===db.activeBrand?'selected':''}>${esc(b.name)}</option>`).join("");
 }

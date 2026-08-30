@@ -140,6 +140,34 @@ test("a backup whose posts are malformed is rejected as a whole", async t => {
   assert.equal(app.db.brands[0].posts.length, 7);
 });
 
+/* ADR 0006 decision 9 widened the status vocabulary to six. POST_STATUSES is a
+   frontend copy of the posts_status_check constraint, and a copy that drifts is
+   a workspace that cannot restore its own backup — the rejection would be of the
+   whole file, for one post nobody had noticed was waiting for approval. */
+test("a post awaiting approval survives its own backup, and its note with it", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openSettings(app);
+  const good = JSON.parse((await exportBackup(app)).json);
+  good.brands[0].posts[0].status = "pending_approval";
+  good.brands[0].posts[0].approval_note = "Shorten the opening line.";
+
+  await importBackup(app, JSON.stringify(good));
+  assert.equal(app.toast(), "Backup restored ✔");
+  assert.equal(app.db.brands[0].posts[0].status, "pending_approval");
+  assert.equal(app.db.brands[0].posts[0].approval_note, "Shorten the opening line.");
+
+  const again = JSON.parse((await exportBackup(app)).json);
+  assert.equal(again.brands[0].posts[0].status, "pending_approval",
+    "and round-trips through a second export unchanged");
+
+  // the note is a string like any other: a number is not one
+  const broken = structuredClone(good);
+  broken.brands[0].posts[0].approval_note = 7;
+  await importBackup(app, JSON.stringify(broken));
+  assert.equal(app.toast(), "Invalid backup file");
+});
+
 test("an out-of-range SmartLink colour is normalised on import", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());

@@ -149,6 +149,24 @@ export function isOwner(){
   return role === null || role === "owner";
 }
 
+/* ---------- approval (ADR 0006 decision 9) ---------- */
+/** Does the active brand require an owner's approval before scheduling?
+ *
+ *  Read straight off the brand row rather than through a cache of its own:
+ *  `brands.approval_required` arrives with every load() — RemoteAdapter selects
+ *  the whole row — so there is nothing to fetch and nothing to invalidate. It is
+ *  deliberately false outside live mode: local and demo workspaces have no
+ *  accounts, so there is no second person to approve anything, and Settings
+ *  labels its toggle as simulated there (ADR 0004 decision 11).
+ *
+ *  Like isOwner(), this decides which controls are *offered*. The guarantee is
+ *  the posts_guard_status_transition trigger in
+ *  20260830130000_post_approval.sql, which reads the same column server-side. */
+export function approvalRequired(){
+  if(!liveMode()) return false;
+  return !!brand()?.approval_required;
+}
+
 /* In live mode the real accounts arrive asynchronously, and connectedNets()
    falls back to the simulated ones until they do. An unloaded cache means
    "not known yet", not "nothing connected" — never warn on it. */

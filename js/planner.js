@@ -5,15 +5,63 @@ import { NETWORKS, SCHEDULE_TZ } from "./constants.js";
 import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
-  AI_ASSIST_IDLE, aiAssist, calCursor, composerVariantFocus, composerVariants,
-  mediaUploadActive, setAiAssist, setComposerBaseline, setComposerVariantFocus,
-  setComposerVariants, setMediaUploadActive,
+  AI_ASSIST_IDLE, aiAssist, approvalFilter, calCursor, composerVariantFocus,
+  composerVariants, mediaUploadActive, setAiAssist, setApprovalFilter,
+  setComposerBaseline, setComposerVariantFocus, setComposerVariants,
+  setMediaUploadActive,
 } from "./state.js";
 import { liveMode, store } from "./store.js";
 import {
-  brand, connectedNets, connectionsKnown, netOf, persistNow, save,
+  approvalRequired, brand, connectedNets, connectionsKnown, isOwner, netOf,
+  persistNow, save,
 } from "./workspace.js";
 import { closeModal, composerSnapshot, openModal, render, toast } from "./shell.js";
+
+/* =============== approval (ADR 0006 decisions 9, 11 and 13) ===============
+
+   No new view: a post awaiting review is a post, and it belongs on the calendar
+   beside the ones that are not. What the planner adds while a brand has
+   `approval_required` on is a chip colour, a legend entry, a filter, a count for
+   the owner who has to act on it, and — in the composer — the decision itself.
+
+   Everything below is an affordance. The rule lives in the
+   posts_guard_status_transition trigger (20260830130000_post_approval.sql),
+   which reads the same flag and the same role from Postgres and refuses an
+   editor's `→ scheduled` whatever this file renders. */
+
+/* `pending_approval` is a database value; "pending approval" is English. Every
+   other status reads identically either way, so this map changes nothing for
+   the five statuses that predate it — including the chip aria-labels and the
+   composer's <option> text, which two suites pin. */
+export const POST_STATUS_LABEL = { pending_approval: "pending approval" };
+export function statusLabel(status){ return POST_STATUS_LABEL[status] || status; }
+/** Posts in the active brand waiting on a decision — the owner's badge count. */
+export function pendingApprovalCount(){
+  return (brand()?.posts || []).filter(p => p.status === "pending_approval").length;
+}
+/** Show the pending vocabulary at all? While the flag is on, always — an empty
+    queue is information. While it is off, only if a post is still parked in
+    `pending_approval` from before it was turned off, because hiding the legend
+    entry for a chip that is on screen would be the one dishonest option. */
+function approvalVisible(){
+  return approvalRequired() || pendingApprovalCount() > 0;
+}
+export function setApprovalScope(scope){
+  setApprovalFilter(scope === "pending" ? "pending" : "all");
+  render();
+}
+/* The filter is offered to everyone the vocabulary is visible to: an editor
+   wanting to see what they have submitted asks the same question an owner does.
+   The count is the reason it exists, so it is rendered into the control. */
+function approvalFilterBar(){
+  if(!approvalVisible()) return "";
+  const pending=pendingApprovalCount();
+  return `<div class="tabbar" id="pm_approval_filter" style="margin-top:12px;margin-bottom:0">
+    ${[["all","All posts"],["pending",`Needs approval${pending?` (${pending})`:""}`]]
+      .map(([id,label])=>`<button class="${approvalFilter===id?"active":""}"
+        data-action="approvalScope" data-arg="${attr(id)}">${esc(label)}</button>`).join("")}
+  </div>`;
+}
 
 export function renderPlanner(m){
   const y=calCursor.getFullYear(), mo=calCursor.getMonth();
@@ -23,11 +71,17 @@ export function renderPlanner(m){
   const cells=[];
   for(let i=0;i<42;i++){ const d=new Date(start); d.setDate(start.getDate()+i); cells.push(d); }
   const b=brand();
-  const postsBy={}; b.posts.forEach(p=>{ (postsBy[p.date]=postsBy[p.date]||[]).push(p); });
+  /* The filter narrows what the month *shows*; it never touches what the month
+     contains, so switching back to All is the whole undo. */
+  const inScope = p => !(approvalVisible() && approvalFilter==="pending")
+    || p.status==="pending_approval";
+  const shown=b.posts.filter(inScope);
+  const postsBy={}; shown.forEach(p=>{ (postsBy[p.date]=postsBy[p.date]||[]).push(p); });
   const monthKey=`${y}-${String(mo+1).padStart(2,"0")}`;
-  const monthPosts=b.posts.filter(p=>p.date?.startsWith(monthKey+"-"))
+  const monthPosts=shown.filter(p=>p.date?.startsWith(monthKey+"-"))
     .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   const newPostDate=todayStr().startsWith(monthKey+"-") ? todayStr() : `${monthKey}-01`;
+  const filterBar=approvalFilterBar();
 
   m.innerHTML = `
   <h1>Content Planner</h1>
@@ -42,6 +96,9 @@ export function renderPlanner(m){
         <button class="btn mini" data-action="newPost" data-arg="${attr(newPostDate)}">+ New post</button>
       </div>
     </div>
+    ${filterBar}
+    ${filterBar && approvalFilter==="pending" && !monthPosts.length
+      ? `<div style="color:var(--muted);font-size:13px;margin:10px 0">Nothing is waiting for approval in ${esc(monthName)}.</div>` : ""}
     <div class="calgrid">
       ${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dow">${d}</div>`).join("")}
       ${cells.map(d=>{
@@ -50,7 +107,7 @@ export function renderPlanner(m){
         const chips=(postsBy[ds]||[]).sort((a,b)=>(a.time||"").localeCompare(b.time||"")).map(p=>{
           const visibleStatus=postVisibleStatus(p);
           return `<button type="button" class="post ${attr(visibleStatus)}" draggable="${!(liveMode()&&["publishing","published"].includes(p.status))}" title="${attr(p.text)}"
-                aria-label="${attr(`${p.time||"Any time"}, ${visibleStatus}: ${p.text}`)}"
+                aria-label="${attr(`${p.time||"Any time"}, ${statusLabel(visibleStatus)}: ${p.text}`)}"
                 data-action="openPost" data-drag="dragPost" data-arg="${attr(p.id)}">
              <span class="nets">${p.networks.map(n=>netOf(n)?.short||n).join("·")}</span>${esc(p.text)}</button>`;
         }).join("");
@@ -61,6 +118,7 @@ export function renderPlanner(m){
     </div>
     <div class="legend">
       <span><i style="background:var(--chip-draft)"></i>Draft</span>
+      ${approvalVisible()?`<span><i style="background:var(--chip-pending)"></i>Needs approval</span>`:""}
       <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
       ${liveMode()?`<span><i style="background:#2f91b5"></i>Publishing</span>`:""}
       <span><i style="background:var(--chip-pub)"></i>Published</span>
@@ -75,7 +133,7 @@ export function renderPlanner(m){
         return `<button type="button" class="agenda-post" data-action="openPost" data-arg="${attr(p.id)}">
           <span class="agenda-date">${dateLabel}</span>
           <span class="agenda-copy"><strong>${esc(p.text)}</strong>
-            <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(visibleStatus)}</span></span>
+            <span>${esc(p.time||"Any time")} · ${esc(nets)} · ${esc(statusLabel(visibleStatus))}</span></span>
         </button>`;
       }).join("") : `<div class="empty">No posts in ${monthName}. Tap <strong>New post</strong> to add one.</div>`}
     </div>
@@ -130,9 +188,23 @@ export function openPostModal(id, dateStr){
   const b=brand();
   const p = id? b.posts.find(x=>x.id===id) : null;
   const locked = liveMode() && ["publishing","published"].includes(p?.status);
+  /* ADR 0006 decision 13. While the brand requires approval the select is the
+     submit control: an editor's ladder stops at "pending approval", and only an
+     owner is offered "scheduled". The trigger enforces exactly this, so an
+     editor who reaches past the select is refused by Postgres rather than by a
+     missing <option>. */
+  const approval = approvalRequired();
+  const owner = isOwner();
   const statusOptions = liveMode()
-    ? locked ? [p.status] : ["draft","scheduled"]
+    ? locked ? [p.status]
+      : approval ? (owner ? ["draft","pending_approval","scheduled"] : ["draft","pending_approval"])
+      : ["draft","scheduled"]
     : ["draft","scheduled","published"];
+  /* A post parked in `pending_approval` when the flag was switched off would
+     otherwise open with the select showing "draft" and be silently moved by the
+     next Save. Its own status is always an option it can stay on. */
+  if(p && !locked && p.status==="pending_approval" && !statusOptions.includes("pending_approval"))
+    statusOptions.splice(1, 0, "pending_approval");
   const nets = p? p.networks : connectedNets().slice(0,1).map(n=>n.id);
   openModal(`
     <h3>${p? "Edit post":"New post"}</h3>
@@ -140,6 +212,7 @@ export function openPostModal(id, dateStr){
       ? p.status==="publishing" ? "Publishing is in progress…" : "Published posts are read-only. Duplicate this post to reuse it."
       : p? "Update, duplicate or delete this post.":"Compose once, publish everywhere."}</div>
     ${p?deliveryPanel(p):""}
+    ${approvalPanel(p, locked)}
     <label class="f">Content</label>
     <textarea id="pm_text" placeholder="What do you want to say?" ${locked?"disabled":""}
       data-input="syncComposer" data-focus="focusVariant">${esc(p?.text||"")}</textarea>
@@ -180,13 +253,13 @@ export function openPostModal(id, dateStr){
       <div style="flex:1;min-width:110px"><label class="f">Time${liveMode()?` <span style="text-transform:none;font-weight:400">(${esc(SCHEDULE_TZ)})</span>`:""}</label><input type="time" id="pm_time" value="${attr(p?.time||"10:00")}" ${locked?"disabled":""}></div>
       <div style="flex:1;min-width:110px"><label class="f">Status</label>
         <select class="inp" id="pm_status" ${locked?"disabled":""}>
-          ${statusOptions.map(s=>`<option ${p?.status===s?"selected":""}>${s}</option>`).join("")}
+          ${statusOptions.map(s=>`<option value="${attr(s)}" ${p?.status===s?"selected":""}>${esc(statusLabel(s))}</option>`).join("")}
         </select></div>
     </div>
     <div class="modalfoot">
       <div>${p?`${p.status!=="publishing"?`<button class="btn dangerb mini" data-action="deletePost" data-arg="${attr(p.id)}">Delete</button>`:""}
                ${p.status!=="publishing"?`<button class="btn ghost mini" data-action="dupPost" data-arg="${attr(p.id)}">Duplicate</button>`:""}
-               ${liveMode() && !["publishing","published"].includes(p.status)
+               ${liveMode() && !["publishing","published","pending_approval"].includes(p.status) && !(approval && !owner)
                  ? `<button class="btn mini" data-action="publishNow" data-arg="${attr(p.id)}">🚀 Publish now</button>` : ""}`:""}</div>
       <div class="right">
         <button class="btn ghost" data-action="dismissModal">${locked?"Close":"Cancel"}</button>
@@ -200,6 +273,76 @@ export function openPostModal(id, dateStr){
   renderVariantSections();                     // #pm_variants was built empty
   syncComposer();                              // the panels were built before #pm_text existed
   setComposerBaseline(composerSnapshot());     // arms the unsaved-changes guard
+}
+
+/* The composer's half of the approval workflow.
+ *
+ *  Three states, one panel, and nothing at all in the common case:
+ *
+ *    owner + pending    the decision itself — a note box and Approve / Request
+ *                       changes. The note is required for a rejection because
+ *                       it is the only thing the author gets back (decision 11),
+ *                       and the trigger refuses a noteless rejection too.
+ *    editor + pending   "waiting on an owner", so the post does not look stuck.
+ *    a note, any state  the last decision's words, shown to whoever opens the
+ *                       post next. Rendered through esc() like every other
+ *                       string somebody else typed.
+ *
+ *  Nothing renders for a locked (publishing/published) post: a delivered post
+ *  has no decision left to make. */
+function approvalPanel(p, locked){
+  if(!liveMode() || !p || locked) return "";
+  const note=String(p.approval_note||"").trim();
+  const pending=p.status==="pending_approval";
+  const decide=pending && approvalRequired() && isOwner();
+  if(!pending && !note) return "";
+  return `<section class="approval-panel" aria-label="Approval">
+    <h4>${decide?"Your decision":pending?"Waiting for approval":"Changes requested"}</h4>
+    ${note?`<div class="approval-note">${esc(note)}</div>`:""}
+    ${decide ? `
+      <label class="f" for="pm_approval_note">Note to the author — required to send it back</label>
+      <textarea id="pm_approval_note" placeholder="What needs to change before this can go out?"
+        >${esc(p.approval_note||"")}</textarea>
+      <div class="approval-acts">
+        <button class="btn mini" data-action="approvePost" data-arg="${attr(p.id)}">✔ Approve &amp; schedule</button>
+        <button class="btn ghost mini" data-action="rejectPost" data-arg="${attr(p.id)}">↩ Request changes</button>
+      </div>`
+    : pending ? `<div style="color:var(--muted);font-size:13px">
+        Submitted for approval. An owner of this workspace can schedule it, and
+        you can pull it back to a draft while you wait.</div>`
+    : `<div style="color:var(--muted);font-size:13px">
+        Edit the post and set its status back to <strong>pending approval</strong> when it is ready.</div>`}
+  </section>`;
+}
+/* Approve and Request changes are the composer's own writes, so they carry the
+   composer's edits with them exactly the way Publish now does: an owner who
+   fixed a typo and pressed Approve must not lose the typo fix. The status is
+   set afterwards, over whatever the select said.
+
+   Both mirror server-side rules rather than replacing them — the trigger clears
+   the note on approval and refuses a rejection without one — so the worst a
+   drifted copy of this file can do is show a message a moment early. */
+export function approvePost(id){
+  const p=brand().posts.find(x=>x.id===id);
+  if(!p) return;
+  const values=readPostForm();
+  if(!validatePostForm(values)) return;
+  const {nets,...postValues}=values;
+  Object.assign(p,{...postValues,networks:nets,status:"scheduled",approval_note:""});
+  save(); closeModal(); render();
+  toast("Approved — this post is scheduled ✔");
+}
+export function rejectPost(id){
+  const p=brand().posts.find(x=>x.id===id);
+  if(!p) return;
+  const note=String(document.getElementById("pm_approval_note")?.value||"").trim();
+  if(!note) return toast("Say what needs changing — the note is all the author gets back");
+  const values=readPostForm();
+  if(!validatePostForm(values)) return;
+  const {nets,...postValues}=values;
+  Object.assign(p,{...postValues,networks:nets,status:"draft",approval_note:note});
+  save(); closeModal(); render();
+  toast("Sent back to the author as a draft");
 }
 
 /* =============== per-network copy (ADR 0005 decisions 2, 11 and 12) ===============
@@ -559,7 +702,12 @@ export function readPostForm(){
   // Variants are part of the form, so composerSnapshot() sees an edit to one
   // and the Escape guard asks before discarding it (ADR 0005 dirty-state note).
   const variants=normalizedVariants(currentVariants());
-  return {text,nets,date,time,status,media_url,variants};
+  /* The approval note is part of the form only when the panel offered one — an
+     absent key leaves the post's own note alone, where a key holding "" would
+     erase somebody else's feedback on every unrelated save. */
+  const noteBox=document.getElementById("pm_approval_note");
+  return {text,nets,date,time,status,media_url,variants,
+    ...(noteBox ? {approval_note:noteBox.value.trim()} : {})};
 }
 export function showMediaPreview(url,contentType=""){
   const box=document.getElementById("pm_media_preview");
@@ -667,16 +815,28 @@ export function savePost(id){
   if(!validatePostForm(values)) return;
   const {nets,...postValues}=values;
   const b=brand();
+  const previous=id ? b.posts.find(x=>x.id===id)?.status : null;
+  /* ADR 0006 decision 11: an owner sending a post back to its author owes them
+     a note, and the trigger raises 23514 without one. Refuse here so the
+     refusal arrives as a sentence in the composer that still holds the words,
+     rather than as a failed sync two seconds later. */
+  if(approvalRequired() && isOwner() && previous==="pending_approval"
+     && postValues.status==="draft" && !String(postValues.approval_note||"").trim())
+    return toast("Add a note saying what needs changing before sending it back");
   if(id){
     const p=b.posts.find(x=>x.id===id);
     if(liveMode() && ["publishing","published"].includes(p.status))
       return toast("Published posts are read-only — duplicate this post instead");
     Object.assign(p,{...postValues,networks:nets});
+    // A fresh submission carries no decision — the same line the trigger runs.
+    if(p.status==="pending_approval" && previous!=="pending_approval") p.approval_note="";
   } else {
     b.posts.push({id:uid(),...postValues,networks:nets});
   }
   save(); closeModal(); render();
-  toast(id?"Post updated":values.status==="draft"?"Draft saved":"Post scheduled ✔");
+  toast(values.status==="pending_approval" && previous!=="pending_approval" ? "Submitted for approval ✔"
+    :id?"Post updated"
+    :values.status==="draft"?"Draft saved":"Post scheduled ✔");
 }
 export async function publishNow(id){
   if(mediaUploadActive) return toast("Wait for the media upload to finish");
@@ -734,5 +894,9 @@ export function deletePost(id){
   if(!confirm(warning)) return;
   b.posts=b.posts.filter(p=>p.id!==id); save(); closeModal(); render(); toast("Post removed");
 }
+/* A duplicate is a new post, so it starts with no decision on it: carrying the
+   original's rejection note across would show the copy's author feedback about
+   words nobody has written yet (ADR 0006 decision 11). */
 export function dupPost(id){ const b=brand(); const p=b.posts.find(x=>x.id===id);
-  b.posts.push({...p,id:uid(),status:"draft"}); save(); closeModal(); render(); toast("Duplicated as draft"); }
+  b.posts.push({...p,id:uid(),status:"draft",approval_note:""});
+  save(); closeModal(); render(); toast("Duplicated as draft"); }

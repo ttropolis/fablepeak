@@ -580,7 +580,7 @@ test("per-network variants are validated where posts are actually written", asyn
 test("a column the sync whitelist does not name is invisible, so variants is named three times", async () => {
   const adapter = await read("js/remote-store.js");
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","variants","approval_note"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter, /variants: p\.variants \|\| \{\}/, "server row -> app post");
   assert.match(adapter, /variants:p\.variants \|\| \{\}/, "app post -> server row");

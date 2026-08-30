@@ -25,6 +25,11 @@
     --bg:#f4f6f9; --panel:#ffffff; --ink:#182b3a; --muted:#6b7c8d;
     --brand:#1c3d5a; --accent:#22c1dc; --accent2:#7ee081; --danger:#e05a5a;
     --line:#e3e9ef; --chip-draft:#f0ad4e; --chip-sched:#22c1dc; --chip-pub:#5cb87a; --chip-fail:#d95c5c;
+    /* ADR 0006 decision 13: awaiting approval is amber like a draft, because it
+       is still unpublished — but a deeper, browner amber, so a calendar of
+       drafts and pending posts is readable at chip size without relying on the
+       label a 11px chip may well have ellipsised away. */
+    --chip-pending:#b06f10;
     --radius:12px; --shadow:0 1px 3px rgba(24,43,58,.08);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
@@ -44,6 +49,9 @@
   nav button:hover{background:rgba(255,255,255,.06);color:#fff}
   nav button.active{background:rgba(34,193,220,.15);color:#fff;border-left-color:var(--accent)}
   nav .ic{width:20px;text-align:center}
+  /* ADR 0006 decision 13: how many posts are waiting on this owner, on the nav
+     entry that leads to them. Never a control — the button around it is. */
+  .navbadge{margin-left:auto;background:var(--chip-pending);color:#fff;font-size:11px;font-weight:700;line-height:1;padding:3px 7px;border-radius:9px}
   .sidefoot{padding:12px 16px;font-size:11px;color:#7f95a8;border-top:1px solid rgba(255,255,255,.1)}
 
   /* ---------- main ---------- */
@@ -80,6 +88,7 @@
   .post{font-size:11px;padding:3px 6px;border:0;border-radius:6px;color:#fff;cursor:grab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:4px;align-items:center;width:100%;text-align:left}
   .post .nets{font-size:9px;opacity:.9}
   .post.draft{background:var(--chip-draft)}
+  .post.pending_approval{background:var(--chip-pending)}
   .post.scheduled{background:var(--chip-sched)}
   .post.publishing{background:#2f91b5}
   .post.published{background:var(--chip-pub)}
@@ -97,6 +106,12 @@
   .delivery-row{display:grid;grid-template-columns:120px 1fr;gap:4px 8px;padding:7px 0;border-top:1px solid var(--line);font-size:12px}
   .delivery-row:first-of-type{border-top:0}.delivery-row small{grid-column:2;color:var(--danger)}
   .delivery-panel button{margin-top:8px}
+  /* approval (ADR 0006 decision 13). Same shape as the delivery panel: a bounded
+     block at the top of the composer that says what state this post is in. */
+  .approval-panel{border:1px solid var(--line);border-left:4px solid var(--chip-pending);border-radius:10px;padding:12px;margin:10px 0;background:#fdf8f1}
+  .approval-panel h4{font-size:12px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .approval-note{font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:8px}
+  .approval-panel .approval-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .netpick{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .netpick label{display:flex;align-items:center;gap:5px;border:1px solid var(--line);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13px}
   .netpick label.on{background:#e7f8fb;border-color:var(--accent)}

@@ -426,6 +426,13 @@ async function signIn(api, cloud) {
   store.smartlinkClickTotals = async brandId => { record("smartlinkClickTotals", [brandId]); return api.intoPage(cloud.clickTotals ?? []); };
   store.setSmartlinkSlug = async (brandId, slug) => { record("setSmartlinkSlug", [brandId, slug]); return api.intoPage(cloud.slugResult?.(slug) ?? { ok: true, slug, changed: true }); };
   store.setSmartlinkPublic = async (brandId, isPublic) => { record("setSmartlinkPublic", [brandId, isPublic]); };
+  /* ADR 0006 decision 9. A plain owner-gated UPDATE, so it resolves with
+     nothing and reports a refusal by throwing — `cloud.approvalError` is the
+     42501 sentence brands_guard_smartlink_slug produces for an editor. */
+  store.setApprovalRequired = async (brandId, isRequired) => {
+    record("setApprovalRequired", [brandId, isRequired]);
+    if (cloud.approvalError) throw new api.window.Error(String(cloud.approvalError));
+  };
   /* AI assist. `cloud.aiAssist` is either a fixed answer or a function of the
      request, and either shape may be a failure — {error, status,
      retry_after_seconds} — which is thrown the way RemoteAdapter.aiAssist
