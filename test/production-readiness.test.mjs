@@ -395,7 +395,7 @@ test("live customer connections show an honest status for every planned platform
     "Meta review or tester access pending",
     "Paid API credentials pending",
     "Developer app credentials pending",
-    "Deferred — compliance workflow pending",
+    "Sandbox testing — TikTok approval pending",
     "Not implemented",
   ]) assert.match(html, new RegExp(status));
 });

@@ -122,7 +122,7 @@ test("configured platforms offer Connect and unconfigured ones name their gate",
   for (const [netId, reason] of [
     ["x", "Paid API credentials pending"],
     ["linkedin", "Developer app credentials pending"],
-    ["tiktok", "Deferred — compliance workflow pending"],
+    ["tiktok", "Sandbox testing — TikTok approval pending"],
     ["pinterest", "Developer app and acceptance test pending"],
     ["gbp", "Not implemented"],
   ]) {

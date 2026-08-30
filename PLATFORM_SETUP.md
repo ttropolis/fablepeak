@@ -19,7 +19,7 @@ docs win.
 | **YouTube** | ✅ Yes | ✅ Yes, with caveats | Uploads stay **private** until Google audits the project. Test tokens expire every 7 days. |
 | **LinkedIn** | ✅ Yes | ✅ Yes — personal profile only | Company Pages need LinkedIn partner review (hard). Tokens last 60 days and cannot be refreshed; reconnecting is the renewal. |
 | **Pinterest** | ✅ Yes | Trial access required | Implemented but gated until credentials and a real-account acceptance test are complete. |
-| **TikTok** | Deferred | — | Intentionally left unconfigured for the current release. |
+| **TikTok** | In review | Sandbox only | App review submitted 2026-08-30; sandbox posting proven. |
 | **X / Twitter** | ❌ **No** | N/A — no review, but no free tier | **~US$0.015 per post, ~US$0.20 if it contains a link.** See below. |
 
 **Recommendation: set up Facebook + Instagram first.** They are the only two
@@ -35,7 +35,7 @@ That's the cleanest proof the whole pipeline works.
 | YouTube | ❌ | ❌ | ❌ | ✅ | Uploads a direct video file; new projects are private until audited. |
 | X / Twitter | ✅ | ✅ | ✅ | ✅ | Requires paid API credits and production credentials. |
 | LinkedIn profile | ✅ | ✅ | ✅ | ❌ | One image per post; video is rejected explicitly. |
-| TikTok | ❌ | ❌ | ❌ | Disabled | Compliance workflow is not complete. |
+| TikTok | ❌ | ❌ | ❌ | Sandbox | Compliance workflow built; production waits on TikTok's app review. |
 | Pinterest | ❌ | ✅ | ✅ | ❌ | Image Pins are implemented but production-disabled pending acceptance. |
 | Google Business | Disabled | Disabled | Disabled | Disabled | Adapter is not implemented. |
 

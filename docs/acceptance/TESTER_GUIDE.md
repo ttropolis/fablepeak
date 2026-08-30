@@ -4,7 +4,7 @@
 - Purpose: collect the nine human-acceptance rows in
   [EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md)
 - Audience: two testers who do not work on FablePeak
-- Last updated: 2026-08-30
+- Last updated: 2026-08-31
 
 You do not need to know anything about programming to run this. Every step is
 something you click, type or look at. If a screen does not match what a step

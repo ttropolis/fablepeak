@@ -13,7 +13,7 @@ const PLATFORM_NOTES = {
   instagram: "Business or Creator profiles connect directly. No Facebook Page is required. Every post needs media.",
   facebook:  "Posts text, images or video to a Page you administer.",
   linkedin:  "Publishes text or one image to a personal profile. Video and Company Page publishing remain separate follow-ups.",
-  tiktok:    "Disabled until FablePeak implements TikTok's required creator controls, consent flow and status tracking.",
+  tiktok:    "Compliance workflow built and proven in TikTok's Sandbox. Production publishing unlocks when TikTok approves the app review.",
   pinterest: "Image Pin publishing and explicit board selection are implemented. Connection stays disabled until Pinterest credentials and a real-account acceptance test are complete.",
   gbp:       "Planned. Google API approval, location selection and Business Profile post publishing are not implemented yet.",
 };
@@ -23,7 +23,7 @@ const PLATFORM_PENDING_STATUS = {
   youtube:   "Google setup pending",
   x:         "Paid API credentials pending",
   linkedin:  "Developer app credentials pending",
-  tiktok:    "Deferred — compliance workflow pending",
+  tiktok:    "Sandbox testing — TikTok approval pending",
   pinterest: "Developer app and acceptance test pending",
   gbp:       "Not implemented",
 };
