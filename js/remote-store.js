@@ -35,7 +35,7 @@ export const RemoteAdapter = {
     }catch(e){ this._sb=null; throw e; }
   },
 
-  _rowsToDb(brands, posts, inbox, targets=[]){
+  _rowsToDb(brands, posts, inbox, targets=[], hashtagGroups=[]){
     const mappedBrands = brands.map(b => ({
         id: b.id, name: b.name, seed: b.seed,
         connections: b.connections || {}, smartlink: b.smartlink || {},
@@ -74,6 +74,12 @@ export const RemoteAdapter = {
         inbox: inbox.filter(t => t.brand_id===b.id).map(t => ({
           id: t.id, net: t.net, from: t.sender, resolved: t.resolved,
           unread: t.unread, msgs: t.msgs || [] })),
+        // Named, reusable hashtag sets (ADR 0005 publishing depth). Synced
+        // exactly the way inbox threads are — the smallest table this adapter
+        // carries — because a group is the same shape of thing: an independent
+        // per-brand record created, renamed and deleted one at a time.
+        hashtag_groups: hashtagGroups.filter(g => g.brand_id===b.id).map(g => ({
+          id: g.id, name: g.name, tags: Array.isArray(g.tags) ? g.tags : [] })),
       }));
     const preferredBrand = localStorage.getItem("fablepeak_pref_activeBrand") || "";
     return {
@@ -83,7 +89,7 @@ export const RemoteAdapter = {
     };
   },
   _dbToRows(data){
-    const brands=[], posts=[], inbox=[];
+    const brands=[], posts=[], inbox=[], hashtagGroups=[];
     for(const b of data.brands){
       brands.push({ id:b.id, name:b.name, seed:b.seed,
         connections:b.connections||{}, smartlink:b.smartlink||{}, client_id:this._clientId });
@@ -115,36 +121,45 @@ export const RemoteAdapter = {
       for(const t of b.inbox) inbox.push({ id:t.id, brand_id:b.id, net:t.net,
         sender:t.from, resolved:!!t.resolved, unread:!!t.unread, msgs:t.msgs||[],
         client_id:this._clientId });
+      /* Guarded on the array because a brand created before this feature — in
+         local storage, in an old backup, or on a server whose row predates the
+         table — simply has no groups, which is not an error. */
+      for(const g of b.hashtag_groups||[]) hashtagGroups.push({ id:g.id, brand_id:b.id,
+        name:g.name, tags:Array.isArray(g.tags) ? g.tags : [], client_id:this._clientId });
     }
-    return { brands, posts, inbox };
+    return { brands, posts, inbox, hashtagGroups };
   },
 
   async load(){
     if(!this.user) return null;                 // logged out → local fallback
     try{
-      const [brandsResult, postsResult, inboxResult, targetsResult] = await Promise.all([
+      const [brandsResult, postsResult, inboxResult, targetsResult, groupsResult] = await Promise.all([
         this._sb.from("brands").select("*"),
         this._sb.from("posts").select("*"),
         this._sb.from("inbox_threads").select("*"),
         this._sb.from("post_targets").select("*"),
+        this._sb.from("hashtag_groups").select("*"),
       ]);
-      const queryError=brandsResult.error||postsResult.error||inboxResult.error||targetsResult.error;
+      const queryError=brandsResult.error||postsResult.error||inboxResult.error
+        ||targetsResult.error||groupsResult.error;
       if(queryError) throw queryError;
       // first sign-in with an empty server: offer to upload existing local data
       if(!brandsResult.data.length){
         let local=null; try{ local=JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){}
         if(local && local.brands?.length &&
            confirm("Your cloud workspace is empty. Upload this device's existing data to it?")){
-          this._snap = {brands:[],posts:[],inbox:[]};
+          this._snap = {brands:[],posts:[],inbox:[],hashtagGroups:[]};
           await this.persist(local);
           return local;
         }
       }
       this._snap = {
         brands:brandsResult.data, posts:postsResult.data, inbox:inboxResult.data,
+        hashtagGroups:groupsResult.data,
       };
       const db = this._rowsToDb(
         brandsResult.data, postsResult.data, inboxResult.data, targetsResult.data,
+        groupsResult.data,
       );
       if(!db.activeBrand && db.brands.length) db.activeBrand = db.brands[0].id;
       localStorage.setItem(LS_KEY, JSON.stringify(db));   // offline cache
@@ -158,7 +173,8 @@ export const RemoteAdapter = {
     localStorage.setItem("fablepeak_pref_activeBrand", data.activeBrand || "");
     localStorage.setItem(LS_KEY, JSON.stringify(data));   // cache first — never lose edits
     if(!this.user) return;
-    const cur = this._dbToRows(data), prev = this._snap || {brands:[],posts:[],inbox:[]};
+    const cur = this._dbToRows(data),
+          prev = this._snap || {brands:[],posts:[],inbox:[],hashtagGroups:[]};
     const FIELDS = {
       brands: ["id","name","seed","connections","smartlink"],
       /* `approved_by` and `approved_at` are deliberately NOT here: the posts
@@ -167,6 +183,9 @@ export const RemoteAdapter = {
          keeps an approval attributable to the account that made it. */
       posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
+      /* The same three-edit rule the post columns follow: a field this list does
+         not name is invisible to the sync even when the column exists. */
+      hashtagGroups: ["id","brand_id","name","tags"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));
     const changed = (rows, old, fs) => rows.filter(r => {
@@ -184,11 +203,17 @@ export const RemoteAdapter = {
     const ops = [];
     const cp = changed(cur.posts, prev.posts, FIELDS.posts);  if(cp.length) ops.push(this._sb.from("posts").upsert(cp));
     const ct = changed(cur.inbox, prev.inbox, FIELDS.inbox);  if(ct.length) ops.push(this._sb.from("inbox_threads").upsert(ct));
+    const prevGroups = prev.hashtagGroups || [];
+    const cg = changed(cur.hashtagGroups, prevGroups, FIELDS.hashtagGroups);
+    if(cg.length) ops.push(this._sb.from("hashtag_groups").upsert(cg));
     const gp = gone(cur.posts, prev.posts);   if(gp.length) ops.push(this._sb.from("posts").delete().in("id", gp));
     const gt = gone(cur.inbox, prev.inbox);   if(gt.length) ops.push(this._sb.from("inbox_threads").delete().in("id", gt));
+    const gg = gone(cur.hashtagGroups, prevGroups);
+    if(gg.length) ops.push(this._sb.from("hashtag_groups").delete().in("id", gg));
     const gb = gone(cur.brands, prev.brands); if(gb.length) ops.push(this._sb.from("brands").delete().in("id", gb));
     (await Promise.all(ops)).forEach(fail);
-    this._snap = { brands:cur.brands, posts:cur.posts, inbox:cur.inbox };
+    this._snap = { brands:cur.brands, posts:cur.posts, inbox:cur.inbox,
+                   hashtagGroups:cur.hashtagGroups };
   },
 
   async signIn(email, password){
@@ -417,6 +442,7 @@ export const RemoteAdapter = {
       brands: this._snap.brands.filter(b => b.id !== brandId),
       posts:  this._snap.posts.filter(p => p.brand_id !== brandId),
       inbox:  this._snap.inbox.filter(t => t.brand_id !== brandId),
+      hashtagGroups: (this._snap.hashtagGroups || []).filter(g => g.brand_id !== brandId),
     };
     try{
       const cached = JSON.parse(localStorage.getItem(LS_KEY));

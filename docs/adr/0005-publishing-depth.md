@@ -346,6 +346,28 @@ for the record.
     a carousel either publishes whole or fails whole, and the failure names the
     item by number and the provider by status without forwarding its body.
 
+- **Hashtag groups are delivered (2026-08-31).** Named, reusable tag sets per
+  brand — the last publishing-depth item that needed no Meta permission and no
+  Edge Function, and a Metricool-parity gap. Client and database only:
+  **hashtags reach a post as ordinary text**, so `supabase/functions/*`, the
+  three claim RPCs and `posts_guard_status_transition` are all untouched, and
+  nothing here goes near the submission decision 6 exists to protect.
+  - Storage is a new table, `public.hashtag_groups`, not brand jsonb. A group is
+    an independent per-brand record created, renamed and deleted one at a time,
+    exactly like a post or an inbox thread; brand jsonb would make every group
+    edit a whole-brand write and would route it through `save_brand`.
+  - `tags` is validated by `hashtag_groups_tags_valid` — the same
+    CHECK-via-IMMUTABLE-function seam `posts.variants` established and
+    `posts.media_urls` reused: 1..30 `#`-prefixed strings of 2..100 characters,
+    no whitespace inside a tag and no control characters.
+  - RLS is `is_member(brand_id)` for all operations, the `posts_all` / `inbox_all`
+    shape. ADR 0006 reserves `is_owner` for destructive and account-shaped acts;
+    composing is everyday editor work and a hashtag group is composing equipment.
+  - The composer offers a closed `<details>` beside the AI **Hashtags** button
+    that appends a group's tags to `#pm_text` after a blank line, skipping any
+    tag the post already carries. Unlike the AI row it is not gated on live mode:
+    a group is local data, so local and demo workspaces get the whole feature.
+
 **Closing rationale.** The governing constraint is protecting the current Meta
 submission. Nothing in this ADR may put core publishing approval at risk, so
 scope that needs a new Meta permission is deferred to a later submission, and

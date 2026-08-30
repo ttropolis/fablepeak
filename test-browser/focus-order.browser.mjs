@@ -101,11 +101,17 @@ test("the cycle visits every enabled control once, in DOM order", async t => {
   // in front and drop the closing repeat to get one full lap in order.
   const visited = [start, ...controls(stops).slice(0, -1)];
 
+  /* handleModalKeydown's own list, collapsed-details rule included. The rule
+     matters from the moment the dialog opens, not only once a panel has been
+     expanded: ADR 0005's hashtag-groups affordance is a <details> that is in
+     the composer, closed, before anybody touches anything — and Chromium
+     refuses to tab into a closed one however focusable its buttons look. */
   const expected = await page.evaluate(() =>
     [...document.getElementById("modalBody").querySelectorAll(
       "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled])," +
       "select:not([disabled]),[tabindex]:not([tabindex='-1'])")]
-      .filter(el => !el.hidden && el.getAttribute("aria-hidden") !== "true")
+      .filter(el => !el.hidden && el.getAttribute("aria-hidden") !== "true"
+        && (el.tagName === "SUMMARY" || !el.closest("details:not([open])")))
       .map(el => el.id
         || (el.value && el.type === "checkbox" ? `checkbox:${el.value}` : "")
         || `${el.tagName.toLowerCase()}:${(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 24)}`));
@@ -114,6 +120,10 @@ test("the cycle visits every enabled control once, in DOM order", async t => {
     "the app's own focusable list and Chromium's sequential navigation must agree");
   assert.ok(expected.includes("checkbox:instagram"),
     "connected network checkboxes are part of the keyboard path");
+  assert.ok(expected.includes("summary:# Hashtag groups"),
+    "a closed disclosure's summary is still the control that opens it");
+  assert.ok(!expected.some(name => name.startsWith("button:Launch")),
+    "…and the picks inside it are not Tab stops until it is opened");
 });
 
 test("multi-segment date and time inputs cost more Tab presses than they look", async t => {

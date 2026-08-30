@@ -52,6 +52,10 @@ export let inviteCache = { items:[], loaded:false, loading:false };
 /** public SmartLink slug, publish flag and real click aggregates for one brand */
 export let slCache = { brandId:null, slug:"", published:false, totals:{},
                        loaded:false, loading:false, error:null };
+/** Which hashtag group Settings has open in its editor, or null while the form
+    is creating a new one. Not persisted: "I am part-way through renaming this
+    group" is a property of the screen, not of the workspace. */
+export let editingHashtagGroup = null;
 /** welcome gate tab: "signin" | "signup" */
 export let wMode = "signin";
 /** element focused before the modal opened, restored on close */
@@ -133,6 +137,7 @@ export function setRoleCache(value){ roleCache = value; }
 export function setTeamCache(value){ teamCache = value; }
 export function setInviteCache(value){ inviteCache = value; }
 export function setSlCache(value){ slCache = value; }
+export function setEditingHashtagGroup(value){ editingHashtagGroup = value; }
 export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
 export function setComposerBaseline(value){ composerBaseline = value; }
@@ -151,6 +156,7 @@ const SETTERS = {
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,
   roleCache: setRoleCache, teamCache: setTeamCache, inviteCache: setInviteCache,
+  editingHashtagGroup: setEditingHashtagGroup,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
   composerVariants: setComposerVariants,

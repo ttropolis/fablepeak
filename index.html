@@ -140,6 +140,24 @@
   .variant-state{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
   .variants textarea{margin-top:8px;min-height:60px}
   .variant-empty{font-size:12px;color:var(--muted);margin-top:8px}
+  /* Hashtag groups — the saved-set affordance beside the AI assist row in the
+     composer, and the list + editor in Settings (ADR 0005 publishing depth). */
+  .hgroups{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:10px;background:#f8fafc}
+  .hgroups summary{cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;list-style:none}
+  .hgroups summary::-webkit-details-marker{display:none}
+  .hgroups summary::before{content:"▸";color:var(--muted);font-size:10px;width:9px}
+  .hgroups[open] summary::before{content:"▾"}
+  .hgroup-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .hgroup-pick{text-align:left;border:1px solid var(--line);border-radius:8px;background:#fff;color:inherit;padding:8px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+  .hgroup-pick:hover{border-color:var(--accent);background:#f2fbfd}
+  .hgroup-name{font-size:13px;font-weight:600}
+  .hgroup-preview{font-size:12px;color:var(--muted);word-break:break-word}
+  .hgroup-note{font-size:11px;color:var(--muted);margin-top:8px}
+  .hgroup{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+  .hgroup-head{display:flex;align-items:center;gap:8px;font-size:13px}
+  .hgroup-count{margin-left:auto;font-size:11px;color:var(--muted);white-space:nowrap}
+  .hgroup-tags{font-size:12px;color:var(--muted);margin-top:4px;word-break:break-word}
+  .hgroup-acts{display:flex;gap:6px;margin-top:8px}
   /* Instagram carousel — the extra media items, shown only while Instagram is
      a selected network (ADR 0005 publishing depth). */
   .carousel-panel{border:1px solid var(--line);border-left:4px solid #d6437f;border-radius:10px;padding:12px;margin:10px 0;background:#fdf7fa}

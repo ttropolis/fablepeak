@@ -323,6 +323,10 @@ export function fixtureDb() {
       connections: { instagram: true, facebook: true },
       smartlink: { title: "Acme", bio: "", avatar: "🚀", color: "#22c1dc", links: [] },
       inbox: [],
+      /* One hashtag group, so the composer renders its collapsed <details>
+         affordance: the focus tier is the only one that can see Chromium refuse
+         to tab into a closed section, and the app's own trap has to agree. */
+      hashtag_groups: [{ id: "hg-1", name: "Launch", tags: ["#launch", "#acme"] }],
       posts: [
         {
           id: "p-live", date: "2026-06-10", time: "09:00", text: "Already out there",

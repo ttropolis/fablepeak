@@ -23,11 +23,11 @@ import {
 } from "./welcome.js";
 import {
   addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
-  dropPost, dupPost, focusVariant, openPostModal, publishNow, rejectPost,
-  removeCarouselItem, renderCarousel, renderInstagramPanel, renderTikTokPanel,
-  renderVariantSections, retryPost, runAiAssist, savePost, setApprovalScope,
-  setInstagramOption, setTikTokOption, showMediaPreview, syncAiAssist,
-  syncCarouselItem, syncComposer, syncInstagramAlt, syncVariant,
+  dropPost, dupPost, focusVariant, insertHashtagGroup, openPostModal, publishNow,
+  rejectPost, removeCarouselItem, renderCarousel, renderInstagramPanel,
+  renderTikTokPanel, renderVariantSections, retryPost, runAiAssist, savePost,
+  setApprovalScope, setInstagramOption, setTikTokOption, showMediaPreview,
+  syncAiAssist, syncCarouselItem, syncComposer, syncInstagramAlt, syncVariant,
   togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
@@ -39,8 +39,9 @@ import {
   connectNet, connectReal, disconnectNet, disconnectReal, selectReal,
 } from "./connections.js";
 import {
-  addBrand, cloudSignOut, deleteBrand, deleteCloudAccount, exportData, importData,
-  installPhoneApp, renameBrand, resetData, simulatedApprovalToggle, toggleApproval,
+  addBrand, cancelHashtagGroup, cloudSignOut, deleteBrand, deleteCloudAccount,
+  deleteHashtagGroup, editHashtagGroup, exportData, importData, installPhoneApp,
+  renameBrand, resetData, saveHashtagGroup, simulatedApprovalToggle, toggleApproval,
 } from "./settings.js";
 import {
   acceptInvite, declineInvite, inviteMember, leaveBrand, revokeInvite,
@@ -114,6 +115,9 @@ export const ACTIONS = {
   syncVariant:           el => syncVariant(el),
   syncComposer:          () => syncComposer(),
   focusVariant:          el => focusVariant(el.dataset.arg),
+  /* composer → hashtag groups. One saved set appended to the post's own
+     content; the id travels in data-arg like every other record id here. */
+  insertHashtagGroup:    el => insertHashtagGroup(el.dataset.arg),
   /* composer → AI assist. "Rewrite for network" also depends on the picker
      above, which is why toggleNet re-syncs the row too. */
   runAiAssist:           el => runAiAssist(el.dataset.arg),
@@ -153,6 +157,12 @@ export const ACTIONS = {
   simulatedApprovalToggle: () => simulatedApprovalToggle(),
   addBrand:              () => addBrand(),
   deleteBrand:           el => deleteBrand(el.dataset.arg),
+  /* settings → hashtag groups. Member-level work, so there is no owner gate
+     here — the hashtag_groups_all RLS policy is is_member(brand_id) to match. */
+  saveHashtagGroup:      el => saveHashtagGroup(el.dataset.arg),
+  editHashtagGroup:      el => editHashtagGroup(el.dataset.arg),
+  cancelHashtagGroup:    () => cancelHashtagGroup(),
+  deleteHashtagGroup:    el => deleteHashtagGroup(el.dataset.arg),
   exportData:            () => exportData(),
   pickImportFile:        () => document.getElementById("impFile").click(),
   importData:            el => importData(el),

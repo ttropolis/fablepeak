@@ -13,7 +13,7 @@ export function defaultBrand(name){
   const b = {
     id: uid(), name,
     seed: Math.floor(Math.random()*10000),
-    connections: {}, posts: [], inbox: [],
+    connections: {}, posts: [], inbox: [], hashtag_groups: [],
     smartlink: { title:name, bio:"Welcome! All my links in one place.", avatar:"🚀", color:"#22c1dc",
       links:[{id:uid(),title:"Our website",url:"https://example.com",clicks:132},
              {id:uid(),title:"Latest video",url:"https://example.com/video",clicks:87},
@@ -38,6 +38,14 @@ export function seedDemo(){
     mk(1,11,"Weekly tips: batch your content on Mondays",["instagram"],"scheduled"),
     mk(3,17,"Live Q&A this Friday — drop your questions 👇",["instagram","tiktok"],"scheduled"),
     mk(5,12,"Draft: monthly recap carousel",["instagram","linkedin"],"draft"),
+  ];
+  /* One seeded hashtag group, so the composer's affordance is something the
+     demo workspace can actually be tried with rather than an empty disclosure. */
+  b.hashtag_groups = [
+    {id:uid(), name:"Product launch",
+     tags:["#launch","#newfeature","#buildinpublic","#saas"]},
+    {id:uid(), name:"Evergreen",
+     tags:["#marketing","#socialmedia","#contentstrategy"]},
   ];
   b.inbox = [
     {id:uid(), net:"instagram", from:"@sofia.designs", resolved:false, unread:true,

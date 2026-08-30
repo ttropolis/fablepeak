@@ -12,6 +12,7 @@ import * as analytics from "./analytics.js";
 import * as connections from "./connections.js";
 import * as constants from "./constants.js";
 import * as escapers from "./escape.js";
+import * as hashtags from "./hashtags.js";
 import * as inbox from "./inbox.js";
 import * as localStore from "./local-store.js";
 import * as metrics from "./metrics.js";
@@ -53,9 +54,9 @@ import { load, persistNow, tickPublish } from "./workspace.js";
  */
 function testSeam(){
   const modules = {
-    actions, analytics, connections, constants, escapers, inbox, localStore, metrics,
-    planner, remoteStore, reports, settings, shell, smartlinks, storeModule, team,
-    util, welcome, workspace,
+    actions, analytics, connections, constants, escapers, hashtags, inbox, localStore,
+    metrics, planner, remoteStore, reports, settings, shell, smartlinks, storeModule,
+    team, util, welcome, workspace,
   };
   const fn = {};
   for(const [moduleName, namespace] of Object.entries(modules)){

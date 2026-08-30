@@ -12,6 +12,7 @@ import {
   setComposerInstagram, setComposerTikTok, setComposerVariantFocus,
   setComposerVariants, setMediaUploadActive,
 } from "./state.js";
+import { appendTags, groupsOf } from "./hashtags.js";
 import { liveMode, store } from "./store.js";
 import {
   approvalRequired, brand, connectedNets, connectionsKnown, isOwner, netOf,
@@ -220,6 +221,7 @@ export function openPostModal(id, dateStr){
       data-input="syncComposer" data-focus="focusVariant">${esc(p?.text||"")}</textarea>
     <div class="charcount" id="pm_count" aria-live="polite"></div>
     ${aiAssistPanel(locked)}
+    ${hashtagGroupsPanel(locked)}
     ${perNetworkPanel(p, locked)}
     ${tiktokPanelHost(locked)}
     <label class="f">Image / video <span style="text-transform:none;font-weight:400">— required by Instagram, Pinterest, TikTok and YouTube</span></label>
@@ -1326,6 +1328,63 @@ function appendHashtag(text, tag){
   return body ? `${body} ${clean}` : clean;
 }
 export function clearAiAssist(){ setAiAssist(AI_ASSIST_IDLE); paintAiAssist(); }
+
+/* =============== hashtag groups (ADR 0005 publishing depth) ===============
+
+   The saved counterpart to the AI "Hashtags" button it sits beside: that one
+   asks a model for tags about this post, this one drops in a set the customer
+   already decided on. Unlike the AI row it is *not* gated on live mode — a group
+   is local data and needs no backend at all — so a demo or a local deployment
+   gets the whole feature.
+
+   A native <details>, exactly like the per-network sections: the modal's focus
+   trap already understands a collapsed one, and it renders nothing at all when
+   the brand has no groups, so a composer that has never met this feature has the
+   DOM it always had. The list is static for the life of the composer, because
+   groups are created in Settings and nothing in the modal can change them.
+
+   Insertion always targets #pm_text, never a per-network variant. A hashtag
+   block is something the post carries everywhere; a customer who wants it on one
+   network only can move it into that section themselves, and the alternative —
+   silently writing into whichever box the caret last touched — is a surprise. */
+
+/** The first few tags of a group, as a hint beside its name. */
+function tagPreview(tags){
+  const shown=tags.slice(0, 3).join(" ");
+  return tags.length > 3 ? `${shown} +${tags.length - 3} more` : shown;
+}
+function hashtagGroupsPanel(locked){
+  if(locked) return "";
+  const groups=groupsOf(brand());
+  if(!groups.length) return "";
+  return `<details class="hgroups" id="pm_hgroups">
+    <summary tabindex="0"># Hashtag groups</summary>
+    <div class="hgroup-list">
+      ${groups.map(g=>`<button type="button" class="hgroup-pick"
+        data-action="insertHashtagGroup" data-arg="${attr(g.id)}">
+        <span class="hgroup-name">${esc(g.name)}</span>
+        <span class="hgroup-preview">${esc(tagPreview(g.tags))}</span>
+      </button>`).join("")}
+    </div>
+    <div class="hgroup-note">Manage these in Settings → Hashtag groups.</div>
+  </details>`;
+}
+/* An ordinary edit, like a suggestion from the AI row: the unsaved-changes
+   baseline is left as openPostModal armed it, so a post whose tags came from a
+   group still asks before it is discarded. */
+export function insertHashtagGroup(id){
+  const group=groupsOf(brand()).find(g=>g.id===id);
+  const box=document.getElementById("pm_text");
+  if(!group || !box || box.disabled) return;
+  const { text, added }=appendTags(box.value, group.tags);
+  if(!added.length)
+    return toast(`Every hashtag in “${group.name}” is already in this post`);
+  box.value=text;
+  syncComposer();                              // counters, and the AI row's gates
+  toast(added.length===group.tags.length
+    ? `Added ${added.length} hashtag${added.length===1?"":"s"} from “${group.name}”`
+    : `Added ${added.length} of ${group.tags.length} — the rest were already there`);
+}
 export function readPostForm(){
   const text=document.getElementById("pm_text").value.trim();
   const nets=[...document.querySelectorAll("#pm_nets input:checked")].map(i=>i.value);

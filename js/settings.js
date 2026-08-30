@@ -1,8 +1,14 @@
 /* =============== SETTINGS =============== */
 import { LS_KEY, OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, slColorOf } from "./escape.js";
-import { todayStr } from "./util.js";
-import { db, deferredInstallPrompt, setDb, setDeferredInstallPrompt } from "./state.js";
+import { todayStr, uid } from "./util.js";
+import {
+  db, deferredInstallPrompt, editingHashtagGroup, setDb, setDeferredInstallPrompt,
+  setEditingHashtagGroup,
+} from "./state.js";
+import {
+  GROUP_NAME_MAX, describeGroupProblem, groupsOf, parseTags, validHashtagGroup,
+} from "./hashtags.js";
 import { liveMode, store } from "./store.js";
 import { approvalRequired, brand, defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
 import { renderTeamCard } from "./team.js";
@@ -54,6 +60,7 @@ export function renderSettings(m){
       </div>
       ${approvalCard(owner)}
     </div>
+    ${hashtagGroupsCard()}
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Cloud sync &amp; team accounts</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -154,6 +161,90 @@ export function simulatedApprovalToggle(){
   render();
   toast("Simulated — the approval workflow needs a cloud workspace");
 }
+/* ---------- hashtag groups (ADR 0005 publishing depth) ---------- */
+/* Named, reusable tag sets for the ACTIVE brand — beside the Brands card, and
+   scoped the way the approval switch above is scoped, because a group belongs to
+   one brand and the composer that inserts it is always open in one.
+
+   Not owner-gated. ADR 0006 reserves is_owner for destructive and account-shaped
+   acts; composing is everyday editor work, and the hashtag_groups_all RLS policy
+   is is_member(brand_id) to match. So there is no disabled-with-a-reason control
+   here — an editor may do all of this, and the database agrees.
+
+   Fully functional in local and demo mode: nothing below touches the network.
+   save() persists through whichever adapter is installed, exactly as renaming a
+   brand does. */
+function groupRow(g){
+  return `<div class="hgroup">
+    <div class="hgroup-head">
+      <strong>${esc(g.name)}</strong>
+      <span class="hgroup-count">${g.tags.length} tag${g.tags.length===1?"":"s"}</span>
+    </div>
+    <div class="hgroup-tags">${esc(g.tags.join(" "))}</div>
+    <div class="hgroup-acts">
+      <button class="btn ghost mini" data-action="editHashtagGroup" data-arg="${attr(g.id)}"
+        >Edit</button>
+      <button class="btn dangerb mini" data-action="deleteHashtagGroup" data-arg="${attr(g.id)}"
+        aria-label="${attr("Delete the hashtag group "+g.name)}">✕</button>
+    </div>
+  </div>`;
+}
+function hashtagGroupsCard(){
+  const groups=groupsOf(brand());
+  const editing=groups.find(g=>g.id===editingHashtagGroup) || null;
+  return `<div class="card" style="flex:1;min-width:280px">
+    <h4 style="margin-bottom:10px">Hashtag groups</h4>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Reusable sets of
+      hashtags for <strong>${esc(brand().name)}</strong>. Add one to a post from the
+      composer instead of retyping it.</p>
+    ${groups.length ? groups.map(groupRow).join("")
+      : `<p style="color:var(--muted);font-size:13px">No groups yet. Create your first one below.</p>`}
+    <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+      <label class="f" for="hgName">${editing?"Edit group":"New group"}</label>
+      <input type="text" id="hgName" maxlength="${attr(GROUP_NAME_MAX)}"
+        placeholder="Product launch" value="${attr(editing?editing.name:"")}">
+      <label class="f" for="hgTags" style="margin-top:10px">Hashtags</label>
+      <textarea id="hgTags" style="min-height:70px"
+        placeholder="#launch #newfeature — or just launch, newfeature">${esc(editing?editing.tags.join(" "):"")}</textarea>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px">Separate them with
+        spaces or commas. A missing <strong>#</strong> is added for you.</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn mini" data-action="saveHashtagGroup"
+          data-arg="${attr(editing?editing.id:"")}">${editing?"Save changes":"Create group"}</button>
+        ${editing?`<button class="btn ghost mini" data-action="cancelHashtagGroup">Cancel</button>`:""}
+      </div>
+    </div>
+  </div>`;
+}
+export function editHashtagGroup(id){ setEditingHashtagGroup(id); render(); }
+export function cancelHashtagGroup(){ setEditingHashtagGroup(null); render(); }
+export function saveHashtagGroup(id){
+  const b=brand();
+  const name=document.getElementById("hgName").value.trim();
+  const tags=parseTags(document.getElementById("hgTags").value);
+  /* One sentence per refusal, from the same vocabulary the CHECK constraint
+     enforces — the customer gets English, and the database still gets the last
+     word if anything ever reaches it another way. */
+  const problem=describeGroupProblem(name, tags);
+  if(problem) return toast(problem);
+  if(!Array.isArray(b.hashtag_groups)) b.hashtag_groups=[];
+  const existing=b.hashtag_groups.find(g=>g.id===id);
+  if(existing){ existing.name=name; existing.tags=tags; }
+  else b.hashtag_groups.push({ id:uid(), name, tags });
+  setEditingHashtagGroup(null);
+  save(); render();
+  toast(existing?"Hashtag group updated ✔":"Hashtag group created ✔");
+}
+export function deleteHashtagGroup(id){
+  const b=brand();
+  const group=groupsOf(b).find(g=>g.id===id);
+  if(!group) return;
+  if(!confirm(`Delete the hashtag group “${group.name}”?`)) return;
+  b.hashtag_groups=groupsOf(b).filter(g=>g.id!==id);
+  if(editingHashtagGroup===id) setEditingHashtagGroup(null);
+  save(); render(); toast("Hashtag group deleted");
+}
+
 export function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
 export function addBrand(){
   const name=document.getElementById("newBrand").value.trim(); if(!name)return toast("Give it a name");
@@ -271,8 +362,17 @@ export function validBackupSmartlink(sl){
     && sl.links.every(l => isPlainObject(l) && isId(l.id) && isText(l.title)
       && isText(l.url) && (l.clicks===undefined || typeof l.clicks === "number"));
 }
+/* Hashtag groups ride the backup like the rest of a brand's data, and are
+   checked against the same rules `hashtag_groups_tags_valid` enforces — a name
+   of 1..60 characters and 1..30 tags, each a `#`-prefixed string of 2..100
+   characters with no whitespace and no control characters. Absent means "this
+   brand has no groups", which is every brand exported before this feature. */
+export function validBackupHashtagGroups(v){
+  return Array.isArray(v) && v.every(validHashtagGroup);
+}
 export function validBackupBrand(b){
   return isPlainObject(b) && isId(b.id) && isText(b.name)
+    && (b.hashtag_groups===undefined || validBackupHashtagGroups(b.hashtag_groups))
     && (b.seed===undefined || typeof b.seed === "number")
     // Carried by a cloud export, never *applied* by an import: the flag is
     // owner-gated server-side and is not part of a brand upsert, so restoring a
@@ -289,7 +389,12 @@ export function acceptBackup(d){
   if(!d.brands.every(validBackupBrand)) return null;
   const ids = d.brands.map(b=>b.id);
   if(new Set(ids).size !== ids.length) return null;
-  d.brands.forEach(b=>{ b.smartlink.color = slColorOf(b.smartlink.color); });
+  d.brands.forEach(b=>{
+    b.smartlink.color = slColorOf(b.smartlink.color);
+    // A file exported before hashtag groups existed carries none. Normalised to
+    // [] rather than left absent so every brand in `db` has the same shape.
+    if(!Array.isArray(b.hashtag_groups)) b.hashtag_groups = [];
+  });
   d.activeBrand = d.brands[0].id;
   return d;
 }
