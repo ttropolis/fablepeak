@@ -49,7 +49,7 @@ and backend rather than creating a second product.
 | **SmartLinks** | Link-in-bio page builder with live phone preview and click tracking. |
 | **Reports** | 30-day per-network report + post log. Print / save as PDF. |
 | **Connections** | Customer-owned OAuth connections in cloud mode, including direct Instagram Login and explicit Facebook Page selection; simulated profiles in local/demo mode. |
-| **Settings** | Multiple brands, JSON export/import backups, demo reset. |
+| **Settings** | Multiple brands, team invitations and owner/editor roles, JSON export/import backups, demo reset. |
 
 ## Managing it yourself
 
@@ -83,6 +83,7 @@ through the single entry `js/main.js`:
 | `js/escape.js` | the escapers every rendered `${}` goes through |
 | `js/actions.js` | the `ACTIONS` table behind `data-action` (there are no inline handlers) |
 | `js/planner.js`, `js/analytics.js`, `js/inbox.js`, `js/smartlinks.js`, `js/reports.js`, `js/connections.js`, `js/settings.js` | one view each |
+| `js/team.js` | the Settings → Team card and the Accept/Decline invitation banner |
 | `js/local-store.js`, `js/remote-store.js`, `js/store.js` | the storage adapters |
 | `sw.js` | the PWA cache — its version must match `APP_VERSION` |
 
@@ -97,9 +98,13 @@ sync, offline cache, and server-side publishing via pg_cron. The scheduler uses
 
 - **Sign in:** Settings → Cloud sync → Sign in. Signed-out visitors get a
   private local demo — nothing shared leaks.
-- **Add teammates:** Supabase dashboard → Authentication → Add user. To give
-  someone access to an existing brand, add a row in `brand_members`
-  (dashboard → Table Editor). Brand creators get access automatically.
+- **Add teammates:** Settings → *Team* → invite by email, as owner or editor.
+  FablePeak sends no mail yet, so tell them yourself: they sign up with that
+  same address, confirm it, and **Accept** the invitation banner. Invites expire
+  after 14 days; brand creators are owners automatically.
+- **Roles are enforced** (ADR 0006): owners delete the brand, connect and
+  disconnect accounts, choose the publishing account, publish the SmartLinks
+  page and manage the team. Editors compose, schedule, reply and upload.
 - **First sign-in migration:** if the cloud is empty, the app offers to
   upload the device's existing local data.
 - **Kill switch:** delete `backend-config.js` and push — app returns to

@@ -1,9 +1,9 @@
 # External-customer beta evidence
 
-- Release candidate: FablePeak 1.4.0
+- Release candidate: FablePeak 1.5.0
 - Decision: internal tool now; external access remains invite-only
 - Provider freeze: Facebook, Instagram and YouTube only
-- Last updated: 2026-08-28
+- Last updated: 2026-08-30
 
 This record is the release gate. A blank human-evidence row is a blocker, not
 an implied pass. Never paste access tokens, passwords or customer personal data
@@ -45,6 +45,7 @@ failed or workload-failed runs.
 | Tenant A cannot read/select/disconnect/publish through Tenant B assets | Two unrelated FablePeak users |  | Pending |  |
 | Scheduled mixed-network delivery retains success and visibly identifies failure | Unrelated test account |  | Pending |  |
 | Account deletion and provider-data deletion instructions complete | Unrelated test account |  | Pending |  |
+| Owner-vs-editor enforcement: an invited editor composes and schedules but cannot delete the brand, disconnect or re-select accounts, or publish SmartLinks | Two unrelated FablePeak users (owner + editor) |  | Pending | ADR 0006 decision 14: the owner-vs-editor axis is a mandatory release gate for the role-enforcement step, not a follow-up. TESTER_GUIDE Script 9; run after the tenant-isolation row |
 
 ## Release decision
 

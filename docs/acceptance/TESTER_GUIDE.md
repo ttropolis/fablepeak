@@ -1,10 +1,10 @@
 # FablePeak acceptance tester guide
 
-- Product: FablePeak 1.4.0 at <https://fablepeak.com>
-- Purpose: collect the eight human-acceptance rows in
+- Product: FablePeak 1.5.0 at <https://fablepeak.com>
+- Purpose: collect the nine human-acceptance rows in
   [EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md)
 - Audience: two testers who do not work on FablePeak
-- Last updated: 2026-08-28
+- Last updated: 2026-08-30
 
 You do not need to know anything about programming to run this. Every step is
 something you click, type or look at. If a screen does not match what a step
@@ -116,13 +116,20 @@ If any of this is not true for you, say so before starting.
 |---|---|
 | 1, 2, 3, 4, 5, 7, 8 | Tester 1 alone |
 | **6 — tenant isolation** | **Tester 1 and Tester 2 together** |
+| **9 — owner and editor** | **Tester 1 and Tester 2 together** |
 
-Tester 2's only job is Script 6. Tester 2 still has to create their own FablePeak
-account (see "First-run setup" below) and connect **one** social account of any
-kind, so that there is something of their own to compare against. Tester 2 does
-not need multiple Pages, a Creator profile or a YouTube channel.
+Tester 2's only jobs are Scripts 6 and 9. Tester 2 still has to create their own
+FablePeak account (see "First-run setup" below) and connect **one** social
+account of any kind, so that there is something of their own to compare against.
+Tester 2 does not need multiple Pages, a Creator profile or a YouTube channel.
 
-Script 6 must be run **before** Script 8, because Script 8 deletes Tester 1's
+Run the two-tester scripts in this order: **Script 6, then Script 9.** Script 6
+proves that two unrelated people cannot see each other's workspaces, so it has to
+happen while they are still strangers to each other. Script 9 then invites Tester
+2 into Tester 1's workspace on purpose, which makes them genuine teammates —
+after that, Script 6 would no longer be a fair test.
+
+Both must be run **before** Script 8, because Script 8 deletes Tester 1's
 account.
 
 ---
@@ -170,6 +177,10 @@ Both testers do this. Script 1 continues straight on from here.
   phone) is the menu: **Planner, Analytics, Inbox, SmartLinks, Reports,
   Connections, Settings**.
 - The **Brand** dropdown at the top of that strip switches between workspaces.
+- If somebody has invited you into their workspace, a card headed
+  **Invitations** appears at the very top of the screen, above whatever view you
+  are on, with **Accept** and **Decline** buttons. Nothing of theirs is shared
+  with you until you press Accept. Only Script 9 uses this.
 - Small grey messages appear briefly at the bottom right of the screen. They
   disappear after a few seconds, so screenshot them quickly.
 - On the **Connections** screen each social network has its own card, showing
@@ -494,10 +505,18 @@ Screenshot the Connections screen showing **both** healthy, each with
 
 **Tester 1 and Tester 2 together.** Allow about 45 minutes. Do this on two
 separate devices, in the same room or on a call so you can compare screens.
-Run this **before** Script 8.
+Run this **before Script 9 and before Script 8**.
 
 Before starting, Tester 2 completes "First-run setup" and connects **one**
 social account of any kind, so each tester has real assets of their own.
+
+Each tester creates their own account and their own workspace, and **no
+invitation passes between them in this script**. Neither tester invites the
+other from Settings → Team, and neither accepts an Invitations card, so at this
+point the two of you are strangers to the app and to each other. Being invited
+into someone else's workspace on purpose is Script 9, which is why Script 9 runs
+after this one. If either tester has already accepted an invitation into the
+other's workspace, this script cannot produce valid evidence — say so and stop.
 
 **Part A — Tester 2 cannot see Tester 1's things**
 
@@ -725,6 +744,169 @@ is already sent.
 
 ---
 
+## Script 9 — Owner and editor: what a teammate can and cannot do
+
+**Tester 1 and Tester 2 together.** Allow about 45 minutes. Two separate
+devices, as in Script 6. Run this **after Script 6 and before Script 8.**
+
+Tester 1 owns a workspace. Tester 2 is invited into it as an **editor**. This
+proves an editor can do the everyday work — write posts, schedule them, reply in
+the Inbox — but cannot delete the brand, disconnect Tester 1's social accounts,
+change which account publishes, or publish the SmartLinks page.
+
+Before you start, **Tester 1 must have at least one social account connected**
+(reconnect one from Script 1, 2 or 4 if you disconnected them all), otherwise
+there is nothing for the editor to be blocked from disconnecting. Tester 2 keeps
+their own account and their own workspace throughout — you are not creating a
+new account for this script.
+
+**Part A — the invitation, and declining it**
+
+1. Tester 1: open **Settings** and find the **Team** card. It lists everyone in
+   the workspace with their role — at this point only Tester 1, marked
+   `owner` and `(you)`.
+2. Tester 1: under **Invite someone**, type **Tester 2's exact FablePeak
+   sign-in email**, leave the role box on **Editor**, and click **Invite**. A
+   message reads *"Invitation created — now tell them to sign up with that
+   address"*. The address now appears under **Pending invitation** with the role
+   and *expires in 14 days*. Screenshot the whole Team card.
+3. Tester 2: sign in and reload the page. A card headed **Invitations** appears
+   at the top of the screen, above whatever view is open. It names Tester 1's
+   workspace, says **as editor**, and reads *"Nothing is shared with you until
+   you accept."* Screenshot it.
+4. Tester 2: **before** accepting, open the **Brand** dropdown and screenshot
+   it. Tester 1's workspace must **not** be listed yet.
+5. Tester 2: click **Decline**. A message reads *"Invitation declined"* and the
+   Invitations card disappears. Screenshot the screen afterwards, and open the
+   **Brand** dropdown again — Tester 1's workspace must still be absent.
+
+**Part B — the owner takes an invitation back**
+
+6. Tester 1: invite the same email address again, as **Editor**.
+7. Tester 1: click **Revoke** on that row under **Pending invitation**. A
+   message reads *"Invitation revoked"*. Screenshot the Team card with the
+   pending row gone.
+8. Tester 2: reload the page. **No Invitations card may appear.** Screenshot the
+   top of your screen.
+
+**Part C — accepting, as an editor**
+
+9. Tester 1: invite the same address a third time, as **Editor**. Note the date
+   and time.
+10. Tester 2: reload, and in the **Invitations** card click **Accept**. A
+    message reads *"You've joined the workspace ✔"*. Screenshot it.
+11. Tester 2: open the **Brand** dropdown. Tester 1's workspace is now listed.
+    Choose it. Screenshot the dropdown and note the workspace name.
+12. Both testers: open **Settings → Team**. Each of you now sees **both** email
+    addresses with their roles — Tester 1 as `owner`, Tester 2 as `editor`.
+    People in the same workspace can see each other's sign-in email; that is
+    expected, not a leak. Screenshot the card on **both** devices.
+13. Tester 2: on that same Team card there is **no invite box and no Revoke
+    button**, and a grey line reads *"You're an editor in this workspace. Only
+    its owners can invite or remove people."* Screenshot it.
+
+**Part D — what the editor CAN do**
+
+Tester 2 does all of Part D **inside Tester 1's workspace** (check the Brand
+dropdown first).
+
+14. Open **Planner** and click **+ New post**. In **Content**, type
+    `FablePeak acceptance test - editor - please ignore` and today's date.
+15. Tick **one** network under **Networks**, set **Date** at least **seven days
+    ahead**, set **Status** to `scheduled`, and click **Schedule**. A message
+    reads *"Post scheduled ✔"* and a light-blue **Scheduled** chip appears on
+    the calendar. Screenshot the calendar. (Scheduling it a week out means it
+    will not publish to Tester 1's real account while you are still testing.)
+16. Open **Inbox**, open a conversation, type a short reply, send it, and mark
+    the conversation resolved. Screenshot it. (Inbox messages are simulated —
+    what this step proves is that an editor is allowed to use the controls.)
+17. Reopen the scheduled post from the calendar and **delete** it, so it can
+    never fire. Screenshot the calendar showing the chip gone.
+
+**Part E — what the editor must NOT be able to do**
+
+Still Tester 2, still inside Tester 1's workspace. In each step, **try the
+control** — do not just look at it.
+
+18. **Settings → Brands.** The red **✕** button next to Tester 1's brand is
+    greyed out and does nothing when clicked. Hover it: a tooltip reads *"Only
+    workspace owners can change this."* Underneath the list, a grey line reads
+    *"You're an editor in this workspace. Only its owners can delete a brand."*
+    Screenshot the card.
+19. **Connections.** Tester 1's connected account is listed, with its
+    **✓ Publishing account** mark where it applies — but there must be **no
+    Disconnect button and no Use for publishing button on any row**. At the
+    bottom of the screen a grey line reads *"You're an editor in this workspace.
+    Only its owners can disconnect an account or change which one publishes."*
+    Screenshot the whole screen.
+20. **SmartLinks.** In the **Public page** card, the link-name box and the
+    **Claim** (or **Change**) button are greyed out, and so is the **Publish
+    this page** tick box if it is shown. A grey line reads *"You're an editor in
+    this workspace. Only its owners can claim a link name or publish this
+    page."* Click the greyed-out button and try to type in the box — nothing
+    must happen, and the public link must not change. Screenshot the card.
+21. **Try to leave the workspace.** Look through **Settings**, including the
+    **Team** card, for any control that would remove you from Tester 1's
+    workspace — a *Leave*, *Remove me*, or an **✕** beside your own name. **In
+    this release there is none.** Write down exactly where you looked and what
+    you found. If you do find such a control, use it once, screenshot what
+    happens, and note whether you were removed — that is a result the release
+    owner needs.
+22. Tester 2: switch the **Brand** dropdown back to **your own** workspace and
+    confirm it still behaves normally — your own brand can still be deleted,
+    your own account disconnected. Screenshot it. Being an editor somewhere else
+    must not change what you can do in your own workspace.
+
+If at any point Tester 2 succeeds at something Part E says must be blocked —
+deleting the brand, disconnecting or re-selecting an account, claiming or
+publishing the SmartLinks page — stop immediately, screenshot it, note the time,
+and tell the release owner. That is a serious finding.
+
+**Evidence to capture (Script 9)**
+
+- [ ] Note: which tester was the owner and which was the editor, and the
+      workspace name used. Never the passwords
+- [ ] Screenshot: Tester 1's **Team** card showing the pending invitation with
+      its role and expiry
+- [ ] Screenshot: Tester 2's **Invitations** card naming the workspace and the
+      **editor** role
+- [ ] Screenshot: Tester 2's **Brand** dropdown before accepting, without
+      Tester 1's workspace
+- [ ] Screenshot: the screen after **Decline**, and the Brand dropdown still
+      without Tester 1's workspace
+- [ ] Screenshot: Tester 1's Team card after **Revoke**, pending row gone
+- [ ] Screenshot: Tester 2's screen after the revoke, with no Invitations card
+- [ ] Screenshot: the *"You've joined the workspace ✔"* message after **Accept**
+- [ ] Screenshot: Tester 2's **Brand** dropdown afterwards, now listing Tester
+      1's workspace
+- [ ] Screenshots: the **Team** card on **both** devices, showing both emails
+      and the roles `owner` and `editor`
+- [ ] Screenshot: Tester 2's Team card with no invite box and the
+      *"Only its owners can invite or remove people"* line
+- [ ] Screenshot: the editor's **Scheduled** chip on Tester 1's calendar
+- [ ] Screenshot: the editor's Inbox reply
+- [ ] Screenshot: the calendar after the editor deleted that post
+- [ ] Screenshot: **Settings → Brands** as the editor, delete button greyed out,
+      with the owner-only line visible
+- [ ] Screenshot: **Connections** as the editor, no Disconnect and no Use for
+      publishing anywhere, with the owner-only line visible
+- [ ] Screenshot: **SmartLinks → Public page** as the editor, controls greyed
+      out, with the owner-only line visible
+- [ ] Note: exactly where you looked for a way to leave the workspace, and what
+      you found
+- [ ] Screenshot: Tester 2 back in their own workspace, controls working again
+- [ ] Note: date, time and time zone for each screenshot, and confirmation that
+      two separate devices were used
+- [ ] Check: no screenshot shows a password box or any long random code
+- [ ] Send to the agreed evidence location
+
+> Note for the release owner: this release ships no in-product control for a
+> member to leave a workspace, so step 21 is expected to find nothing. The
+> database permits self-removal; the UI does not offer it yet. Record the
+> tester's answer either way — a control appearing here would be the surprise.
+
+---
+
 ## When you are finished
 
 Tell the release owner you are done and list which scripts you completed. Then:
@@ -747,7 +929,7 @@ paste tokens, passwords or the testers' personal data into that record.
 
 | Script | Evidence-record row (Scenario column) | Account/tester column | Key artefacts to link |
 |---|---|---|---|
-| First-run setup | Supports rows 1–8; also satisfies the "New customer" line in PRODUCTION_ONBOARDING §4 | Unrelated test account | Confirmation email, brand creation, first Connections view |
+| First-run setup | Supports rows 1–9; also satisfies the "New customer" line in PRODUCTION_ONBOARDING §4 | Unrelated test account | Confirmation email, brand creation, first Connections view |
 | 1 | Facebook OAuth, multi-Page selection, publish, remote link, disconnect | Unrelated test account | Page-choosing screen, multi-Page card, publishing-account switch, delivery panel, Facebook remote link, empty card after disconnect |
 | 2 | Direct Instagram Business OAuth, image publish, remote link, disconnect | Unrelated test account | Instagram-only consent screen, connected card, delivery panel, Instagram remote link, card after disconnect |
 | 3 | Direct Instagram Creator OAuth and token renewal | Unrelated test account | Day 1 / day 2 / day 7 dated card screenshots, day-7 publish + remote link. Pair with the hourly `connections` job evidence — the UI does not show renewal directly |
@@ -756,3 +938,4 @@ paste tokens, passwords or the testers' personal data into that record.
 | 6 | Tenant A cannot read/select/disconnect/publish through Tenant B assets | Two unrelated FablePeak users | Both signed-in Settings screenshots, both Brand dropdowns, Tester 2's Connections/Planner/Inbox/SmartLinks/Reports, the **"not authorised for this brand"** cloud-save refusal, post-reload dropdown |
 | 7 | Scheduled mixed-network delivery retains success and visibly identifies failure | Unrelated test account | Composer with both networks, Scheduled chip, red Needs-attention chip, single delivery panel showing one published + one failed, Facebook remote link, proof of exactly one live copy |
 | 8 | Account deletion and provider-data deletion instructions complete | Unrelated test account | data-deletion.html screenshot, disconnect per published steps, deletion-reference confirmation code (or email reply), Delete account box, signed-out state, failed re-sign-in |
+| 9 | Owner-vs-editor enforcement: an invited editor composes and schedules but cannot delete the brand, disconnect or re-select accounts, or publish SmartLinks | Two unrelated FablePeak users (owner + editor) | Team card with the pending invite, Invitations banner, declined and revoked states, both Team cards after acceptance, the editor's scheduled post and Inbox reply, the editor's greyed-out Settings/Connections/SmartLinks controls with their owner-only lines, note on leaving the workspace. ADR 0006 decision 14 makes this a release gate for the role-enforcement step, not a follow-up |
