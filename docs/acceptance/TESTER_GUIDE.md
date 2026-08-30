@@ -746,14 +746,17 @@ is already sent.
 
 ## Script 9 — Owner and editor: what a teammate can and cannot do
 
-**Tester 1 and Tester 2 together.** Allow about 45 minutes. Two separate
+**Tester 1 and Tester 2 together.** Allow about 55 minutes. Two separate
 devices, as in Script 6. Run this **after Script 6 and before Script 8.**
 
 Tester 1 owns a workspace. Tester 2 is invited into it as an **editor**. This
 proves an editor can do the everyday work — write posts, schedule them, reply in
 the Inbox — and can walk out of the workspace whenever they choose, but cannot
 delete the brand, disconnect Tester 1's social accounts, change which account
-publishes, or publish the SmartLinks page.
+publishes, or publish the SmartLinks page. Part F then proves the approval
+workflow with two real people: the editor proposes, the owner decides, and
+nothing reaches the calendar as scheduled without an owner's approval while
+the switch is on.
 
 Before you start, **Tester 1 must have at least one social account connected**
 (reconnect one from Script 1, 2 or 4 if you disconnected them all), otherwise
@@ -888,6 +891,47 @@ publishing the SmartLinks page — or Tester 1's greyed-out **Leave workspace**
 actually removes the workspace's only owner, stop immediately, screenshot it,
 note the time, and tell the release owner. That is a serious finding.
 
+**Part F — approval: the editor proposes, the owner decides**
+
+Allow about 10 extra minutes. Tester 2 is back inside Tester 1's workspace as
+an editor (step 21d put them there).
+
+23. Tester 1 (the owner): open **Settings** and find **Require approval before
+    scheduling** on the **Brands** card. Flip it **on**. Tester 2: reload and
+    find the same switch — for you it must be **greyed out**; only an owner may
+    change it. Screenshot both.
+
+24. Tester 2: in the **Planner**, create a post with any text, a date a few
+    days out, and one connected network. The status choices are **Draft** and
+    **Submit for approval** — there must be **no way to pick Scheduled**, and
+    an already-saved submission must show **no Publish now button**. Submit it.
+    The calendar chip turns **amber** and the message reads *"Submitted for
+    approval ✔"*. Screenshot the chip and the legend's **Needs approval**
+    entry.
+
+25. Tester 1: the **Planner** button in the sidebar now carries a **count
+    badge**, and a **Needs approval** filter sits above the calendar. Open the
+    post. A **Your decision** panel offers **Approve & schedule** and
+    **Request changes**. First click **Request changes** with the note box
+    empty — it must refuse and tell you the note is what the author gets back.
+    Now write a short note and click **Request changes** again. Tester 2: open
+    the post — it is a **draft** again and shows Tester 1's note word for
+    word. Screenshot the note as the editor sees it.
+
+26. Tester 2: submit the same post once more. Tester 1: this time click
+    **Approve & schedule**. The chip turns to the normal scheduled colour, the
+    badge count drops, and the note from step 25 is gone. Screenshot the
+    scheduled chip. Leave it scheduled for a moment and confirm nothing
+    publishes it early, then either of you can delete the post.
+
+27. Tester 1: flip **Require approval before scheduling** back **off**. Tester
+    2: reload and confirm you can once again save a post straight to
+    **Scheduled** with no approval step.
+
+If the editor ever reaches **Scheduled** (or a post publishes) while the
+switch is on and no owner approved it, stop, screenshot it, note the time, and
+tell the release owner. That too is a serious finding.
+
 **Evidence to capture (Script 9)**
 
 - [ ] Note: which tester was the owner and which was the editor, and the
@@ -927,6 +971,20 @@ note the time, and tell the release owner. That is a serious finding.
 - [ ] Note: that Tester 2 was re-invited and accepted again before step 22, with
       the date and time
 - [ ] Screenshot: Tester 2 back in their own workspace, controls working again
+- [ ] Screenshots (Part F): the approval switch as the owner (on) and as the
+      editor (greyed out)
+- [ ] Screenshot (Part F): the editor's composer offering only **Draft** and
+      **Submit for approval**, no Scheduled and no Publish now
+- [ ] Screenshot (Part F): the amber **pending approval** chip and the
+      **Needs approval** legend entry
+- [ ] Screenshot (Part F): the refusal when **Request changes** was clicked
+      with an empty note
+- [ ] Screenshot (Part F): the owner's note, word for word, as the editor
+      sees it on the returned draft
+- [ ] Screenshot (Part F): the approved post's normal scheduled chip, badge
+      count gone
+- [ ] Note (Part F): that the switch was turned back off and the editor could
+      schedule directly again
 - [ ] Note: date, time and time zone for each screenshot, and confirmation that
       two separate devices were used
 - [ ] Check: no screenshot shows a password box or any long random code
