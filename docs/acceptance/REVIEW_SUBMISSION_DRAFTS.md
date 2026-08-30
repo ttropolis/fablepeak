@@ -495,7 +495,7 @@ private upload").
 | Application privacy policy link | `https://fablepeak.com/privacy.html` | `privacy.html`, `PRODUCTION_ONBOARDING.md` §2 |
 | Application terms of service link | `https://fablepeak.com/terms.html` | `terms.html` |
 | Authorized domain | `fablepeak.com` | `CNAME`; ownership verified in Search Console per `PRODUCTION_ONBOARDING.md` §3 |
-| User support email | `<SUPPORT_EMAIL>` — the repository publishes `ttropolis@gmail.com` as the privacy/deletion contact; confirm this is the address you want shown on the consent screen | `privacy.html`, `data-deletion.html` |
+| User support email | `<SUPPORT_EMAIL>` — the repository publishes `fablepeak@techpolity.com` as the privacy/deletion contact; confirm this is the address you want shown on the consent screen | `privacy.html`, `data-deletion.html` |
 | Developer contact email | `<GOOGLE_PROJECT_OWNER_EMAIL>` — NEEDS-HUMAN-CONFIRM (must be an address Google can reach for the review thread) | not in repo |
 | OAuth client type | Web application, one client named `FablePeak web` | `PLATFORM_SETUP.md` §2 |
 | Authorized redirect URI | `https://lghsvxwuaebvotutyjtt.supabase.co/functions/v1/oauth-callback` | `PLATFORM_SETUP.md`, `PRODUCTION_ONBOARDING.md` §1, `oauth-start/index.ts` |
