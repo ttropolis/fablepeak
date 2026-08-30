@@ -368,3 +368,31 @@ Rationale for the ordering:
 - **Instagram comments must not delay the current Meta review.** First comments
   sit last, behind a later submission, so nothing in this plan puts core
   publishing approval at risk.
+
+### Internal pilot record (2026-08-30)
+
+Item 5 shipped (migration `20260830130000_post_approval.sql`) and the pilot ran
+the same day against production, from the owner session of the internal SCH
+brand:
+
+- **Toggle.** `approval_required` enabled from Settings by the owner; the
+  planner immediately grew the Needs-approval filter, legend entry and owner
+  nav badge.
+- **Unclaimability — the amendment's core proof.** A `pending_approval` post
+  was created with a due time already five minutes in the past and left for
+  seven pg_cron ticks. `publish_claimed_at` stayed null and the status never
+  moved: the cron cannot claim a pending post, so approval cannot interrupt or
+  leak into scheduled publishing. The brand's previously published posts were
+  untouched throughout.
+- **Reject.** Rejecting without a note was refused with the explanatory toast;
+  rejecting with a note returned the post to `draft`, stored the note, and
+  stamped `approved_by`/`approved_at` with the deciding owner.
+- **Approve.** Resubmission → `pending_approval`, then owner approval moved it
+  to `scheduled`, cleared the note, and stamped the decision columns.
+- **Cleanup.** The pilot post was deleted before its (deliberately far-future)
+  time; nothing was ever published. `approval_required` was left **on** for
+  SCH as the ongoing internal pilot.
+
+The editor-side submit leg is covered by the behavioural suite and will be
+exercised live by Script 9's testers; it needs a second human account, which
+the pilot session does not have.
