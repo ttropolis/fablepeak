@@ -27,7 +27,8 @@ import {
   rejectPost, removeCarouselItem, renderCarousel, renderInstagramPanel,
   renderTikTokPanel, renderVariantSections, retryPost, runAiAssist, savePost,
   setApprovalScope, setInstagramOption, setTikTokOption, showMediaPreview,
-  syncAiAssist, syncCarouselItem, syncComposer, syncInstagramAlt, syncVariant,
+  syncAiAssist, syncCarouselAlt, syncCarouselItem, syncComposer, syncInstagramAlt,
+  syncVariant,
   togglePerNetwork, uploadPostMedia, useAiSuggestion,
 } from "./planner.js";
 import { fakeIncoming, openMsg, sendReply, toggleResolved } from "./inbox.js";
@@ -101,6 +102,9 @@ export const ACTIONS = {
   addCarouselItem:       () => addCarouselItem(),
   removeCarouselItem:    el => removeCarouselItem(el.dataset.arg),
   syncCarouselItem:      el => { syncCarouselItem(el); renderInstagramPanel(); },
+  /* …and one description per item, which repaints only its own counter for the
+     same reason: rebuilding the list under the caret would drop it mid-word. */
+  syncCarouselAlt:       el => syncCarouselAlt(el),
   /* composer → per-post Instagram options. The Reel placement rebuilds nothing
      and alt text repaints only its own counter: rebuilding the panel under the
      caret would drop it mid-description. */

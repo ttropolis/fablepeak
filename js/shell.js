@@ -6,7 +6,8 @@ import { todayStr, uid } from "./util.js";
 import {
   AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, composerBaseline,
   db, mediaUploadActive, previousModalFocus, setAiAssist, setAnalyticsNet,
-  setComposerBaseline, setComposerCarousel, setComposerInstagram, setComposerTikTok,
+  setComposerBaseline, setComposerCarousel, setComposerCarouselAlts,
+  setComposerInstagram, setComposerTikTok,
   setComposerVariantFocus, setComposerVariants, setPreviousModalFocus,
   setSelectedMsg, setView, view,
 } from "./state.js";
@@ -38,6 +39,7 @@ export function openModal(html){
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);     // …and no other creator's account
   setComposerCarousel([]);                     // …and no other post's carousel
+  setComposerCarouselAlts([]);                 // …nor the descriptions of its items
   setComposerInstagram(COMPOSER_INSTAGRAM_IDLE); // …and no other post's alt text
   const modal=document.getElementById("modalBody");
   modal.innerHTML=html;
@@ -56,6 +58,7 @@ export function closeModal(){
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);
   setComposerCarousel([]);
+  setComposerCarouselAlts([]);
   setComposerInstagram(COMPOSER_INSTAGRAM_IDLE);
   previousModalFocus?.focus?.(); setPreviousModalFocus(null);
 }

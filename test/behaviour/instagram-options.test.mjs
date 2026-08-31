@@ -216,24 +216,189 @@ test("alt text past Instagram's 1000 is refused rather than trimmed", async t =>
   assert.match(app.$("#pm_ig_alt_count").className, /over/, "…and the counter said so first");
 });
 
-/* ---------- the v1 cut, said where it is felt ---------- */
+/* ---------- a carousel: one description per item ---------- */
 
-test("a carousel gets no alt text in v1, and the panel says why", async t => {
+const itemAlts = app => app.$$("#pm_carousel input[data-carousel-alt]");
+/** Add `count` extra items, each with a distinct URL — a real carousel of
+    `count + 1` items, the cover included. */
+async function addItems(app, count) {
+  for (let index = 0; index < count; index++) {
+    await app.click(app.byText("#pm_carousel button", "Add another"));
+    await app.fill(`#pm_carousel_${index}`, `https://cdn.example.com/${index + 2}.jpg`);
+  }
+}
+
+test("a carousel asks for one description per item, beside each item", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await app.fill("#pm_ig_alt", "A grey cat asleep on a stack of books");
+  await addItems(app, 2);
+
+  assert.equal(altBox(app), null,
+    "alt_text is a per-container parameter, so one description cannot cover ten items");
+  assert.equal(itemAlts(app).length, 3, "the cover is a container like any other, so it has one");
+  assert.deepEqual(itemAlts(app).map(box => box.getAttribute("aria-label")), [
+    "Alt text for carousel item 1", "Alt text for carousel item 2",
+    "Alt text for carousel item 3",
+  ], "a screen reader has to be able to tell which picture it is describing");
+  assert.match(app.text("#pm_instagram"), /one\s+description per item/,
+    "…and the panel points at them rather than apologising for their absence");
+
+  await app.fill("#pm_carousel_alt_0", "A grey cat asleep on a stack of books");
+  assert.equal(app.text("#pm_carousel_alt_0_count"), "37 / 1000",
+    "the same counter treatment the single image's description gets");
+});
+
+test("the descriptions are stored in the carousel's own order", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 2);
+  await app.fill("#pm_carousel_alt_0", "  The cover  ");
+  await app.fill("#pm_carousel_alt_2", "The third picture");
+  await save(app);
+
+  const saved = savedPost(app);
+  assert.deepEqual([...saved.media_urls],
+    [IMAGE, "https://cdn.example.com/2.jpg", "https://cdn.example.com/3.jpg"]);
+  assert.deepEqual([...saved.instagram_options.carousel_alt_texts],
+    ["The cover", "", "The third picture"],
+    "the blank in the middle is a position, not a gap — item three is item three");
+});
+
+test("trailing blanks are trimmed, and a carousel nobody described stores nothing", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 2);
+  await save(app);
+  assert.equal(savedPost(app).instagram_options, null,
+    "an untouched carousel must leave the post exactly as it was before this feature");
+
+  await composeForInstagram(app, { date: "2026-06-23" });
+  await addItems(app, 2);
+  await app.fill("#pm_carousel_alt_0", "The cover");
+  await save(app);
+  assert.deepEqual([...savedPost(app).instagram_options.carousel_alt_texts], ["The cover"],
+    "a trailing blank says nothing an absent entry does not, so it is not stored");
+});
+
+test("removing an item takes its description with it, and the rest keep their places", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 3);
+  for (const slot of [0, 1, 2, 3]) await app.fill(`#pm_carousel_alt_${slot}`, `Item ${slot + 1}`);
+
+  await app.click(app.$$("#pm_carousel [data-action=removeCarouselItem]")[1]);
+  assert.deepEqual(itemAlts(app).map(box => box.value), ["Item 1", "Item 2", "Item 4"],
+    "the description goes with the picture it described, not with the slot number");
+
+  await save(app);
+  const saved = savedPost(app);
+  assert.deepEqual([...saved.media_urls],
+    [IMAGE, "https://cdn.example.com/2.jpg", "https://cdn.example.com/4.jpg"]);
+  assert.deepEqual([...saved.instagram_options.carousel_alt_texts],
+    ["Item 1", "Item 2", "Item 4"], "…and the two arrays still describe each other");
+});
+
+test("an item whose URL was left blank takes its description out of the alignment", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 2);
+  await app.fill("#pm_carousel_0", "");
+  await app.fill("#pm_carousel_alt_0", "The cover");
+  await app.fill("#pm_carousel_alt_1", "A picture nobody added");
+  await app.fill("#pm_carousel_alt_2", "The one after it");
+  await save(app);
+
+  const saved = savedPost(app);
+  assert.deepEqual([...saved.media_urls], [IMAGE, "https://cdn.example.com/3.jpg"]);
+  assert.deepEqual([...saved.instagram_options.carousel_alt_texts],
+    ["The cover", "The one after it"],
+    "a description for an item that is not published would shift every later one");
+});
+
+test("a saved carousel reopens with its descriptions, and duplicating carries them", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 2);
+  await app.fill("#pm_carousel_alt_0", "The cover");
+  await app.fill("#pm_carousel_alt_2", "The third picture");
+  await save(app);
+
+  await app.click(app.byText(".calgrid .post", "One good picture"));
+  await app.waitFor(() => itemAlts(app).length, { label: "the carousel descriptions" });
+  assert.deepEqual(itemAlts(app).map(box => box.value),
+    ["The cover", "", "The third picture"],
+    "the descriptions the customer wrote are the descriptions shown");
+
+  await app.click(app.byText(".modalfoot button", "Duplicate"));
+  const copies = app.db.brands[0].posts.filter(p => p.text === "One good picture");
+  assert.equal(copies.length, 2);
+  for (const copy of copies) {
+    assert.deepEqual([...copy.instagram_options.carousel_alt_texts],
+      ["The cover", "", "The third picture"]);
+  }
+});
+
+test("a carousel description past Instagram's 1000 names the item it belongs to", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 1);
+  await app.fill("#pm_carousel_alt_1", "x".repeat(1001));
+
+  const before = app.db.brands[0].posts.length;
+  await app.click(saveButton(app));
+  assert.equal(app.toast(),
+    "Instagram allows 1000 characters of alt text — carousel item 2 is 1001. Shorten it.",
+    "the number the customer is looking at, not a zero-based index");
+  assert.equal(app.modalOpen(), true, "a refused post keeps the composer open");
+  assert.equal(app.db.brands[0].posts.length, before);
+  assert.match(app.$("#pm_carousel_alt_1_count").className, /over/,
+    "…and the counter said so first");
+});
+
+test("a hostile carousel description is a string in an input and never markup", async t => {
+  const payload = `Cat"><img src=x onerror="__pwn()"><script>__pwn()</script>`;
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  app.eval("window.__pwnHits = 0; window.__pwn = () => { window.__pwnHits++; };");
+
+  await composeForInstagram(app);
+  await addItems(app, 1);
+  await app.fill("#pm_carousel_alt_1", payload);
+  await save(app);
+
+  await app.click(app.byText(".calgrid .post", "One good picture"));
+  await app.waitFor(() => itemAlts(app).length, { label: "the carousel descriptions" });
+
+  assert.equal(app.$("#pm_carousel_alt_1").value, payload, "it reads back verbatim…");
+  assert.deepEqual(
+    app.$$("script, iframe, [onerror], [onload]", app.modal()).map(el => el.outerHTML), [],
+    "…and never became markup");
+  assert.equal(app.eval("window.__pwnHits"), 0);
+});
+
+test("the single image's description gives way to the carousel's, and is not stored behind it", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
   await composeForInstagram(app);
   await app.fill("#pm_ig_alt", "A grey cat asleep on a stack of books");
 
+  // One row is enough: the question the panel asks is already the carousel's,
+  // before its URL is typed, because the row is on screen.
   await app.click(app.byText("#pm_carousel button", "Add another"));
-  await app.fill("#pm_carousel_0", "https://cdn.example.com/2.jpg");
-
-  assert.equal(altBox(app), null,
-    "alt_text is a per-container parameter, so one description cannot cover ten items");
-  assert.match(app.text("#pm_instagram"), /does not send alt text for carousels yet/);
+  assert.equal(altBox(app), null);
+  assert.equal(itemAlts(app).length, 2);
 
   await save(app);
   assert.equal(savedPost(app).instagram_options, null,
-    "…and the description that no longer applies is not stored behind the customer's back");
+    "the description that no longer applies is not stored behind the customer's back");
 });
 
 test("removing the last carousel item offers alt text back, with what was typed", async t => {
@@ -352,6 +517,28 @@ test("Instagram options survive an export and its import", async t => {
   assert.deepEqual({ ...restored.instagram_options }, exported.instagram_options);
 });
 
+test("a carousel's descriptions survive an export and its import", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await composeForInstagram(app);
+  await addItems(app, 2);
+  await app.fill("#pm_carousel_alt_0", "The cover");
+  await app.fill("#pm_carousel_alt_2", "The third picture");
+  await save(app);
+
+  await openSettings(app);
+  const json = await exportBackup(app);
+  const exported = JSON.parse(json).brands[0].posts.find(p => p.text === "One good picture");
+  assert.deepEqual(exported.instagram_options,
+    { carousel_alt_texts: ["The cover", "", "The third picture"] });
+
+  await importBackup(app, json);
+  assert.equal(app.toast(), "Backup restored ✔");
+  const restored = app.db.brands[0].posts.find(p => p.text === "One good picture");
+  assert.deepEqual([...restored.instagram_options.carousel_alt_texts],
+    exported.instagram_options.carousel_alt_texts);
+});
+
 test("a backup carrying Instagram options the column would refuse never reaches the workspace", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
@@ -369,6 +556,13 @@ test("a backup carrying Instagram options the column would refuse never reaches 
     { share_to_feed: true, caption: "extra" },       // an unknown key is a drifted client
     { boomerang: true },
     [{ share_to_feed: true }],                       // not an object
+    // …and the same rules per entry, for the carousel's own descriptions.
+    { carousel_alt_texts: [] },                      // "none" is spelled by absence
+    { carousel_alt_texts: Array(11).fill("A cat") }, // past Instagram's ten items
+    { carousel_alt_texts: ["x".repeat(1001)] },      // past Instagram's ceiling
+    { carousel_alt_texts: ["line one\nline two"] },  // a control character
+    { carousel_alt_texts: ["A cat", 42] },
+    { carousel_alt_texts: "A cat" },                 // not an array
   ]) {
     const parsed = JSON.parse(json);
     parsed.brands[0].posts[0].instagram_options = instagram_options;
@@ -387,7 +581,13 @@ test("a backup with no Instagram options at all is still a valid backup", async 
 
   for (const instagram_options of [undefined, null, { share_to_feed: false },
                                    { alt_text: "A cat" },
-                                   { share_to_feed: true, alt_text: "A cat" }]) {
+                                   { share_to_feed: true, alt_text: "A cat" },
+                                   // The widening: everything above was valid
+                                   // before carousel_alt_texts existed and stays
+                                   // valid, and the new key joins them.
+                                   { carousel_alt_texts: [""] },
+                                   { carousel_alt_texts: ["A cat", "", "A dog"] },
+                                   { carousel_alt_texts: Array(10).fill("A cat") }]) {
     const parsed = JSON.parse(json);
     if (instagram_options === undefined) delete parsed.brands[0].posts[0].instagram_options;
     else parsed.brands[0].posts[0].instagram_options = instagram_options;

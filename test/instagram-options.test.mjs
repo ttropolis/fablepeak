@@ -121,8 +121,10 @@ test("an imported backup cannot smuggle options the column would refuse", async 
   // lands — the database is the last line, not the first.
   assert.match(settings, /const ALT_TEXT_MAX = 1000;/);
   assert.match(settings, /const CONTROL_CHARS = \/\[\\u0000-\\u001F\\u007F\]\//);
+  // The key set is closed, and widened only where a migration widened it —
+  // 20260831150000_carousel_alt_texts.sql, whose own test pins this list too.
   assert.match(settings,
-    /Object\.keys\(o\)\.every\(k => k==="share_to_feed" \|\| k==="alt_text"\)/);
+    /Object\.keys\(o\)\.every\(k =>\s*\n?\s*k==="share_to_feed" \|\| k==="alt_text" \|\| k==="carousel_alt_texts"\)/);
   assert.match(settings, /isPlainObject\(o\) && Object\.keys\(o\)\.length > 0/,
     "an empty object is refused here too — 'no options' is spelled null");
   assert.match(settings,
@@ -148,13 +150,10 @@ test("the options reach the adapter the way variants, TikTok options and the car
   assert.match(platforms,
     /if \(!video && options\?\.alt_text\) createParams\.alt_text = options\.alt_text;/);
 
-  // v1 cut, stated in the code that would otherwise be where it went.
-  const carousel = platforms.slice(
-    platforms.indexOf("async function createInstagramCarousel"),
-    platforms.indexOf("/** Why the carousel failed"));
-  assert.doesNotMatch(carousel, /alt_text/,
-    "alt_text is per container, so a carousel needs one per item — not in v1");
-  assert.match(platforms, /v1 deliberately sends NO alt text on carousel children/);
+  // The v1 cut is gone: the carousel describes its children one at a time now.
+  // What that looks like is pinned in test/carousel-alt-texts.test.mjs.
+  assert.doesNotMatch(platforms, /v1 deliberately sends NO alt text on carousel children/,
+    "the cut shipped its fast follow — the comment must not outlive it");
 
   // No other adapter learned the field.
   const nonInstagram = platforms.split("readInstagramOptions(instagramOptions)")[1] ?? "";

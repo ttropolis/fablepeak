@@ -303,20 +303,28 @@ export function validBackupMediaUrls(v){
     && v.every(isCarouselItem);
 }
 /* The per-post Instagram options, checked against the same closed shape
-   posts_instagram_options_valid enforces: the two keys and nothing else, a
+   posts_instagram_options_valid enforces: the three keys and nothing else, a
    boolean share_to_feed, an alt text of at most 1000 characters carrying no
    control characters, and never an object with no keys — "no options" is spelled
    null, and a second spelling of it would be a post claiming choices nobody made.
    Alt text is announced by a screen reader and rendered back into this app, so a
-   backup carrying a C0 character in one is refused rather than repaired. */
+   backup carrying a C0 character in one is refused rather than repaired.
+   `carousel_alt_texts` is that same rule per entry, in an array of 1..10 — one
+   description per carousel item, in the carousel's own order. An entry may be ""
+   ("this item has no description", said in position); the array itself may not
+   be empty, because that is "no descriptions" and its spelling is an absent key. */
 const ALT_TEXT_MAX = 1000;
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+const isAltText = v => isText(v) && v.length <= ALT_TEXT_MAX && !CONTROL_CHARS.test(v);
 export function validBackupInstagramOptions(o){
   return isPlainObject(o) && Object.keys(o).length > 0
-    && Object.keys(o).every(k => k==="share_to_feed" || k==="alt_text")
+    && Object.keys(o).every(k =>
+        k==="share_to_feed" || k==="alt_text" || k==="carousel_alt_texts")
     && (o.share_to_feed===undefined || typeof o.share_to_feed==="boolean")
-    && (o.alt_text===undefined || (isText(o.alt_text) && o.alt_text.length <= ALT_TEXT_MAX
-        && !CONTROL_CHARS.test(o.alt_text)));
+    && (o.alt_text===undefined || isAltText(o.alt_text))
+    && (o.carousel_alt_texts===undefined || (Array.isArray(o.carousel_alt_texts)
+        && o.carousel_alt_texts.length >= 1 && o.carousel_alt_texts.length <= CAROUSEL_MAX
+        && o.carousel_alt_texts.every(isAltText)));
 }
 export function validBackupPost(p){
   return isPlainObject(p) && isId(p.id) && isText(p.text) && isText(p.date)

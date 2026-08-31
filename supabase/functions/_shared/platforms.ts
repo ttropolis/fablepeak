@@ -1018,18 +1018,20 @@ const instagram: PlatformAdapter = {
   async publish({ text, mediaUrl, mediaUrls, instagramOptions, accessToken, connection }) {
     if (!mediaUrl) throw new Error("Instagram requires an image or video URL — it has no text-only post.");
     const igId = connection.external_id;
+    const options = readInstagramOptions(instagramOptions);
     const carousel = instagramCarouselItems(mediaUrls);
     if (carousel) {
-      // v1 deliberately sends NO alt text on carousel children. `alt_text` is a
-      // per-container parameter, so a carousel would need one description per
-      // item and a composer that collects N of them; the single-image case is
-      // the one customers meet, and it ships on its own rather than waiting.
+      // `alt_text` is a per-container parameter, so a carousel is described one
+      // item at a time — `carousel_alt_texts[i]` describes child i, and a child
+      // with no description of its own is sent exactly as it was before.
       return await publishInstagramContainer(
-        igId, await createInstagramCarousel(igId, carousel, text, accessToken), accessToken);
+        igId,
+        await createInstagramCarousel(
+          igId, carousel, text, accessToken, options?.carousel_alt_texts),
+        accessToken);
     }
     const safeMediaUrl = publicMediaUrl(mediaUrl, "Instagram");
     const video = mediaKind(safeMediaUrl) === "video";
-    const options = readInstagramOptions(instagramOptions);
     const createParams: Record<string, string> = video
       ? { media_type: "REELS", video_url: safeMediaUrl, caption: text, access_token: accessToken }
       : { image_url: safeMediaUrl, caption: text, access_token: accessToken };
@@ -1100,6 +1102,10 @@ export const INSTAGRAM_ALT_TEXT_MAX = 1000;
 export interface InstagramPostOptions {
   share_to_feed?: boolean;
   alt_text?: string;
+  /** One description per carousel child, positionally aligned with `media_urls`.
+   *  An empty entry is "this item has no description" said in position, which is
+   *  the only way item three can be described while item two is not. */
+  carousel_alt_texts?: string[];
 }
 
 /** Read `posts.instagram_options` into the shape the request body needs.
@@ -1125,6 +1131,16 @@ export function readInstagramOptions(value: unknown): InstagramPostOptions | nul
     // read aloud.
     const alt = raw.alt_text.trim();
     if (alt && alt.length <= INSTAGRAM_ALT_TEXT_MAX) options.alt_text = alt;
+  }
+  if (Array.isArray(raw.carousel_alt_texts)) {
+    /* Position is the meaning here, so an entry that cannot be sent becomes ""
+       rather than disappearing: dropping it would shift every description after
+       it onto the wrong picture, which is worse than describing one fewer. */
+    const alts = raw.carousel_alt_texts.map((entry) => {
+      const text = typeof entry === "string" ? entry.trim() : "";
+      return text.length <= INSTAGRAM_ALT_TEXT_MAX ? text : "";
+    });
+    if (alts.some((entry) => entry !== "")) options.carousel_alt_texts = alts;
   }
   return Object.keys(options).length ? options : null;
 }
@@ -1173,9 +1189,17 @@ export function instagramCarouselItems(mediaUrls: unknown): string[] | null {
  *
  *  The caption rides on the CAROUSEL container alone. A child container carries
  *  no caption of its own, and `is_carousel_item=true` is what makes Meta treat
- *  it as a child rather than as a post waiting to be published. */
+ *  it as a child rather than as a post waiting to be published.
+ *
+ *  `altTexts` is positional and deliberately tolerant of a length that does not
+ *  match: shorter leaves the tail undescribed, longer ignores the surplus. The
+ *  composer writes the two in one step and keeps them aligned, so a mismatch
+ *  means a post that reached here another way — an imported backup, a hand-run
+ *  upsert — and the answer to that is to publish the pictures with the
+ *  descriptions that do line up, not to refuse the carousel over a caption. */
 async function createInstagramCarousel(
   igId: string, items: string[], text: string, accessToken: string,
+  altTexts?: string[],
 ): Promise<string> {
   const children: string[] = [];
   for (const [index, item] of items.entries()) {
@@ -1187,6 +1211,11 @@ async function createInstagramCarousel(
         ? { media_type: "VIDEO", video_url: safeItemUrl,
             is_carousel_item: "true", access_token: accessToken }
         : { image_url: safeItemUrl, is_carousel_item: "true", access_token: accessToken };
+      /* Appended, and only for an item that actually carries a description — so
+         a carousel with no descriptions at all sends the exact bytes it sent
+         before this feature existed, key for key and in the same order. */
+      const alt = altTexts?.[index]?.trim();
+      if (alt) params.alt_text = alt;
       const child = await j(await fetch(
         `https://graph.instagram.com/${META_VERSION}/${igId}/media`, {
           method: "POST",

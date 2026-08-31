@@ -547,18 +547,113 @@ Deno.test("a post with no Instagram options sends exactly what it sent before", 
   }
 });
 
-Deno.test("carousel children never carry alt text in v1", async () => {
+/* ------------------------------------------- carousel alt text, one per item
+ *
+ * alt_text is a per-container parameter, so one description cannot honestly
+ * cover N items: describing only the cover would be wrong for nine of the ten.
+ * `carousel_alt_texts[i]` describes child i, which makes *position* the whole
+ * contract — everything below is asserted by index.
+ */
+const CHILDREN = (bodies: (Record<string, string> | null)[]) => bodies.slice(0, -1);
+
+Deno.test("each carousel child carries its own description, by position", async () => {
   const bodies = await instagramContainers({
     mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
-    instagramOptions: { alt_text: "A grey cat asleep on books", share_to_feed: true },
+    instagramOptions: { carousel_alt_texts: ["A grey cat", "", "  A dog  "] },
   });
-  // alt_text is a per-container parameter, so one description cannot honestly
-  // cover N items — and describing only the cover would be worse than not
-  // describing anything, because it would be wrong for nine of the ten.
-  for (const body of bodies) {
-    if (body && ("alt_text" in body || "share_to_feed" in body)) {
-      throw new Error(`a carousel container carried a single-media option: ${JSON.stringify(body)}`);
+  const children = CHILDREN(bodies);
+  if (children[0]?.alt_text !== "A grey cat") {
+    throw new Error(`item 1 sent ${JSON.stringify(children[0])}`);
+  }
+  // "" is "this item has no description", said in position — which is the only
+  // way item three can be described while item two is not.
+  if ("alt_text" in (children[1] ?? {})) {
+    throw new Error(`an empty description became a parameter: ${JSON.stringify(children[1])}`);
+  }
+  if (children[2]?.alt_text !== "A dog") {
+    throw new Error(`item 3 sent ${JSON.stringify(children[2])}, trimmed like every alt text`);
+  }
+  // Appended, so the bytes that were already there are still in the same order.
+  if (JSON.stringify(children[0]) !== JSON.stringify({
+    image_url: CAROUSEL[0], is_carousel_item: "true", access_token: "token",
+    alt_text: "A grey cat",
+  })) throw new Error(`the child container changed shape: ${JSON.stringify(children[0])}`);
+  // The CAROUSEL container names its children; it does not describe them, and a
+  // Reel's placement has no meaning here at all.
+  const carousel = bodies.at(-1)!;
+  if ("alt_text" in carousel || "share_to_feed" in carousel) {
+    throw new Error(`the CAROUSEL container carried ${JSON.stringify(carousel)}`);
+  }
+});
+
+Deno.test("a list that does not fit the carousel is tolerated, never realigned", async () => {
+  // Shorter: the tail is simply undescribed. The composer trims trailing blanks,
+  // so this is the ordinary shape rather than a damaged one.
+  const short = CHILDREN(await instagramContainers({
+    mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+    instagramOptions: { carousel_alt_texts: ["Only the first"] },
+  }));
+  if (short[0]?.alt_text !== "Only the first") throw new Error("item 1 lost its description");
+  for (const body of short.slice(1)) {
+    if ("alt_text" in (body ?? {})) {
+      throw new Error(`a described tail appeared from nowhere: ${JSON.stringify(body)}`);
     }
+  }
+
+  // Longer: the surplus names no picture, so it is ignored — and the entries
+  // that DO line up must stay on the items they line up with.
+  const long = CHILDREN(await instagramContainers({
+    mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+    instagramOptions: { carousel_alt_texts: ["One", "Two", "Three", "Four", "Five"] },
+  }));
+  if (long.length !== CAROUSEL.length) throw new Error("a surplus description created an item");
+  if (long.map((body) => body?.alt_text).join(",") !== "One,Two,Three") {
+    throw new Error(`the descriptions shifted: ${JSON.stringify(long.map((b) => b?.alt_text))}`);
+  }
+});
+
+Deno.test("a carousel with no descriptions sends exactly what it sent before", async () => {
+  // The compatibility contract, for every way "no descriptions" can arrive on a
+  // claimed row — including a single-image option that has no meaning here.
+  const runs: string[] = [];
+  for (const instagramOptions of [undefined, null, {}, { alt_text: "A grey cat" },
+                                  { share_to_feed: true }, { carousel_alt_texts: [] },
+                                  { carousel_alt_texts: ["", "  "] },
+                                  { carousel_alt_texts: "A grey cat" },
+                                  { carousel_alt_texts: [42, null] }]) {
+    const calls: RecordedCall[] = [];
+    globalThis.fetch = instagramFetch(calls);
+    try {
+      await ADAPTERS.instagram.publish({
+        text: "Six shots from the shoot", mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+        instagramOptions, accessToken: "token",
+        connection: { external_id: "account-1", meta: {} },
+      } as any);
+    } finally { globalThis.fetch = originalFetch; }
+    runs.push(JSON.stringify(calls));
+  }
+  if (runs[0].includes("alt_text") || runs[0].includes("share_to_feed")) {
+    throw new Error(`a carousel with no descriptions learned the vocabulary: ${runs[0]}`);
+  }
+  for (const [index, run] of runs.entries()) {
+    if (run !== runs[0]) {
+      throw new Error(`carousel_alt_texts case ${index} diverged from the baseline`);
+    }
+  }
+});
+
+Deno.test("an over-length description is dropped in place, not out of the list", async () => {
+  const children = CHILDREN(await instagramContainers({
+    mediaUrl: CAROUSEL[0], mediaUrls: CAROUSEL,
+    instagramOptions: {
+      carousel_alt_texts: ["A grey cat", "x".repeat(INSTAGRAM_ALT_TEXT_MAX + 1), "A dog"],
+    },
+  }));
+  if ("alt_text" in (children[1] ?? {})) {
+    throw new Error("Instagram's own ceiling is 1000 characters; this one was sent anyway");
+  }
+  if (children[2]?.alt_text !== "A dog") {
+    throw new Error("dropping an entry must not shift the ones after it onto other pictures");
   }
 });
 
@@ -578,6 +673,19 @@ Deno.test("readInstagramOptions keeps only what it can honestly send", () => {
     [{ alt_text: "x".repeat(INSTAGRAM_ALT_TEXT_MAX + 1) }, null],
     [{ share_to_feed: true, alt_text: "A cat", unknown: 1 },
      { share_to_feed: true, alt_text: "A cat" }],
+    // Positional, so an entry that cannot be sent becomes "" rather than
+    // disappearing — and a list with nothing left to say is no list at all.
+    [{ carousel_alt_texts: ["  A cat  ", "", "A dog"] },
+     { carousel_alt_texts: ["A cat", "", "A dog"] }],
+    [{ carousel_alt_texts: ["A cat", "x".repeat(INSTAGRAM_ALT_TEXT_MAX + 1)] },
+     { carousel_alt_texts: ["A cat", ""] }],
+    [{ carousel_alt_texts: ["A cat", 42, null] },
+     { carousel_alt_texts: ["A cat", "", ""] }],
+    [{ carousel_alt_texts: [] }, null],
+    [{ carousel_alt_texts: ["", "   "] }, null],
+    [{ carousel_alt_texts: "A cat" }, null],
+    [{ alt_text: "A cat", carousel_alt_texts: ["A dog"] },
+     { alt_text: "A cat", carousel_alt_texts: ["A dog"] }],
   ];
   for (const [input, expected] of cases) {
     const actual = readInstagramOptions(input);

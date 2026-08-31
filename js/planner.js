@@ -6,9 +6,11 @@ import { attr, esc, safeUrl } from "./escape.js";
 import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.js";
 import {
   AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist,
-  approvalFilter, calCursor, composerCarousel, composerInstagram, composerTikTok,
+  approvalFilter, calCursor, composerCarousel, composerCarouselAlts,
+  composerInstagram, composerTikTok,
   composerVariantFocus, composerVariants, mediaUploadActive, setAiAssist,
   setApprovalFilter, setComposerBaseline, setComposerCarousel,
+  setComposerCarouselAlts,
   setComposerInstagram, setComposerTikTok, setComposerVariantFocus,
   setComposerVariants, setMediaUploadActive,
 } from "./state.js";
@@ -287,6 +289,9 @@ export function openPostModal(id, dateStr){
      live in composer state — item one is `media_url`, which #pm_media already
      holds, and keeping one copy of it is what stops the two drifting apart. */
   setComposerCarousel(storedCarouselExtras(p));
+  /* …and with the descriptions of its items, which are stored in the Instagram
+     options because that is what they are: choices about this Instagram post. */
+  setComposerCarouselAlts(storedCarouselAlts(p));
   /* A post that already recorded Instagram choices reopens showing them. Unlike
      TikTok's audience there is a legitimate default here — "Instagram default",
      which is what an absent share_to_feed has always meant — so a post with no
@@ -616,6 +621,14 @@ function storedCarouselExtras(p){
   return Array.isArray(stored) && stored.length > 1
     ? stored.slice(1).map(url => typeof url==="string" ? url : "") : [];
 }
+/** The per-item descriptions a stored post reopens with, aligned to the whole
+    item list. Trailing items the stored array does not reach simply have none —
+    the composer trims trailing blanks on the way out, so a short array is the
+    normal shape rather than a damaged one. */
+function storedCarouselAlts(p){
+  const stored=p?.instagram_options?.carousel_alt_texts;
+  return Array.isArray(stored) ? stored.map(alt => typeof alt==="string" ? alt : "") : [];
+}
 function instagramSelected(){ return checkedNets().includes("instagram"); }
 /* Rendered empty, filled by renderCarousel() — the variants and TikTok pattern.
    Absent for a locked post: a delivered carousel has no items left to add. */
@@ -630,12 +643,26 @@ function currentCarousel(){
   for(const box of typed) out[Number(box.dataset.carousel)]=box.value;
   return out;
 }
+/** The same, for the descriptions — indexed by *item*, so slot 0 is the cover. */
+function currentCarouselAlts(){
+  const typed=[...document.querySelectorAll("#pm_carousel input[data-carousel-alt]")];
+  if(!typed.length) return [...composerCarouselAlts];
+  const out=[...composerCarouselAlts];
+  for(const box of typed) out[Number(box.dataset.carouselAlt)]=box.value;
+  return out;
+}
+/** Is this composer building a carousel? One extra *row* is enough, even before
+    its URL is typed: the row is on screen, so the question the Instagram panel
+    asks must already be the carousel's question — one description per item,
+    beside each item — rather than the single image's. */
+function buildingCarousel(){ return currentCarousel().length > 0; }
 /** The panel, rebuilt for the currently selected networks — keeping whatever is
     already typed, including items for a composer that has just deselected
     Instagram, which are retained but never published. */
 export function renderCarousel(){
   if(!document.getElementById("pm_carousel")) return;
   setComposerCarousel(currentCarousel());
+  setComposerCarouselAlts(currentCarouselAlts());
   paintCarousel();
 }
 /* Draws the state as it stands. Split from renderCarousel() deliberately: the
@@ -656,6 +683,7 @@ function paintCarousel(){
       <div class="media-preview carousel-thumb"></div>
       <button class="btn ghost mini" data-action="removeCarouselItem" data-arg="${index}"
         aria-label="${attr(`Remove carousel item ${index + 2}`)}">Remove</button>
+      ${carouselAltRow(index + 1)}
     </li>`).join("");
   host.innerHTML=`<section class="carousel-panel" aria-label="Instagram carousel">
     <h4>Instagram carousel</h4>
@@ -664,7 +692,8 @@ function paintCarousel(){
       only.</strong></p>
     ${extras.length ? `<ol class="carousel-list">
       <li class="carousel-item cover"><span class="carousel-index">1</span>
-        <span class="carousel-cover-note">The image or video above</span></li>
+        <span class="carousel-cover-note">The image or video above</span>
+        ${carouselAltRow(0)}</li>
       ${rows}</ol>` : ""}
     ${extras.length < CAROUSEL_MAX_EXTRAS
       ? `<button class="btn ghost mini" data-action="addCarouselItem">➕ Add another image/video —
@@ -673,6 +702,34 @@ function paintCarousel(){
     ${extras.length ? `<p class="carousel-count">${total} of ${CAROUSEL_MAX_ITEMS} items</p>` : ""}
   </section>`;
   for(const box of host.querySelectorAll("input[data-carousel]")) paintCarouselThumb(box);
+  paintCarouselAltCounts();
+}
+/** One item's description, beneath that item's own URL. Instagram takes alt text
+    per container and a carousel is N containers, so this is the only shape that
+    can be right for more than the cover — the v1 cut said so and this is the
+    fast follow. Optional, every one of them: an item with no description is
+    published exactly as it was, and Instagram writes its own. */
+function carouselAltRow(slot){
+  const label = slot===0
+    ? "Alt text for carousel item 1"
+    : `Alt text for carousel item ${slot + 1}`;
+  return `<div class="carousel-alt-row">
+    <label class="carousel-alt-label" for="pm_carousel_alt_${slot}">Alt text</label>
+    <input type="text" id="pm_carousel_alt_${slot}" data-carousel-alt="${slot}"
+      data-input="syncCarouselAlt" data-change="syncCarouselAlt"
+      placeholder="Describe this item for people using a screen reader — optional"
+      aria-label="${attr(label)}" aria-describedby="pm_carousel_alt_${slot}_count"
+      value="${attr(composerCarouselAlts[slot] || "")}">
+    <div class="charcount" id="pm_carousel_alt_${slot}_count" aria-live="polite"></div>
+  </div>`;
+}
+function paintCarouselAltCounts(){
+  for(const box of document.querySelectorAll("#pm_carousel input[data-carousel-alt]")){
+    paintCarouselAltCount(box);
+  }
+}
+function paintCarouselAltCount(box){
+  paintCount(document.getElementById(`${box.id}_count`), box.value.length, INSTAGRAM_ALT_MAX);
 }
 /** One row's thumbnail. Built with createElement and a safeUrl()'d src — never
     innerHTML — so a hostile URL is at worst a broken image, and a javascript:
@@ -697,23 +754,38 @@ export function syncCarouselItem(el){
   setComposerCarousel(extras);
   paintCarouselThumb(el);
 }
+/** One item's description changed: remember it and repaint just that counter.
+    The panel is deliberately NOT rebuilt — that would drop the caret mid-word. */
+export function syncCarouselAlt(el){
+  const alts=[...composerCarouselAlts];
+  alts[Number(el.dataset.carouselAlt)]=el.value;
+  setComposerCarouselAlts(alts);
+  paintCarouselAltCount(el);
+}
 export function addCarouselItem(){
   const extras=currentCarousel();
   if(extras.length >= CAROUSEL_MAX_EXTRAS)
     return toast(`Instagram carousels hold up to ${CAROUSEL_MAX_ITEMS} items`);
+  setComposerCarouselAlts(currentCarouselAlts());  // the new slot has no description yet
   setComposerCarousel([...extras, ""]);
   paintCarousel();
-  renderInstagramPanel();                        // alt text is for a single image
+  renderInstagramPanel();          // one description per item, beside each item
   document.getElementById(`pm_carousel_${extras.length}`)?.focus?.();
 }
 export function removeCarouselItem(index){
   const extras=currentCarousel();
   const at=Number(index);
   if(!Number.isInteger(at) || at < 0 || at >= extras.length) return;
+  /* The description goes with the picture it described. Slot 0 is the cover, so
+     extra `at` is slot `at + 1`; splicing one without the other would shift every
+     description after it onto the wrong item. */
+  const alts=currentCarouselAlts();
+  alts.splice(at + 1, 1);
   extras.splice(at, 1);
   setComposerCarousel(extras);
+  setComposerCarouselAlts(alts);
   paintCarousel();
-  renderInstagramPanel();                        // …and removing the last extra restores it
+  renderInstagramPanel();          // …and removing the last extra restores the single image's
 }
 /** The array this composer would save, or null when there is no carousel.
  *  Deliberately not "whatever the panel happens to hold": a post that does not
@@ -721,9 +793,35 @@ export function removeCarouselItem(index){
  *  ordinary single-media post — storing `[media_url]` would be the same post
  *  said twice, which posts_media_urls_valid refuses outright. */
 function carouselForSave(nets, mediaUrl){
-  if(!nets.includes("instagram") || !mediaUrl) return null;
-  const extras=currentCarousel().map(url => String(url||"").trim()).filter(Boolean);
-  return extras.length ? [mediaUrl, ...extras] : null;
+  const items=carouselItemsForSave(nets, mediaUrl);
+  return items.length ? items.map(item => item.url) : null;
+}
+/** The items this composer would actually publish, as {url, alt} pairs in
+ *  order — the one place the two arrays are decided together, because an item
+ *  whose URL is still blank is dropped from `media_urls` and its description has
+ *  to be dropped with it or every later description lands on the wrong picture.
+ *  Empty when there is no carousel to save. */
+function carouselItemsForSave(nets, mediaUrl){
+  if(!nets.includes("instagram") || !mediaUrl) return [];
+  const alts=currentCarouselAlts();
+  const alt=slot => String(alts[slot]||"").trim();
+  const items=[{url:mediaUrl, alt:alt(0)}];
+  currentCarousel().forEach((url, index) => {
+    const clean=String(url||"").trim();
+    if(clean) items.push({url:clean, alt:alt(index + 1)});
+  });
+  return items.length > 1 ? items : [];
+}
+/** The per-item descriptions this composer would save, or null when there are
+ *  none to save. Positional, so a described item three keeps its position even
+ *  when items one and two have no description — but trailing blanks carry no
+ *  information at all and are trimmed, which is why the stored array is often
+ *  shorter than the carousel and why the adapter tolerates that. */
+function carouselAltTextsForSave(nets, mediaUrl, mediaUrls){
+  if(!mediaUrls) return null;                    // no carousel, nothing to describe
+  const alts=carouselItemsForSave(nets, mediaUrl).map(item => item.alt);
+  while(alts.length && !alts[alts.length - 1]) alts.pop();
+  return alts.length ? alts : null;
 }
 /** Why this post's carousel cannot be saved, as a sentence — or "" when it can.
  *  The composer caps the list at ten and only offers https URLs, so both of
@@ -798,13 +896,13 @@ function instagramPanelHost(locked){
   return locked ? "" : `<div class="instagram" id="pm_instagram"></div>`;
 }
 /** What the media field holds right now, as far as this panel cares:
-    "video", "carousel" (an image with extras, which alt text does not cover in
-    v1), "image", or "" when there is nothing to describe yet. */
+    "video", "carousel" (an image with extras, whose descriptions belong beside
+    the items themselves), "image", or "" when there is nothing to describe yet. */
 function instagramMediaKind(){
   const url=document.getElementById("pm_media")?.value.trim() || "";
   if(!url) return "";
   if(VIDEO_URL.test(url)) return "video";
-  return currentCarousel().some(item => String(item||"").trim()) ? "carousel" : "image";
+  return buildingCarousel() ? "carousel" : "image";
 }
 /** The panel, rebuilt for the currently selected networks and media. */
 export function renderInstagramPanel(){
@@ -839,9 +937,9 @@ function instagramPanelInner(kind){
     </fieldset>`);
   }
   if(kind==="carousel"){
-    return shell(`<p class="instagram-note">Alt text describes one image. A carousel needs a
-      description per item, so FablePeak does not send alt text for carousels yet — Instagram
-      writes its own.</p>`);
+    return shell(`<p class="instagram-note">Alt text describes one image, so a carousel gets one
+      description per item — write them beside the items above. Leave any of them empty and
+      Instagram writes its own for that item.</p>`);
   }
   return shell(`<label class="f" for="pm_ig_alt">Alt text <span
       style="text-transform:none;font-weight:400">— optional</span></label>
@@ -886,7 +984,12 @@ function instagramOptionsForSave(nets, mediaUrl, mediaUrls){
   if(video && composerInstagram.share_to_feed!==null)
     out.share_to_feed=composerInstagram.share_to_feed;
   const alt=String(composerInstagram.alt_text||"").trim();
-  if(!video && !mediaUrls && alt) out.alt_text=alt;
+  /* The single image's description belongs to a composer that is not building a
+     carousel — one row is enough to change the question, so it is the same test
+     the panel used to decide which one to ask. */
+  if(!video && !buildingCarousel() && alt) out.alt_text=alt;
+  const carouselAlts=carouselAltTextsForSave(nets, mediaUrl, mediaUrls);
+  if(carouselAlts) out.carousel_alt_texts=carouselAlts;
   return Object.keys(out).length ? out : null;
 }
 /** Why this post's Instagram options cannot be saved, as a sentence — or "" when
@@ -894,9 +997,14 @@ function instagramOptionsForSave(nets, mediaUrl, mediaUrls){
  *  decision 12 refused a truncated X post: silently losing the end of a
  *  description is worse than saying it is too long. */
 export function instagramBlocked(options){
-  if(!options || typeof options.alt_text!=="string") return "";
-  if(options.alt_text.length > INSTAGRAM_ALT_MAX)
+  if(!options) return "";
+  if(typeof options.alt_text==="string" && options.alt_text.length > INSTAGRAM_ALT_MAX)
     return `Instagram allows ${INSTAGRAM_ALT_MAX} characters of alt text — this is ${options.alt_text.length}. Shorten it.`;
+  // The same rule for a carousel, said about the item the customer is looking at.
+  const alts=Array.isArray(options.carousel_alt_texts) ? options.carousel_alt_texts : [];
+  const over=alts.findIndex(text => typeof text==="string" && text.length > INSTAGRAM_ALT_MAX);
+  if(over >= 0)
+    return `Instagram allows ${INSTAGRAM_ALT_MAX} characters of alt text — carousel item ${over + 1} is ${alts[over].length}. Shorten it.`;
   return "";
 }
 

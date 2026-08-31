@@ -88,6 +88,16 @@ export let composerVariantFocus = null;
     whenever a modal opens or closes, so no composer inherits another post's
     carousel. */
 export let composerCarousel = [];
+/** The open composer's per-item carousel alt text, one entry per *item* — index
+    0 is the cover (`media_url`), index i+1 is `composerCarousel[i]`. Aligned to
+    the whole list rather than to the extras because Instagram takes alt text per
+    container and the cover is a container like any other. "" is "this item has
+    no description", which is a position that must be kept: dropping it would
+    shift every description after it onto the wrong picture. Held here rather
+    than read off the DOM because the list is rebuilt whenever an item is added
+    or removed, and a rebuild must not lose what was typed. Reset whenever a
+    modal opens or closes, so no composer inherits another post's descriptions. */
+export let composerCarouselAlts = [];
 /** The open composer's per-post Instagram choices.
     `share_to_feed` is three-state on purpose: true, false, and **null** meaning
     "Instagram's own default", which is what every post published before this
@@ -145,6 +155,7 @@ export function setAiAssist(value){ aiAssist = value; }
 export function setComposerVariants(value){ composerVariants = value; }
 export function setComposerVariantFocus(value){ composerVariantFocus = value; }
 export function setComposerCarousel(value){ composerCarousel = value; }
+export function setComposerCarouselAlts(value){ composerCarouselAlts = value; }
 export function setComposerInstagram(value){ composerInstagram = value; }
 export function setComposerTikTok(value){ composerTikTok = value; }
 
@@ -162,6 +173,7 @@ const SETTERS = {
   composerVariants: setComposerVariants,
   composerVariantFocus: setComposerVariantFocus,
   composerCarousel: setComposerCarousel,
+  composerCarouselAlts: setComposerCarouselAlts,
   composerInstagram: setComposerInstagram,
   composerTikTok: setComposerTikTok,
 };
