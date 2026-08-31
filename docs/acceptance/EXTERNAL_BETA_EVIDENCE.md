@@ -1,6 +1,6 @@
 # External-customer beta evidence
 
-- Release candidate: FablePeak 1.6.0
+- Release candidate: FablePeak 1.6.1
 - Decision: internal tool now; external access remains invite-only
 - Provider freeze: Facebook, Instagram and YouTube only (TikTok is
   additionally reachable in sandbox-only mode while its app review runs;

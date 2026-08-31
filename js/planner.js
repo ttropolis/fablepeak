@@ -13,6 +13,7 @@ import {
   setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { appendTags, groupsOf } from "./hashtags.js";
+import { splitXThread } from "./x-thread.js";
 import { liveMode, store } from "./store.js";
 import {
   approvalRequired, brand, connectedNets, connectionsKnown, isOwner, netOf,
@@ -451,7 +452,8 @@ function perNetworkPanel(p, locked){
   if(locked) return "";
   return `<label class="percheck"><input type="checkbox" id="pm_percustom"
       ${hasVariants(p)?"checked":""} data-change="togglePerNetwork"> Customize per network</label>
-    <div class="variants" id="pm_variants"></div>`;
+    <div class="variants" id="pm_variants"></div>
+    <div class="threadnote" id="pm_thread" aria-live="polite"></div>`;
 }
 /* One native <details> per *selected* network — no tabs. Tabs would hide the
    base text, which is the one thing the customer needs in front of them to know
@@ -507,9 +509,48 @@ export function focusVariant(network){
 /* The counters. The base one answers "does what I typed fit the strictest
    network still inheriting it?", which is the question decision 12 makes
    load-bearing for X; each section's own answers it for that network's copy. */
+/* The X thread preview (ADR 0005 decision 12, as amended 2026-08-31).
+ *
+ *  Decision 12 made over-length X copy a refusal because the alternative then
+ *  was a silent truncation. The amendment gives the customer the thing they
+ *  actually meant instead: the adapter splits the text and posts a reply chain,
+ *  so the composer's job is no longer to say no — it is to show what will go
+ *  out, before it goes out. splitXThread() here is the same function the
+ *  adapter runs, so "3 tweets" is a fact and not an estimate.
+ *
+ *  It lives in the per-network area and is drawn whether or not the disclosure
+ *  is open, because the split applies to whatever text X actually receives:
+ *  the base copy when X inherits it, the X variant when there is one.
+ *
+ *  The one thing still refused is a word wider than a tweet, and this is where
+ *  the customer reads why — the save-time check restates the same sentence. */
+const THREAD_PREVIEW_CHARS = 64;
+function threadPreviewLine(tweet){
+  const first=tweet.split("\n",1)[0].trim();
+  const chars=[...first];
+  return chars.length>THREAD_PREVIEW_CHARS
+    ? chars.slice(0,THREAD_PREVIEW_CHARS-1).join("").trimEnd()+"…"
+    : first;
+}
+export function syncThreadPreview(){
+  const host=document.getElementById("pm_thread");
+  if(!host) return;
+  if(!checkedNets().includes("x")){ host.innerHTML=""; return; }
+  const text=effectiveText({
+    text:document.getElementById("pm_text")?.value ?? "", variants:currentVariants(),
+  }, "x");
+  let tweets;
+  try{ tweets=splitXThread(text); }
+  catch(e){ host.innerHTML=`<p class="threadnote-over">${esc(String(e.message||e))}</p>`; return; }
+  if(tweets.length<2){ host.innerHTML=""; return; }
+  host.innerHTML=`<p class="threadnote-head">Will post as an X thread of ${tweets.length} tweets</p>
+    <ol class="threadnote-list">${tweets
+      .map(t=>`<li>${esc(threadPreviewLine(t))}</li>`).join("")}</ol>`;
+}
 export function syncComposerCounts(){
   const base=document.getElementById("pm_text")?.value ?? "";
   const values=currentVariants();
+  syncThreadPreview();
   for(const box of document.querySelectorAll("#pm_variants textarea[data-net]")){
     const id=box.dataset.net, section=box.closest("details");
     box.placeholder = base || "Leave this empty to use the main content";
@@ -1483,18 +1524,28 @@ export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
   if(!date || !time) return toast("Choose a date and time");
-  /* ADR 0005 decision 12. Every selected network is checked against the text it
-     will actually receive, so a blank variant is validated as the base text it
-     inherits rather than as "publish nothing". Only a hard cap refuses the
-     save: X's 280 used to be a silent `text.slice(0, 280)` in the adapter, and
-     losing the end of a customer's sentence without telling them is worse than
-     refusing to save it. */
+  /* ADR 0005 decision 12, as amended 2026-08-31. Every selected network is
+     checked against the text it will actually receive, so a blank variant is
+     validated as the base text it inherits rather than as "publish nothing".
+     A hard cap still refuses the save — losing the end of a customer's sentence
+     without telling them is worse than refusing to store it.
+
+     X is the exception, and only X: over 280 its adapter posts a thread rather
+     than a truncation, so over-length copy is no longer something to refuse.
+     What splitXThread() cannot rescue — a word wider than a tweet — still is,
+     and it is refused with the same sentence the adapter and the preview use.
+     Every other network's cap is untouched by this branch. */
   for(const id of nets){
     const cap=HARD_TEXT_CAPS[id];
     if(!cap) continue;
-    const length=effectiveText({text,variants}, id).length;
+    const value=effectiveText({text,variants}, id);
+    const length=value.length;
     if(length<=cap) continue;
     const name=netOf(id).name;
+    if(id==="x"){
+      try{ splitXThread(value); continue; }
+      catch(e){ return toast(String(e.message||e)); }
+    }
     return toast((variants[id]||"").trim()
       ? `${name} allows ${cap} characters — that version is ${length}. Shorten it.`
       : `${name} allows ${cap} characters — this post is ${length}. Shorten it, or give ${name} its own shorter version.`);

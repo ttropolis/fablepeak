@@ -692,10 +692,35 @@ test("per-network variants are validated where posts are actually written", asyn
     assert.match(migration, new RegExp(`'${platform}'`),
       `${platform} is a platform this app publishes to, so it is a legal key`);
   }
-  // Honest caps: a ceiling that stops unbounded jsonb, plus X's real 280, which
-  // decision 12 refuses rather than truncates.
+  // Honest caps: a ceiling that stops unbounded jsonb, plus — as this migration
+  // shipped — X's real 280, which decision 12 refused rather than truncated.
   assert.match(migration, /length\(entry\.value #>> '\{\}'\) > 63206/);
   assert.match(migration, /entry\.key = 'x' and length\(entry\.value #>> '\{\}'\) > 280/);
+
+  /* …and the amendment that retired X's 280. Over the limit the adapter now
+     posts a thread, so a database that still refused an over-length `x` variant
+     would refuse, with a bare 23514, exactly the post the composer just previewed
+     as three tweets. Forward-only: the later migration redefines the function and
+     re-adds the constraint, and this one keeps saying what it said the day it
+     ran. Loosening cannot invalidate a stored row, so no `validate constraint`
+     pass is owed. */
+  const threads = await read("supabase/migrations/20260831140000_x_thread_variants.sql");
+  assert.match(threads, /create or replace function public\.valid_post_variants\(v jsonb\)/);
+  assert.doesNotMatch(threads, /> 280/,
+    "an over-length X variant is a thread now, not a row the database refuses");
+  assert.match(threads, /length\(entry\.value #>> '\{\}'\) > 63206/,
+    "the ceiling that stops unbounded jsonb stays exactly where it was");
+  assert.match(threads, /jsonb_typeof\(entry\.value\) <> 'string'/,
+    "…and so does the type check");
+  for (const platform of [
+    "youtube", "x", "instagram", "facebook", "linkedin", "tiktok", "pinterest", "gbp",
+  ]) {
+    assert.match(threads, new RegExp(`'${platform}'`), `${platform} is still a legal key`);
+  }
+  assert.match(threads,
+    /add constraint posts_variants_valid check \(public\.valid_post_variants\(variants\)\)/);
+  assert.doesNotMatch(threads, /create table|add column/,
+    "threads derive from the post's own text at publish time and store nothing");
 
   // The claim RPCs stay shape-agnostic: `p.*` already carries the new column.
   const scheduling = await read("supabase/migrations/20260731090000_reliable_scheduling.sql");
@@ -737,10 +762,44 @@ test("the effective-text resolver is one rule, shared by the publish path and mi
   assert.match(publish, /text: effectiveText\(post, platform\)/,
     "resolution happens per target in the publish loop (decision 4)");
 
-  // Decision 12: the adapter refuses over-length text instead of truncating it.
+  // Decision 12: the adapter never truncates. As amended 2026-08-31 it no
+  // longer refuses either — over-length text is split into a thread — but the
+  // truncation must stay gone from the request body, not merely commented about.
   assert.match(platforms, /export const X_TEXT_LIMIT = 280/);
-  // The truncation is gone from the request body, not merely commented about.
   assert.doesNotMatch(platforms, /text:\s*text\.slice\(/);
-  assert.match(platforms, /if \(text\.length > X_TEXT_LIMIT\)/);
+  assert.match(platforms, /const tweets = splitXThread\(text\)/,
+    "the adapter splits the text it was handed rather than refusing or trimming it");
   assert.match(planner, /export const HARD_TEXT_CAPS = \{ x: 280 \}/);
+});
+
+/* The X threads amendment. The splitter is written twice — once in Deno for the
+   adapter, once in the browser for the preview — and the fixture table is the
+   only thing that stops the two drifting. It is the effectiveText mechanism,
+   and it is pinned here for the same reason: a suite that stops loading the
+   table would go green while the two implementations disagreed. */
+test("the X thread splitter is one rule, shared by the publish path and mirrored in the composer", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const composer = await read("js/x-thread.js");
+  const denoSuite = await read("supabase/functions/_shared/platforms.deno.ts");
+  const nodeSuite = await read("test/x-thread-parity.test.mjs");
+
+  for (const [source, label] of [[platforms, "the publish path"], [composer, "the composer"]]) {
+    assert.match(source, /export function splitXThread/, `${label} owns a copy of the splitter`);
+    // Code points, never UTF-16 units: `.length` would count an emoji twice and
+    // could place a break between the halves of a surrogate pair.
+    assert.match(source, /\[\.\.\.value\]\.length/,
+      `${label} must measure a tweet in code points`);
+    // The suffix is reserved for before the tweet count is known, or the last
+    // tweet of a thread is 281 characters and X rejects it.
+    assert.match(source, /X_TEXT_LIMIT - reserve/, `${label} must reserve room for " (n/m)"`);
+  }
+  for (const [suite, label] of [[denoSuite, "the Deno suite"], [nodeSuite, "the node suite"]]) {
+    assert.match(suite, /x-thread-cases\.json/, `${label} must assert the shared table`);
+  }
+
+  // A mid-chain failure is outcome-unknown, never permanent: the first tweet is
+  // already live, and `permanent` is a classification a manual retry re-runs.
+  assert.match(platforms,
+    /function xThreadStopped\([\s\S]*?throw new PublishOutcomeUnknownError\(/,
+    "a half-posted thread must never be classified retry-safe");
 });

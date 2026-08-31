@@ -368,6 +368,67 @@ for the record.
     tag the post already carries. Unlike the AI row it is not gated on live mode:
     a group is local data, so local and demo workspaces get the whole feature.
 
+- **X threads are delivered, dormant (2026-08-31).** *Amends decision 14 and the
+  second bullet of "Out of scope for v1"* — which cut X threads because "X is
+  production-frozen, and an ordered N-post chain is a strictly harder
+  idempotency problem than one comment". The second half was the real objection
+  and it is answered below; the first half is unchanged and stays unchanged.
+  **X remains `productionEnabled: false`.** Nothing here lifts the freeze, no
+  environment variable opens it (there is deliberately no analogue of TikTok's
+  sandbox gate for X), discovery is untouched, and the feature is proven by
+  tests alone because X cannot be exercised live. This is the TikTok compliance
+  workflow's pattern: build the completed behaviour behind the freeze, so that
+  a beta GO is a decision rather than a project.
+  - *Also amends decision 12.* Over-length X copy was a **refusal** — correct
+    when the only alternative was the adapter's silent `text.slice(0, 280)`,
+    which published a post the customer never wrote. It is now a **thread**,
+    which is the thing they meant. The refusal that remains is the one no split
+    can rescue: a single word wider than a tweet.
+  - The rule is one pure function, `splitXThread(text)`, written twice — Deno in
+    `platforms.ts`, browser in the new leaf module `js/x-thread.js` — and bound
+    by `test/fixtures/x-thread-cases.json`, which **both** suites assert. That
+    is exactly the mechanism `effective-text-cases.json` established for
+    `effectiveText`, and for the same reason: one implementation draws the
+    preview that promises three tweets and the other decides what X is sent.
+  - Text at or under 280 is one tweet, byte for byte, in the request body this
+    adapter has always sent. Over it, the text is broken at **paragraph**
+    boundaries first, then **sentence**, then **word**, never mid-word, and
+    every tweet carries a ` (n/m)` suffix — only when `m > 1`, because a lone
+    `(1/1)` is numbering that says nothing. Width is counted in **code points**,
+    so an emoji is one character and a surrogate pair can never be counted apart
+    or split. The suffix is reserved for *before* the count is known, which is
+    why the splitter re-splits when the first pass produced more tweets than the
+    reservation covered — the alternative is a 281-character tweet X rejects.
+  - **Idempotency, the objection that cut this in the first place.** The chain
+    is posted head first, each tweet replying to the id the previous request
+    returned, and media rides the first tweet only. Any failure *after* the
+    first tweet has already put public content on the profile, so the outcome of
+    the post is ambiguous **even when the provider's answer was not**: a clean
+    400 on tweet three still leaves tweets one and two live. Every such failure
+    is therefore a `PublishOutcomeUnknownError`, which the publish loop
+    classifies `unknown` — the one classification refused by the automatic path,
+    by the manual path (`["retryable","permanent"]` does not include it) and by
+    the stale-claim guard. A partially posted thread can never be re-posted from
+    tweet one. A `ProviderRequestError` would be `permanent`, which a customer's
+    manual retry *is* allowed to re-run, and that would duplicate the thread.
+    This is the opposite of the carousel, where every failure precedes
+    `media_publish` and rebuilding the provider's status is safe precisely
+    because no post exists yet.
+  - The composer replaces the refusal with a preview in the per-network area —
+    "Will post as an X thread of N tweets", plus the first line of each — drawn
+    from the text X actually receives, so the base copy when X inherits it and
+    the `variants.x` copy when it does not. `HARD_TEXT_CAPS.x` stays 280 and no
+    other network's cap moves; what changed is that X's cap now gates a split
+    rather than a save.
+  - **Threads store nothing.** The chain is derived from the post's own text at
+    publish time, so there is no thread table, no per-tweet row, no ordering
+    column, and no change to any of the three claim RPCs. The one migration this
+    needed is a *relaxation*: `posts_variants_valid` capped an `x` variant at 280
+    because decision 12 refused one, and a database that still refused what the
+    composer had just previewed as three tweets would be the "worse liar" the
+    original migration named. `x` rejoins every other network under the 63206
+    ceiling, which is unchanged and still stops unbounded jsonb.
+
 **Closing rationale.** The governing constraint is protecting the current Meta
 submission. Nothing in this ADR may put core publishing approval at risk, so
 scope that needs a new Meta permission is deferred to a later submission, and

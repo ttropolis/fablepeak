@@ -11,9 +11,11 @@ import {
   ProviderRequestError,
   PublishOutcomeUnknownError,
   refreshPlatformToken,
+  splitXThread,
   TIKTOK_OPTIONS_REQUIRED,
   TIKTOK_STATUS_POLL,
   X_TEXT_LIMIT,
+  X_THREAD_UNSPLITTABLE,
 } from "./platforms.ts";
 import { INTERRUPTED, publishPost } from "../publish/index.ts";
 
@@ -1749,90 +1751,319 @@ Deno.test("each network receives its own variant, and the base text where it has
   }
 });
 
-Deno.test("X refuses an over-length post instead of silently truncating it", async () => {
-  // ADR 0005 decision 12. This adapter used to send `text.slice(0, 280)`, which
-  // published a post the customer never wrote. X is production-frozen, so this
-  // path is dormant — and it is still the wrong thing to leave in the code.
-  let requested = false;
-  globalThis.fetch = () => {
-    requested = true;
+/* --------------------------------------------------- X threads (dormant) ---
+ *
+ * ADR 0005 decision 12 as amended: over-length X text is no longer a refusal,
+ * it is a thread. X is production-frozen (`productionEnabled: false`), so this
+ * whole path is dormant and these tests are the only thing that exercises it —
+ * which is exactly why they assert the request sequence and not just the
+ * outcome. */
+
+Deno.test("platforms.ts splitXThread matches the shared fixture table", async () => {
+  // Same table js/x-thread.js is held to (test/x-thread-parity.test.mjs): the
+  // two splitters must answer identically or the composer's "3 tweets" preview
+  // lies about what publishes. JSON module import needs no fs permission.
+  const fixture = (await import("../../../test/fixtures/x-thread-cases.json", {
+    with: { type: "json" },
+  })).default;
+  for (const c of fixture.cases as any[]) {
+    if (c.error) {
+      let message = "";
+      try { splitXThread(c.text); } catch (error) { message = String((error as Error).message); }
+      if (message !== c.error) {
+        throw new Error(`${c.name}: expected refusal ${JSON.stringify(c.error)}, got ${JSON.stringify(message)}`);
+      }
+      continue;
+    }
+    const got = splitXThread(c.text);
+    if (JSON.stringify(got) !== JSON.stringify(c.tweets)) {
+      throw new Error(`${c.name}: expected ${JSON.stringify(c.tweets)}, got ${JSON.stringify(got)}`);
+    }
+    for (const tweet of got) {
+      if ([...tweet].length > X_TEXT_LIMIT) {
+        throw new Error(`${c.name}: a tweet of ${[...tweet].length} characters is over the limit`);
+      }
+    }
+  }
+});
+
+Deno.test("a post that fits is still exactly one tweet, in the body this adapter always sent", async () => {
+  const bodies: any[] = [];
+  globalThis.fetch = (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
     return Promise.resolve(json({ data: { id: "tweet-1" } }));
   };
   try {
-    const overLength = "n".repeat(X_TEXT_LIMIT + 1);
-    let message = "";
-    try {
-      await ADAPTERS.x.publish({
-        text: overLength, mediaUrl: null, accessToken: "token",
-        connection: { external_id: "account-1", meta: {} },
-      });
-    } catch (error) {
-      message = String((error as Error).message);
-    }
-    if (!message) throw new Error("an over-length X post must be refused");
-    if (!message.includes(String(X_TEXT_LIMIT)) || !message.includes("281")) {
-      throw new Error(`the refusal must name the limit and the actual length: ${message}`);
-    }
-    if (requested) throw new Error("nothing may reach X once the text is known to be too long");
-
-    // Exactly at the limit still publishes, and publishes in full.
-    let sentText = "";
-    globalThis.fetch = (_input, init) => {
-      sentText = JSON.parse(String(init?.body)).text;
-      return Promise.resolve(json({ data: { id: "tweet-1" } }));
-    };
-    await ADAPTERS.x.publish({
+    const result = await ADAPTERS.x.publish({
       text: "y".repeat(X_TEXT_LIMIT), mediaUrl: null, accessToken: "token",
       connection: { external_id: "account-1", meta: {} },
     });
-    if (sentText.length !== X_TEXT_LIMIT) {
-      throw new Error(`a post at the limit must be sent whole, got ${sentText.length} characters`);
+    if (bodies.length !== 1) throw new Error(`a post at the limit is one request, got ${bodies.length}`);
+    // Key for key: no `reply`, no numbering, and the text whole. A post that
+    // fits must be indistinguishable from one published before threads existed.
+    if (JSON.stringify(bodies[0]) !== JSON.stringify({ text: "y".repeat(X_TEXT_LIMIT) })) {
+      throw new Error(`the request body changed for a post that fits: ${JSON.stringify(bodies[0])}`);
+    }
+    if (result.remote_url !== "https://x.com/i/status/tweet-1") {
+      throw new Error(`the permalink must point at the post: ${result.remote_url}`);
     }
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("an over-length X variant fails that target permanently and never blocks its siblings", async () => {
+Deno.test("an over-length post is published as a reply chain, media on the first tweet only", async () => {
+  const bodies: any[] = [];
+  let tweetNumber = 0;
+  globalThis.fetch = (input, init) => {
+    const url = String(input);
+    // The single-shot image upload path, so the chain has a media id to place.
+    if (url === "https://cdn.example/cover.png") {
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "Content-Type": "image/png" },
+      }));
+    }
+    if (url === "https://api.x.com/2/media/upload") {
+      return Promise.resolve(json({ data: { id: "media-9" } }));
+    }
+    bodies.push(JSON.parse(String(init?.body)));
+    tweetNumber += 1;
+    return Promise.resolve(json({ data: { id: `tweet-${tweetNumber}` } }));
+  };
+  try {
+    const text = "a".repeat(140) + " " + "b".repeat(140) + " " + "c".repeat(140);
+    const expected = splitXThread(text);
+    if (expected.length < 3) throw new Error(`expected a three-tweet thread, got ${expected.length}`);
+
+    const result = await ADAPTERS.x.publish({
+      text, mediaUrl: "https://cdn.example/cover.png", accessToken: "token",
+      connection: { external_id: "account-1", meta: {} },
+    });
+
+    if (bodies.length !== expected.length) {
+      throw new Error(`one request per tweet: expected ${expected.length}, got ${bodies.length}`);
+    }
+    bodies.forEach((body, index) => {
+      if (body.text !== expected[index]) {
+        throw new Error(`tweet ${index + 1} did not carry its own text: ${JSON.stringify(body.text)}`);
+      }
+      // Media is on the head and nowhere else — otherwise the image posts N times.
+      const wantsMedia = index === 0;
+      if (Boolean(body.media) !== wantsMedia) {
+        throw new Error(`tweet ${index + 1} ${wantsMedia ? "lost" : "repeated"} the media`);
+      }
+      // Every tweet after the head replies to the id the previous one returned,
+      // which is the only thing that makes this a thread rather than N posts.
+      const wantsReply = index === 0 ? undefined : `tweet-${index}`;
+      if (body.reply?.in_reply_to_tweet_id !== wantsReply) {
+        throw new Error(`tweet ${index + 1} replied to ${JSON.stringify(body.reply)}`);
+      }
+    });
+    if (bodies[0].media.media_ids[0] !== "media-9") {
+      throw new Error("the uploaded media id must ride the first tweet");
+    }
+    if (result.remote_id !== "tweet-1") {
+      throw new Error(`the head of the thread is the post: ${result.remote_id}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("a thread that stops mid-chain is outcome-unknown, never a retry", async () => {
+  /* The classification that matters. Tweet one is already live, so a clean 400
+     on tweet two is still an ambiguous *post* outcome. PublishOutcomeUnknownError
+     is the only kind publishPost() refuses on every route back into the adapter;
+     a ProviderRequestError would be `permanent`, which a manual retry is allowed
+     to re-run — and that would post the whole thread a second time. */
+  let tweetNumber = 0;
+  globalThis.fetch = (_input, init) => {
+    tweetNumber += 1;
+    if (tweetNumber === 1) return Promise.resolve(json({ data: { id: "tweet-1" } }));
+    return Promise.resolve(json({ title: "Forbidden" }, 403));
+  };
+  try {
+    const text = "a".repeat(140) + " " + "b".repeat(140) + " " + "c".repeat(140);
+    let thrown: unknown = null;
+    try {
+      await ADAPTERS.x.publish({
+        text, mediaUrl: null, accessToken: "token",
+        connection: { external_id: "account-1", meta: {} },
+      });
+    } catch (error) { thrown = error; }
+    if (!(thrown instanceof PublishOutcomeUnknownError)) {
+      throw new Error(`a half-posted thread must be outcome-unknown, got ${thrown}`);
+    }
+    const message = String((thrown as Error).message);
+    if (!message.includes("stopped after tweet 1 of 3")) {
+      throw new Error(`the failure must name how far the chain got: ${message}`);
+    }
+    // A status, not the provider's prose: forwarding Graph-style bodies from a
+    // half-published chain is how a retryable-looking sentence gets invented.
+    if (message.includes("Forbidden")) {
+      throw new Error("the provider's response body must not be forwarded");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("a half-posted thread is recorded unknown and cannot be published again", async () => {
   const marks: any[] = [];
-  const called: string[] = [];
-  const results = await publishPost({
-    id: "post-x-cap", brand_id: "brand-1", networks: ["x", "facebook"],
-    text: "A perfectly ordinary post.",
-    variants: { x: "z".repeat(X_TEXT_LIMIT + 40) },
-  }, {
+  let tweetNumber = 0;
+  globalThis.fetch = (_input, init) => {
+    tweetNumber += 1;
+    if (tweetNumber === 1) return Promise.resolve(json({ data: { id: "tweet-1" } }));
+    return Promise.resolve(json({ title: "Forbidden" }, 403));
+  };
+  const dependencies = (previous: any) => ({
     adapters: {
-      x: {
-        label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
-        publish: ADAPTERS.x.publish,
-      },
-      facebook: {
-        label: "Facebook", clientIdEnv: "FACEBOOK_CLIENT_ID",
-        publish: async (input: any) => {
-          called.push(input.text);
-          return { remote_id: "fb-1" };
-        },
-      },
+      x: { label: "X / Twitter", clientIdEnv: "X_CLIENT_ID", publish: ADAPTERS.x.publish },
     } as any,
     platformConnectionEnabled: () => true,
     env: () => "configured",
-    sbOne: async (table: string) => table === "post_targets" ? null : {
+    sbOne: async (table: string) => table === "post_targets" ? previous : {
       id: "connection-1", status: "active", external_id: "account-1", meta: {},
     },
     sbUpsert: async (_table: string, row: any) => { marks.push(row); return row; },
     sbUpdate: async (_table: string, _query: string, patch: any) => patch,
     freshConnectionToken: async () => "token",
-    now: () => "2026-08-30T00:00:00.000Z",
-  } as any);
+    now: () => "2026-08-31T00:00:00.000Z",
+  }) as any;
+  const post = {
+    id: "post-x-thread", brand_id: "brand-1", networks: ["x"],
+    text: "a".repeat(140) + " " + "b".repeat(140) + " " + "c".repeat(140),
+  };
+  try {
+    const first = await publishPost(post, dependencies(null));
+    if (first[0]?.failure_kind !== "unknown") {
+      throw new Error(`a half-posted thread is not retry-safe: ${JSON.stringify(first[0])}`);
+    }
+    if (first[0]?.error !== INTERRUPTED) {
+      throw new Error(`the customer is told to verify, not given a status: ${first[0]?.error}`);
+    }
+    if (marks.at(-1)?.next_retry_at !== null) {
+      throw new Error("an ambiguous outcome must never schedule an automatic retry");
+    }
 
-  if (results[0]?.failure_kind !== "permanent") {
-    throw new Error(`an over-length variant is not retryable: ${JSON.stringify(results[0])}`);
+    // The manual retry a customer can press is refused too — `unknown` is
+    // neither "retryable" nor "permanent", so nothing reaches X a second time
+    // and the tweets already live are not duplicated.
+    const sent = tweetNumber;
+    const retried = await publishPost(post, dependencies(marks.at(-1)), "manual");
+    if (tweetNumber !== sent) {
+      throw new Error("a manual retry must not re-post a thread that already began");
+    }
+    if (retried[0]?.failure_kind !== "unknown" || retried[0]?.status === "published") {
+      throw new Error(`the retry must preserve the unknown outcome: ${JSON.stringify(retried[0])}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
-  if (marks.at(-2)?.next_retry_at !== null && marks.at(-1)?.next_retry_at !== null) {
-    throw new Error("a refusal no retry can fix must not schedule one");
+});
+
+Deno.test("an unsplittable X variant fails that target permanently and never blocks its siblings", async () => {
+  /* The one refusal threading did not remove. A word wider than a tweet cannot
+     be split without editing the customer's copy, so it is a plain Error —
+     classified `permanent`, which is right: no retry can shorten a word. And
+     nothing reached X, so a manual retry after the customer fixes the text is
+     safe, which is exactly why this is not an unknown outcome. */
+  const marks: any[] = [];
+  const called: string[] = [];
+  let requested = false;
+  globalThis.fetch = () => {
+    requested = true;
+    return Promise.resolve(json({ data: { id: "tweet-1" } }));
+  };
+  try {
+    const results = await publishPost({
+      id: "post-x-cap", brand_id: "brand-1", networks: ["x", "facebook"],
+      text: "A perfectly ordinary post.",
+      variants: { x: "z".repeat(X_TEXT_LIMIT + 40) },
+    }, {
+      adapters: {
+        x: {
+          label: "X / Twitter", clientIdEnv: "X_CLIENT_ID",
+          publish: ADAPTERS.x.publish,
+        },
+        facebook: {
+          label: "Facebook", clientIdEnv: "FACEBOOK_CLIENT_ID",
+          publish: async (input: any) => {
+            called.push(input.text);
+            return { remote_id: "fb-1" };
+          },
+        },
+      } as any,
+      platformConnectionEnabled: () => true,
+      env: () => "configured",
+      sbOne: async (table: string) => table === "post_targets" ? null : {
+        id: "connection-1", status: "active", external_id: "account-1", meta: {},
+      },
+      sbUpsert: async (_table: string, row: any) => { marks.push(row); return row; },
+      sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+      freshConnectionToken: async () => "token",
+      now: () => "2026-08-30T00:00:00.000Z",
+    } as any);
+
+    if (results[0]?.failure_kind !== "permanent") {
+      throw new Error(`an unsplittable variant is not retryable: ${JSON.stringify(results[0])}`);
+    }
+    if (results[0]?.error !== X_THREAD_UNSPLITTABLE) {
+      throw new Error(`the customer is told why: ${results[0]?.error}`);
+    }
+    if (requested) throw new Error("nothing may reach X once the text is known to be unsplittable");
+    if (marks.at(-2)?.next_retry_at !== null && marks.at(-1)?.next_retry_at !== null) {
+      throw new Error("a refusal no retry can fix must not schedule one");
+    }
+    if (called.join("") !== "A perfectly ordinary post.") {
+      throw new Error("the sibling network must still receive its own text");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
-  if (called.join("") !== "A perfectly ordinary post.") {
-    throw new Error("the sibling network must still receive its own text");
+});
+
+Deno.test("an over-length X variant publishes as a thread rather than failing", async () => {
+  // The behaviour change decision 12's amendment exists for, end to end through
+  // the publish loop: the variant that used to fail the target now goes out.
+  const sent: string[] = [];
+  let tweetNumber = 0;
+  globalThis.fetch = (_input, init) => {
+    sent.push(JSON.parse(String(init?.body)).text);
+    tweetNumber += 1;
+    return Promise.resolve(json({ data: { id: `tweet-${tweetNumber}` } }));
+  };
+  try {
+    const variant = "a".repeat(140) + " " + "b".repeat(140);
+    const results = await publishPost({
+      id: "post-x-thread-variant", brand_id: "brand-1", networks: ["x"],
+      text: "A perfectly ordinary post.", variants: { x: variant },
+    }, {
+      adapters: {
+        x: { label: "X / Twitter", clientIdEnv: "X_CLIENT_ID", publish: ADAPTERS.x.publish },
+      } as any,
+      platformConnectionEnabled: () => true,
+      env: () => "configured",
+      sbOne: async (table: string) => table === "post_targets" ? null : {
+        id: "connection-1", status: "active", external_id: "account-1", meta: {},
+      },
+      sbUpsert: async (_table: string, row: any) => row,
+      sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+      freshConnectionToken: async () => "token",
+      now: () => "2026-08-31T00:00:00.000Z",
+    } as any);
+
+    if (results[0]?.status !== "published") {
+      throw new Error(`a splittable variant must publish: ${JSON.stringify(results[0])}`);
+    }
+    if (JSON.stringify(sent) !== JSON.stringify(splitXThread(variant))) {
+      throw new Error(`the thread must be the variant's own split: ${JSON.stringify(sent)}`);
+    }
+    if (results[0]?.url !== "https://x.com/i/status/tweet-1") {
+      throw new Error(`the recorded link must open the head of the thread: ${results[0]?.url}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

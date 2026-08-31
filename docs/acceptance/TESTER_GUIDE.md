@@ -1,6 +1,6 @@
 # FablePeak acceptance tester guide
 
-- Product: FablePeak 1.6.0 at <https://fablepeak.com>
+- Product: FablePeak 1.6.1 at <https://fablepeak.com>
 - Purpose: collect the nine human-acceptance rows in
   [EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md)
 - Audience: two testers who do not work on FablePeak

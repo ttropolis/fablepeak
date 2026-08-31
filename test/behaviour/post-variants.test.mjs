@@ -146,31 +146,61 @@ test("the composer counts the base text against the strictest network still inhe
   assert.equal(app.$("#pm_count").className, "charcount");
 });
 
-test("a base text over 280 is refused while X is selected without its own version", async t => {
+/* ---------- decision 12 as amended: over 280 is a thread, not a refusal ------
+ *
+ * The composer's job changed. It used to say no, because the only alternative
+ * then was an adapter that silently truncated. Now the adapter posts a reply
+ * chain, so the composer says what will go out — and the only thing left to
+ * refuse is copy no split can rescue. */
+
+const UNSPLITTABLE =
+  "This post contains a word longer than a tweet, so X cannot split it into a thread.";
+
+test("a base text over 280 previews as a thread and saves, while X is selected", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
   await openDay(app);
   await selectNets(app, "x");
-  await app.fill("#pm_text", "n".repeat(281));
+  assert.equal(app.text("#pm_thread"), "", "a composer with nothing in it says nothing about threads");
+
+  await app.fill("#pm_text", ("word ".repeat(80)).trim());       // 399 characters
+  assert.match(app.text("#pm_thread"), /^Will post as an X thread of 2 tweets/,
+    "the preview names the number of tweets X will actually receive");
+  assert.equal(app.$$("#pm_thread li").length, 2, "…and previews each of them");
 
   const before = app.db.brands[0].posts.length;
   await app.click(saveButton(app));
-  assert.equal(app.toast(),
-    "X / Twitter allows 280 characters — this post is 281. Shorten it, or give X / Twitter its own shorter version.");
-  assert.equal(app.modalOpen(), true, "a refused post keeps the composer open");
-  assert.equal(app.db.brands[0].posts.length, before, "…and is not saved");
-
-  // The offer the toast makes has to actually work.
-  await openPanel(app);
-  await app.fill(variantBox(app, "x"), "The version that fits.");
-  await app.click(saveButton(app));
-  assert.equal(app.modalOpen(), false);
+  assert.equal(app.modalOpen(), false, "over-length X copy is no longer a refusal");
+  assert.equal(app.db.brands[0].posts.length, before + 1);
   const saved = app.db.brands[0].posts.at(-1);
-  assert.equal(saved.text.length, 281, "the long post survives for the networks that allow it");
-  assert.equal(saved.variants.x, "The version that fits.");
+  assert.equal(saved.text.length, 399, "the post is stored whole — the split happens at publish");
+  assert.deepEqual(Object.keys(saved.variants), [], "…and nothing about the thread is stored");
 });
 
-test("an over-length X variant is refused too, and says so about the version", async t => {
+test("the thread preview follows the text X actually receives, base or variant", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openDay(app);
+  await selectNets(app, "x");
+  await app.fill("#pm_text", ("word ".repeat(80)).trim());
+  assert.match(app.text("#pm_thread"), /thread of 2 tweets/);
+
+  // A short X variant is what X gets, so there is no thread to preview.
+  await openPanel(app);
+  await app.fill(variantBox(app, "x"), "The version that fits.");
+  assert.equal(app.text("#pm_thread"), "",
+    "X inherits nothing once it has its own copy, so the base length stops mattering");
+
+  // …and a long variant threads on its own terms.
+  await app.fill(variantBox(app, "x"), ("tweet ".repeat(140)).trim());
+  assert.match(app.text("#pm_thread"), /^Will post as an X thread of 4 tweets/);
+
+  // Deselect X and the preview goes with it — no other network threads.
+  await selectNets(app, "linkedin");
+  assert.equal(app.text("#pm_thread"), "");
+});
+
+test("only a word wider than a tweet is still refused, and says why", async t => {
   const app = await bootApp({ mode: "local" });
   t.after(() => app.close());
   await openDay(app);
@@ -179,13 +209,40 @@ test("an over-length X variant is refused too, and says so about the version", a
   await openPanel(app);
   await app.fill(variantBox(app, "x"), "z".repeat(300));
 
+  assert.equal(app.text("#pm_thread"), UNSPLITTABLE,
+    "the preview is where the customer reads why this one cannot be threaded");
   const before = app.db.brands[0].posts.length;
   await app.click(saveButton(app));
-  assert.equal(app.toast(),
-    "X / Twitter allows 280 characters — that version is 300. Shorten it.");
-  assert.equal(app.db.brands[0].posts.length, before);
+  assert.equal(app.toast(), UNSPLITTABLE);
+  assert.equal(app.modalOpen(), true, "a refused post keeps the composer open");
+  assert.equal(app.db.brands[0].posts.length, before, "…and is not saved");
+
+  // The counter still tells the truth about the number; it is the refusal that moved.
   assert.equal(app.text('#pm_variants [data-count]'), "300 / 280");
   assert.match(app.$("#pm_variants [data-count]").className, /over/);
+
+  // Break the word and the same copy becomes a thread.
+  await app.fill(variantBox(app, "x"), ("zzzz ".repeat(60)).trim());
+  assert.match(app.text("#pm_thread"), /^Will post as an X thread of 2 tweets/);
+  await app.click(saveButton(app));
+  assert.equal(app.modalOpen(), false);
+});
+
+test("no other network's cap moved: LinkedIn and Instagram are advisory as before", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openDay(app);
+  await selectNets(app, "linkedin", "instagram");
+  await app.fill("#pm_media", "https://cdn.example/cover.png");
+  await app.fill("#pm_text", "n".repeat(4000));
+
+  // Over LinkedIn's 3000 and Instagram's 2200, neither of which is a hard cap:
+  // the counter goes red and the save still goes through, exactly as before.
+  assert.equal(app.$("#pm_count").className, "charcount over");
+  assert.equal(app.text("#pm_thread"), "", "threads are an X affordance and nothing else's");
+  await app.click(saveButton(app));
+  assert.equal(app.modalOpen(), false);
+  assert.equal(app.db.brands[0].posts.at(-1).text.length, 4000);
 });
 
 test("an over-length variant for a network that is not selected cannot block the save", async t => {

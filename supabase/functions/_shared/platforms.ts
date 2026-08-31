@@ -59,8 +59,132 @@ export interface PublishResult { remote_id: string; remote_url?: string; }
 
 /** X refuses a tweet over 280 characters. ADR 0005 decision 12 replaced this
  * adapter's silent `text.slice(0, 280)` with a refusal, so the number is named
- * once and asserted against rather than repeated inside the request body. */
+ * once and asserted against rather than repeated inside the request body.
+ * The 2026-08-31 amendment turned that refusal into a thread: over-length text
+ * is split by splitXThread() below and posted as a reply chain, and the only
+ * thing still refused is text no split can rescue. */
 export const X_TEXT_LIMIT = 280;
+
+/** The widest body a *threaded* tweet may carry, before its " (n/m)" suffix.
+ *
+ *  275 is the ceiling; the budget actually used is smaller, because " (1/3)"
+ *  is six characters and not five. The suffix is `4 + digits(n) + digits(m)`
+ *  wide, and n can be as wide as m, so a thread of up to nine tweets reserves
+ *  six characters (budget 274) and one of ten to ninety-nine reserves eight
+ *  (budget 272). Reserving for the count before the count is known is why
+ *  splitXThread() re-splits when the first pass produced more tweets than the
+ *  reservation covered: the alternative is emitting a 281-character tweet that
+ *  X rejects, which is the one outcome the split exists to prevent. */
+export const X_THREAD_TEXT_LIMIT = 275;
+
+/** The single refusal that survives threading.
+ *
+ *  Everything else that is too long for one tweet becomes several. A word that
+ *  is on its own wider than a tweet cannot: breaking it would edit the
+ *  customer's copy — a URL, a hash, a long identifier — into something that no
+ *  longer means what they wrote. A plain Error, which the publish loop
+ *  classifies `permanent`, and that is right: no retry can shorten a word. */
+export const X_THREAD_UNSPLITTABLE =
+  "This post contains a word longer than a tweet, so X cannot split it into a thread.";
+
+/* Width is counted in code points, never in UTF-16 units, so an emoji is one
+   character rather than two and a surrogate pair can never be counted apart.
+   Nothing here ever breaks inside a word, so a pair cannot be split either. */
+const xWidth = (value: string): number => [...value].length;
+
+interface XThreadPiece { text: string; separator: string; }
+
+/** One paragraph's sentences, each keeping its own trailing punctuation. */
+function xSentencesOf(block: string): string[] {
+  return block.match(/[^.!?…]*[.!?…]+[)"'\]]*\s*|[^.!?…]+$/gu) ?? [block];
+}
+
+/** The indivisible pieces this text breaks into, each already inside `budget`.
+ *
+ *  Paragraphs first, then — only for a paragraph that does not fit — sentences,
+ *  then — only for a sentence that does not fit — words. A piece carries the
+ *  separator that rejoins it to the piece before it, so packing can rebuild
+ *  paragraph breaks it did not have to spend. A single newline inside a
+ *  paragraph survives whenever that paragraph fits whole; a paragraph that has
+ *  to be broken down to sentences is rejoined with spaces, because the break
+ *  points are the sentence ends. */
+function xThreadPieces(text: string, budget: number): XThreadPiece[] {
+  const pieces: XThreadPiece[] = [];
+  let separator = "";
+  const push = (piece: string) => {
+    pieces.push({ text: piece, separator });
+    separator = " ";
+  };
+  for (const paragraph of text.split(/\n[^\S\n]*\n\s*/)) {
+    const block = paragraph.trim();
+    if (!block) continue;
+    if (pieces.length) separator = "\n\n";
+    if (xWidth(block) <= budget) { push(block); continue; }
+    for (const rawSentence of xSentencesOf(block)) {
+      const sentence = rawSentence.trim();
+      if (!sentence) continue;
+      if (xWidth(sentence) <= budget) { push(sentence); continue; }
+      for (const word of sentence.split(/\s+/)) {
+        if (!word) continue;
+        if (xWidth(word) > budget) throw new Error(X_THREAD_UNSPLITTABLE);
+        push(word);
+      }
+    }
+  }
+  return pieces;
+}
+
+/** Greedily fill tweets with pieces, never exceeding `budget`. */
+function xPackPieces(pieces: XThreadPiece[], budget: number): string[] {
+  const tweets: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    if (!current) { current = piece.text; continue; }
+    const candidate = current + piece.separator + piece.text;
+    if (xWidth(candidate) <= budget) { current = candidate; continue; }
+    tweets.push(current);
+    current = piece.text;
+  }
+  if (current) tweets.push(current);
+  return tweets;
+}
+
+/** The tweets this post becomes.
+ *
+ *  A post that already fits is returned as the single tweet it is, byte for
+ *  byte and with no suffix: the customer wrote one tweet and gets one tweet,
+ *  and the request body this adapter sends for it is the one it has always
+ *  sent. Only a post that has to be broken is renumbered, and then every tweet
+ *  in it carries " (n/m)" — a lone "(1/1)" would be numbering that says
+ *  nothing.
+ *
+ *  js/x-thread.js mirrors this exactly, bound by
+ *  test/fixtures/x-thread-cases.json, which both suites assert. The two must
+ *  not drift: a composer that previews three tweets must publish three tweets.
+ *
+ *  Throws X_THREAD_UNSPLITTABLE, and nothing else. */
+export function splitXThread(text: string): string[] {
+  const source = typeof text === "string" ? text : "";
+  if (xWidth(source) <= X_TEXT_LIMIT) return [source];
+  let reserve = 6;                       // " (1/9)" — the narrowest suffix
+  let tweets: string[] = [];
+  /* At most four passes, and in practice two: the reservation only ever grows,
+     it grows by two characters per extra digit in the tweet count, and a post
+     long enough to need a four-digit count is beyond anything the composer or
+     the `variants` column will hold. */
+  for (let pass = 0; pass < 4; pass++) {
+    const budget = Math.min(X_THREAD_TEXT_LIMIT, X_TEXT_LIMIT - reserve);
+    tweets = xPackPieces(xThreadPieces(source, budget), budget);
+    const needed = tweets.length < 2 ? 0 : 4 + 2 * String(tweets.length).length;
+    if (needed <= reserve) break;
+    reserve = needed;
+  }
+  // Whitespace-only text over the limit has no pieces at all. It is not a
+  // thread and it is not this function's refusal to make; hand it back whole.
+  if (tweets.length < 2) return tweets.length ? tweets : [source];
+  const total = tweets.length;
+  return tweets.map((tweet, index) => `${tweet} (${index + 1}/${total})`);
+}
 
 /** The text one platform actually receives (ADR 0005 decisions 2-4).
  *
@@ -482,6 +606,43 @@ async function uploadXMedia(mediaUrl: string, accessToken: string): Promise<stri
   return mediaId;
 }
 
+const X_PUBLISH_UNKNOWN =
+  "X may have accepted this post. Verify the profile before retrying.";
+
+/** Where a thread stopped — and why "unknown" is the only safe answer.
+ *
+ *  Every failure after the first tweet has already put public content on the
+ *  profile, so the outcome of the *post* is ambiguous even when the provider's
+ *  answer was not: a clean 400 on tweet three still leaves tweets one and two
+ *  live. That is the difference between this and the carousel, where every
+ *  failure happens before `media_publish` and a rebuilt ProviderRequestError is
+ *  safe precisely because no post exists yet.
+ *
+ *  PublishOutcomeUnknownError is the one classification that closes both routes
+ *  back into this adapter. publishPost() classifies it `unknown`, and `unknown`
+ *  is refused by the automatic path (which only re-runs `retryable` targets
+ *  whose `next_retry_at` is due, and this one is written with `next_retry_at:
+ *  null`), by the manual path (`["retryable","permanent"].includes(...)` — and
+ *  `unknown` is neither), and by the stale-claim guard at the top of the loop,
+ *  which sees `failure_kind === "unknown"` and re-marks it without publishing.
+ *  So a partially posted thread can never be re-posted from tweet one.
+ *
+ *  A ProviderRequestError would be classified `permanent` instead, and a
+ *  customer's manual retry *is* allowed to re-run a permanent target — which
+ *  would duplicate every tweet that already went out. That is the whole reason
+ *  the provider's own status is deliberately not forwarded from here.
+ *
+ *  The message names how far the chain got. publishPost() records the
+ *  customer-facing error as INTERRUPTED ("Delivery was interrupted. Verify the
+ *  platform before retrying.") for every unknown outcome — which is exactly the
+ *  right instruction for a half-posted thread — so this sentence is what the
+ *  function log and this adapter's own tests read. */
+function xThreadStopped(posted: number, total: number): never {
+  throw new PublishOutcomeUnknownError(
+    `X thread stopped after tweet ${posted} of ${total}. The tweets already ` +
+    `posted are live — check the profile before retrying.`);
+}
+
 const x: PlatformAdapter = {
   id: "x",
   label: "X / Twitter",
@@ -506,47 +667,64 @@ const x: PlatformAdapter = {
     };
   },
 
+  /* ADR 0005 decision 12, as amended 2026-08-31: over-length text is a thread.
+   *
+   *  The request body used to slice the text down to the limit, which published
+   *  a post the customer never wrote. Decision 12 replaced that with a refusal.
+   *  This replaces the refusal with the thing the customer actually meant: the
+   *  text is split by splitXThread() and posted as a reply chain, first tweet
+   *  first, each one replying to the id the previous request returned.
+   *
+   *  A post that already fits is unaffected in every observable way — one
+   *  tweet, no suffix, and the same request body, key for key, that this
+   *  adapter has always sent. The only refusal left is a word wider than a
+   *  tweet, and it is still checked before the media upload so a doomed post
+   *  costs no upload.
+   *
+   *  X remains production-frozen (`productionEnabled: false` above), so this
+   *  path is dormant and is proven by tests alone. */
   async publish({ text, mediaUrl, accessToken }) {
-    // ADR 0005 decision 12. The request body used to slice the text down to the
-    // limit: X would accept a post the customer never wrote, with their last
-    // sentence quietly missing. The composer now refuses to save an over-length
-    // X variant, and this is the same rule restated at the boundary that
-    // actually talks to the provider — defence in depth for any path that
-    // reaches an adapter without passing through the composer (an imported
-    // backup, a direct database write, a future API). A plain Error is
-    // classified `permanent`, which is right: no retry can shorten the text.
-    // Checked before the media upload so a doomed post costs no upload.
-    if (text.length > X_TEXT_LIMIT) {
-      throw new Error(
-        `X posts are limited to ${X_TEXT_LIMIT} characters — this one is ` +
-        `${text.length}. Shorten it, or give X its own shorter variant.`);
-    }
+    const tweets = splitXThread(text);
     const mediaId = mediaUrl ? await uploadXMedia(mediaUrl, accessToken) : null;
-    let response: Response;
-    try {
-      response = await fetch("https://api.x.com/2/tweets", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          ...(mediaId ? { media: { media_ids: [mediaId] } } : {}),
-        }),
-      });
-    } catch {
-      throw new PublishOutcomeUnknownError(
-        "X may have accepted this post. Verify the profile before retrying.");
+    let headId = "";
+    let replyTo = "";
+    for (const [index, tweet] of tweets.entries()) {
+      let response: Response;
+      try {
+        response = await fetch("https://api.x.com/2/tweets", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: tweet,
+            /* Media rides the first tweet only. It is the one the timeline and
+               every share card show, and repeating it down the chain would post
+               the customer's image N times. */
+            ...(mediaId && index === 0 ? { media: { media_ids: [mediaId] } } : {}),
+            ...(replyTo ? { reply: { in_reply_to_tweet_id: replyTo } } : {}),
+          }),
+        });
+      } catch {
+        if (index > 0) xThreadStopped(index, tweets.length);
+        throw new PublishOutcomeUnknownError(X_PUBLISH_UNKNOWN);
+      }
+      let publishPayload: any;
+      try {
+        publishPayload = await j(response, "x publish");
+      } catch (error) {
+        if (index > 0) xThreadStopped(index, tweets.length);
+        rethrowFinalPublishFailure(error, response, X_PUBLISH_UNKNOWN);
+      }
+      const id = publishPayload?.data?.id;
+      if (!id) {
+        if (index > 0) xThreadStopped(index, tweets.length);
+        throw new PublishOutcomeUnknownError(X_PUBLISH_UNKNOWN);
+      }
+      replyTo = String(id);
+      if (index === 0) headId = String(id);
     }
-    let publishPayload: any;
-    try {
-      publishPayload = await j(response, "x publish");
-    } catch (error) {
-      rethrowFinalPublishFailure(error, response,
-        "X may have accepted this post. Verify the profile before retrying.");
-    }
-    return {
-      remote_id: publishPayload.data.id,
-      remote_url: `https://x.com/i/status/${publishPayload.data.id}`,
-    };
+    // The head of the thread is the post: it is what a permalink opens, and
+    // replying to it is what makes the rest a thread rather than N posts.
+    return { remote_id: headId, remote_url: `https://x.com/i/status/${headId}` };
   },
 
   /** `public_metrics` is served to the `users.read` + `tweet.read` scopes this
