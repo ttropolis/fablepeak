@@ -1,6 +1,6 @@
 # ADR 0007: Google Business Profile publishing
 
-- Status: Proposed (2026-08-31)
+- Status: Accepted with amendments (2026-08-31)
 - Date: 2026-08-31
 
 ## Context
@@ -180,12 +180,12 @@ Adding GBP is not one gate but two, and the expensive one is not engineering:
   genuinely tempting, but a button is a per-post choice, and the moment there
   is one per-post choice there is a `posts.gbp_options` column. Deferred with
   Events and Offers, to be reconsidered together.
-- **Local posts expire.** At the cutoff, What's New posts stopped surfacing
-  after roughly seven days while Events and Offers ran to their end date
-  **[cutoff — Google has changed this behaviour more than once]**. This is a
-  product fact the composer should state, not a bug: a customer who schedules
-  GBP copy is publishing something transient, unlike every other network in the
-  list.
+- **Local posts are archived.** *(Corrected 2026-08-31 against current
+  documentation, superseding the draft's seven-day claim.)* Google currently
+  archives posts after **six months** unless they carry a date range
+  (<https://support.google.com/business/answer/7342169>). Still a product fact
+  the composer should state, not a bug: a customer who schedules GBP copy is
+  publishing something transient, unlike every other network in the list.
 - Media constraints are stricter than the app's current rule: GBP requires a
   publicly fetchable image meeting minimum dimensions and a size ceiling, and
   local posts have historically not accepted video **[cutoff]**. The adapter
@@ -493,3 +493,68 @@ YouTube onboarding — is actively harmed by it. It is a post-GO item.
     row 6 with a GBP connection present — as a release gate rather than a
     follow-up? **Recommend yes; the disconnect check is what proves decision 5
     was implemented and not merely written down.**
+
+
+## Decisions (2026-08-31)
+
+The release owner's answers, verbatim in substance, with the amendments they
+carry. Where an answer contradicts the draft body above, the answer wins.
+
+1. **Yes — pursue GBP, but strictly as a post-beta integration.** It must not
+   compete with reliability, accessibility, Meta acceptance, or the current
+   Google review.
+2. **Yes — freeze the existing YouTube project and OAuth configuration** until
+   its current verification concludes.
+3. **Yes — file for GBP API access early, but against a dedicated GBP Cloud
+   project.** First confirm that Techpolity has: a verified, active Business
+   Profile at least 60 days old; a GBP Organization account; a live
+   `techpolity.com` website; and a domain email that is also an owner or
+   manager of the profile. Google currently calls this the **"Application for
+   Basic API Access"** and says reviews normally occur within **14 days**
+   (<https://developers.google.com/my-business/content/prereqs>).
+4. **No — do not reuse the current Google Cloud project.** *(Overrides the
+   draft's decision 4 and its recommendation.)* Create a dedicated
+   `fablepeak-gbp` project and OAuth client. This adds another client,
+   verification record and secret pair, but cleanly isolates YouTube from GBP
+   permissions, quota, outages and revocation.
+5. **Amended.** Omitting `include_granted_scopes` does **not** make revocation
+   safe: Google states that revoking a token removes all OAuth scopes granted
+   to the project and invalidates tokens across every client in that project
+   (<https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke>).
+   **Project separation — not that parameter — provides the required
+   isolation.** `include_granted_scopes` is still omitted, as least-privilege
+   defence only.
+6. **Yes** — one connection row per location, explicit selection, one
+   publishing location per brand in v1. No fan-out.
+7. **Yes** — Standard/"What's New" only, text and at most one photo. Defer
+   CTA, Event, Offer and `gbp_options` together. The current API still
+   exposes `STANDARD`, `EVENT` and `OFFER`
+   (<https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts>).
+8. **Yes** — defer metrics. Publishing is proven independently before the
+   Performance API is considered.
+9. **Yes** — enforce the confirmed GBP length at the database and server
+   boundaries. **Do not adopt 1,500 as fact** until confirmed through current
+   documentation or live validation.
+10. **Yes** — strictly post-beta GO, merged disabled, enabled only after
+    acceptance evidence passes.
+11. **Yes — current-documentation verification is mandatory, and two findings
+    are amended in now:** local post creation remains at the v4
+    `accounts/*/locations/*/localPosts` endpoint
+    (<https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts/create>),
+    and the draft's seven-day expiry statement was obsolete — Google currently
+    archives posts after six months unless they carry a date range
+    (<https://support.google.com/business/answer/7342169>). The body above is
+    corrected accordingly.
+12. **Yes** — retain the complete live release gate: public visibility,
+    scheduler delivery evidence, tenant isolation, and proving that
+    disconnecting GBP leaves YouTube operational — a test that separate Cloud
+    projects makes technically valid.
+
+### Summary in the owner's words
+
+Pursue Google Business Profile after beta GO. File the access application
+early once Techpolity meets Google's eligibility requirements. GBP lives in
+its own Google Cloud project rather than sharing YouTube's, because Google
+revocation operates at project level. The application must use **Techpolity's
+correct identity — never "Tech Policy Ltd"** — and a `techpolity.com` address
+attached to the controlled Business Profile.
