@@ -39,9 +39,12 @@ export function showWelcome(){
       <label class="f">Email</label>
       <input type="email" id="w_email" placeholder="you@example.com" autocomplete="email">
       <label class="f">Password</label>
-      <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 8 characters':'Your password'}"
-        autocomplete="${wMode==='signup'?'new-password':'current-password'}"
-        data-enter="wSubmit">
+      <div class="pwwrap">
+        <input type="password" id="w_pw" placeholder="${wMode==='signup'?'Min 8 characters':'Your password'}"
+          autocomplete="${wMode==='signup'?'new-password':'current-password'}"
+          data-enter="wSubmit">
+        <button type="button" class="pwtoggle" data-action="togglePassword" data-arg="w_pw" aria-label="Show password">👁</button>
+      </div>
       <div class="werr" id="w_err"></div>
       <button class="btn wsubmit" data-action="wSubmit">${wMode==='signin'?'Sign in':'Create my account'}</button>
       ${wMode==='signin' ? `<button class="btn ghost wdemo" style="margin-top:8px" data-action="requestPasswordReset">Forgot password?</button>` : ""}
@@ -61,6 +64,19 @@ export function hideWelcome(){
   document.getElementById("main").inert = false;
 }
 export function wTab(m){ setWMode(m); showWelcome(); }
+/* Reveal toggle, shared by the sign-in card and the reset card. The button is
+   the input's own sibling inside .pwwrap, so it is found from the input rather
+   than from an id of its own. */
+export function togglePassword(id){
+  const input=document.getElementById(id);
+  if(!input) return;
+  const shown = input.type === "text";
+  input.type = shown ? "password" : "text";
+  const toggle = input.parentElement?.querySelector("button");
+  if(!toggle) return;
+  toggle.textContent = shown ? "👁" : "🙈";
+  toggle.setAttribute("aria-label", shown ? "Show password" : "Hide password");
+}
 export function wSubmit(){
   const email=document.getElementById("w_email").value.trim();
   const pw=document.getElementById("w_pw").value;
@@ -98,8 +114,11 @@ export function showPasswordReset(){
     <h2 style="margin:20px 0 6px">Choose a new password</h2>
     <p class="wsmall">Use at least 8 characters.</p>
     <label class="f">New password</label>
-    <input type="password" id="reset_pw" autocomplete="new-password" placeholder="Min 8 characters"
-      data-enter="completePasswordReset">
+    <div class="pwwrap">
+      <input type="password" id="reset_pw" autocomplete="new-password" placeholder="Min 8 characters"
+        data-enter="completePasswordReset">
+      <button type="button" class="pwtoggle" data-action="togglePassword" data-arg="reset_pw" aria-label="Show password">👁</button>
+    </div>
     <div class="werr" id="reset_err"></div>
     <button class="btn wsubmit" data-action="completePasswordReset">Update password</button>
   </div></div>`;

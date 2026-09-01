@@ -25,13 +25,16 @@ export const RemoteAdapter = {
       this._sb = createClient(cfg.url, cfg.anonKey);
       this._clientId = sessionStorage.getItem("fp_client") ||
         (sessionStorage.setItem("fp_client", uid()), sessionStorage.getItem("fp_client"));
-      const { data:{ session } } = await this._sb.auth.getSession();
-      if(session) this.user = { id: session.user.id, email: session.user.email };
+      // Registered before the first getSession(): the SDK emits PASSWORD_RECOVERY
+      // while it processes the recovery URL during initialization, so a listener
+      // added afterwards never sees it and the reset screen never opens.
       this._sb.auth.onAuthStateChange((event, session) => {
         if(session?.user) this.user = { id:session.user.id, email:session.user.email };
         else if(event === "SIGNED_OUT") this.user = null;
         if(event === "PASSWORD_RECOVERY") queueMicrotask(showPasswordReset);
       });
+      const { data:{ session } } = await this._sb.auth.getSession();
+      if(session) this.user = { id: session.user.id, email: session.user.email };
     }catch(e){ this._sb=null; throw e; }
   },
 

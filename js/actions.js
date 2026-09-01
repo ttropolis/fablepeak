@@ -19,7 +19,8 @@ import {
   createFirstBrand, dismissModal, go, handleModalKeydown, render, switchBrand,
 } from "./shell.js";
 import {
-  completePasswordReset, enterDemo, exitDemo, requestPasswordReset, wSubmit, wTab,
+  completePasswordReset, enterDemo, exitDemo, requestPasswordReset, togglePassword,
+  wSubmit, wTab,
 } from "./welcome.js";
 import {
   addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
@@ -59,6 +60,7 @@ export const ACTIONS = {
   wSubmit:               () => wSubmit(),
   requestPasswordReset:  () => requestPasswordReset(),
   completePasswordReset: () => completePasswordReset(),
+  togglePassword:        el => togglePassword(el.dataset.arg),
   enterDemo:             () => enterDemo(),
   exitDemo:              () => exitDemo(),
   createFirstBrand:      () => createFirstBrand(),

@@ -25,7 +25,7 @@ export const VIEWS = [
    so it must say the same thing everywhere it appears. */
 export const OWNER_ONLY_TITLE = "Only workspace owners can change this.";
 
-export const APP_VERSION = "1.6.1";
+export const APP_VERSION = "1.6.2";
 export const LS_KEY = "fablepeak_v1";
 export const LEGACY_KEYS = ["metricoolito_v1"];
 export const DEMO_KEY = "fablepeak_demo";

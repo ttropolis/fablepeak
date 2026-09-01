@@ -34,6 +34,7 @@ import { db, mediaUploadActive, setDeferredInstallPrompt, view } from "./state.j
 import { store } from "./store.js";
 import { installDelegatedHandlers } from "./actions.js";
 import { handleLaunchAction, render, toast } from "./shell.js";
+import { showPasswordReset } from "./welcome.js";
 import { load, persistNow, tickPublish } from "./workspace.js";
 
 /* =============== test seam =============== */
@@ -81,8 +82,17 @@ function testSeam(){
 if(globalThis.__FABLEPEAK_TEST__) window.__fablepeak = testSeam();
 
 /* =============== boot =============== */
+/* Read before load(): the Supabase SDK erases the recovery hash while it
+ * initializes, so by the time the workspace has loaded there is nothing left to
+ * test. This is the belt to remote-store.js's braces — either one opens the
+ * reset screen, and showPasswordReset() is idempotent. */
+const passwordRecovery = /[#&]type=recovery\b/.test(location.hash);
 installDelegatedHandlers();
-load().then(()=>{ render(); handleLaunchAction(); });
+load().then(()=>{
+  render();
+  handleLaunchAction();
+  if(passwordRecovery && store.name==="cloud" && store.user) showPasswordReset();
+});
 document.getElementById("verSlot").textContent = "v"+APP_VERSION;
 
 window.addEventListener("beforeinstallprompt",event=>{
