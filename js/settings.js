@@ -68,7 +68,21 @@ export function renderSettings(m){
           : store.user ? "☁️ Cloud · synced" : "👀 Demo (sample data, this device only)"}</strong>
         ${store.user ? " · signed in as "+esc(store.user.email) : ""}</p>
       ${store.name==="cloud" ? (store.user
-        ? `<button class="btn ghost" data-action="cloudSignOut">Sign out</button>`
+        ? `<button class="btn ghost" data-action="cloudSignOut">Sign out</button>
+           <h4 style="margin:14px 0 8px">Change password</h4>
+           <label class="f" for="cp_cur">Current password</label>
+           <div class="pwwrap">
+             <input type="password" id="cp_cur" autocomplete="current-password">
+             <button type="button" class="pwtoggle" data-action="togglePassword" data-arg="cp_cur" aria-label="Show password">👁</button>
+           </div>
+           <label class="f" for="cp_new" style="margin-top:10px">New password</label>
+           <div class="pwwrap">
+             <input type="password" id="cp_new" placeholder="Min 8 characters" autocomplete="new-password"
+               data-enter="changeCloudPassword">
+             <button type="button" class="pwtoggle" data-action="togglePassword" data-arg="cp_new" aria-label="Show password">👁</button>
+           </div>
+           <div class="werr" id="cp_err"></div>
+           <button class="btn" data-action="changeCloudPassword">Change password</button>`
         : `<p style="color:var(--muted);font-size:13px;margin-bottom:10px">You're exploring with
              sample data. Create a free account to get a real workspace that syncs across
              your devices.</p>
@@ -425,6 +439,34 @@ export function resetData(){
 export function cloudSignOut(){
   localStorage.removeItem(LS_KEY);              // cloud cache off this device
   store.signOut().then(()=>location.reload());
+}
+/* The re-authentication is deliberate. updateUser() alone would let anyone
+   holding a hijacked session rotate the password silently and lock the owner
+   out, so the current password is checked first — the same stance the delete
+   account flow below takes. A failed signIn() is reported as one sentence
+   rather than Supabase's own text, which describes the sign-in it just made. */
+let changingPassword=false;                     // guards button-click + Enter double submits
+export async function changeCloudPassword(){
+  const current=document.getElementById("cp_cur").value;
+  const newPw=document.getElementById("cp_new").value;
+  const err=document.getElementById("cp_err");
+  if(!current || !newPw){ err.textContent="Current and new password, please."; return; }
+  if(newPw.length<8){ err.textContent="Use at least 8 characters."; return; }
+  if(newPw===current){ err.textContent="New password must be different."; return; }
+  if(changingPassword) return;
+  changingPassword=true;
+  try{
+    try{
+      await store.signIn(store.user.email, current);
+    }catch(e){ err.textContent="Current password is incorrect."; return; }
+    try{
+      await store.updatePassword(newPw);
+    }catch(e){ err.textContent="Password change failed: "+String(e.message||e).slice(0,100); return; }
+    document.getElementById("cp_cur").value="";
+    document.getElementById("cp_new").value="";
+    err.textContent="";
+    toast("Password changed ✔");
+  }finally{ changingPassword=false; }
 }
 export async function deleteCloudAccount(){
   const answer=prompt('This permanently deletes your account. Type DELETE to continue.');

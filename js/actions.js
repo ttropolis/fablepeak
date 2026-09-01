@@ -41,9 +41,10 @@ import {
   connectNet, connectReal, disconnectNet, disconnectReal, selectReal,
 } from "./connections.js";
 import {
-  addBrand, cancelHashtagGroup, cloudSignOut, deleteBrand, deleteCloudAccount,
-  deleteHashtagGroup, editHashtagGroup, exportData, importData, installPhoneApp,
-  renameBrand, resetData, saveHashtagGroup, simulatedApprovalToggle, toggleApproval,
+  addBrand, cancelHashtagGroup, changeCloudPassword, cloudSignOut, deleteBrand,
+  deleteCloudAccount, deleteHashtagGroup, editHashtagGroup, exportData, importData,
+  installPhoneApp, renameBrand, resetData, saveHashtagGroup, simulatedApprovalToggle,
+  toggleApproval,
 } from "./settings.js";
 import {
   acceptInvite, declineInvite, inviteMember, leaveBrand, revokeInvite,
@@ -174,6 +175,7 @@ export const ACTIONS = {
   importData:            el => importData(el),
   resetData:             () => resetData(),
   cloudSignOut:          () => cloudSignOut(),
+  changeCloudPassword:   () => changeCloudPassword(),
   deleteCloudAccount:    () => deleteCloudAccount(),
   installPhoneApp:       () => installPhoneApp(),
   /* team (ADR 0006 delivery item 2). Emails are user-controlled strings, so
