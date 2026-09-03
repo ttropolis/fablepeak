@@ -1,4 +1,4 @@
-const CACHE = "fablepeak-v1.6.3";
+const CACHE = "fablepeak-v1.6.4";
 // Every js/ module is precached: since ADR 0003 Phase 2b the app is native ES
 // modules, so a missing one is a blank page rather than a degraded one. The
 // installed PWA is the offline story (decision 3), which makes this list part

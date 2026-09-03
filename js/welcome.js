@@ -18,7 +18,7 @@ export function showWelcome(){
   w.innerHTML = `
   <div class="wwrap">
     <div class="whero">
-      <div class="wlogo">⛰️ Fable<span>Peak</span></div>
+      <div class="wlogo"><span class="wlogo-mark" aria-hidden="true"></span> Fable<span>Peak</span></div>
       <h2>All your social media, one clean workspace.</h2>
       <p class="tag">Plan your content calendar, answer every message, track what works,
         and share one link-in-bio — without juggling ten tabs.</p>
@@ -110,7 +110,7 @@ export function showPasswordReset(){
   const w=document.getElementById("welcome");
   w.hidden=false;
   w.innerHTML=`<div class="wwrap"><div class="wcard" style="max-width:440px;margin:auto">
-    <div class="wlogo">⛰️ Fable<span>Peak</span></div>
+    <div class="wlogo"><span class="wlogo-mark" aria-hidden="true"></span> Fable<span>Peak</span></div>
     <h2 style="margin:20px 0 6px">Choose a new password</h2>
     <p class="wsmall">Use at least 8 characters.</p>
     <label class="f">New password</label>

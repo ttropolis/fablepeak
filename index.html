@@ -40,6 +40,7 @@
   /* ---------- sidebar ---------- */
   aside{width:220px;background:var(--brand);color:#dfe9f2;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;flex-shrink:0}
   .logo{padding:18px 16px;font-size:18px;font-weight:700;color:#fff;letter-spacing:.3px;display:flex;align-items:center;gap:8px}
+  .logo-mark{display:inline-block;width:22px;height:22px;background:url(icon-192.png) center/cover no-repeat;border-radius:5px;vertical-align:middle;margin-right:2px}
   .logo span{color:var(--accent)}
   .brandbox{margin:0 12px 14px;padding:10px;background:rgba(255,255,255,.08);border-radius:10px}
   .brandbox label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#9db4c6}
@@ -249,6 +250,7 @@
   .slwrap{display:flex;gap:22px;flex-wrap:wrap}
   .sledit{flex:1;min-width:300px}
   .phone{width:290px;border:10px solid #182b3a;border-radius:34px;background:#fff;padding:24px 16px;height:560px;overflow-y:auto;flex-shrink:0}
+  .sl-mark{display:inline-block;width:12px;height:12px;background:url(icon-192.png) center/cover no-repeat;border-radius:3px;vertical-align:middle;margin-right:3px}
   .phone .av{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:34px;margin:0 auto 10px;background:#eef2f6}
   .phone h5{text-align:center;font-size:16px}
   .phone .bio{text-align:center;color:var(--muted);font-size:12px;margin:6px 0 16px}
@@ -280,6 +282,7 @@
   .whero{flex:1;min-width:290px;max-width:480px;color:#e8f1f8;padding-top:env(safe-area-inset-top)}
   .whero .wlogo{font-size:30px;font-weight:800;letter-spacing:.3px;color:#fff;margin-bottom:14px}
   .whero .wlogo span{color:var(--accent)}
+  .wlogo-mark{display:inline-block;width:28px;height:28px;background:url(icon-192.png) center/cover no-repeat;border-radius:6px;vertical-align:middle;margin-right:4px}
   .whero h2{font-size:30px;line-height:1.2;margin-bottom:12px;font-weight:800}
   .whero p.tag{color:#b6cddd;font-size:15px;line-height:1.6;margin-bottom:24px}
   .wfeat{list-style:none;display:flex;flex-direction:column;gap:12px;font-size:14px;color:#d3e2ed}
@@ -361,7 +364,7 @@
 </head>
 <body>
 <aside>
-  <div class="logo">⛰️ Fable<span>Peak</span><span id="demoBadge"></span></div>
+  <div class="logo"><span class="logo-mark" aria-hidden="true"></span> Fable<span>Peak</span><span id="demoBadge"></span></div>
   <div class="brandbox">
     <label>Brand</label>
     <select id="brandSel" data-change="switchBrand"></select>

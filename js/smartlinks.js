@@ -160,7 +160,7 @@ export function renderSmartlinks(m){
       <h5>${esc(sl.title)}</h5>
       <div class="bio">${esc(sl.bio)}</div>
       ${sl.links.map(l=>`<a class="slink" style="background:${attr(color)}" data-action="slClick" data-arg="${attr(l.id)}">${esc(l.title)}</a>`).join("")}
-      <div style="text-align:center;color:var(--muted);font-size:10px;margin-top:14px">⛰️ FablePeak Link</div>
+      <div style="text-align:center;color:var(--muted);font-size:10px;margin-top:14px"><span class="sl-mark" aria-hidden="true"></span> FablePeak Link</div>
     </div>
   </div>`;
 }

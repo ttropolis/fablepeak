@@ -61,8 +61,10 @@
                          (element.style.setProperty), which CSP does not
                          govern, so no style attribute is ever parsed from a
                          string and no 'unsafe-hashes' is needed.
-    img-src     data:    Only the inline data: favicon below. No remote images
-                         at all: the avatar is an emoji, not an upload.
+    img-src     data:    Only the inline data: favicon and the inline data:
+                         brand mark declared once in the style block below.
+                         No remote images at all: a user-provided avatar is
+                         still an emoji, rendered as text, never an image.
     connect-src          Exactly the Supabase project origin. The two anon
                          RPCs are the only network destinations that exist.
     base-uri / form-action 'none'   There is no <base> and no form; pinning
@@ -74,7 +76,7 @@
   interactive elements are outbound links is low value; the fix is real
   response headers, which needs a host that can set them.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ICdAbM/1Kr2fwG5PPzSySfpBDJqob1DBJ6e/9nLBbYg='; style-src 'sha256-zbHpwB4Dj3CE5mJR3fiZCPJwOG29aWLdM2U3sLOC7wg='; img-src data:; connect-src https://lghsvxwuaebvotutyjtt.supabase.co; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gQQHP0PuamU2KC7R+04/CfgphqXgvlMkanL2rfXiJNU='; style-src 'sha256-gYdzl0SelWQRzSwd5yHAUBOSOX8rgMN2IUE1BJTrMTg='; img-src data:; connect-src https://lghsvxwuaebvotutyjtt.supabase.co; base-uri 'none'; form-action 'none'">
 
 <title>FablePeak SmartLinks</title>
 <meta name="description" content="A FablePeak SmartLinks page.">
@@ -97,6 +99,9 @@
   --line: #e3e8ee;
   --shadow: 0 1px 2px rgba(13, 27, 42, .05), 0 12px 32px rgba(13, 27, 42, .07);
   --avatar-bg: #eef2f6;
+  /* The FablePeak brand mark, inlined once as a data: URI so the page's
+     img-src data: CSP never needs to allow a remote image. */
+  --brand-mark: url("data:image/png;base64,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");
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -137,6 +142,15 @@ body {
   background: var(--avatar-bg);
   display: flex; align-items: center; justify-content: center;
   font-size: 36px; line-height: 1;
+}
+.avatar.brand { background: var(--avatar-bg) var(--brand-mark) center/60% no-repeat; }
+.brand-mark {
+  display: inline-block;
+  width: 12px; height: 12px;
+  background: var(--brand-mark) center/cover no-repeat;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 3px;
 }
 .title { font-size: 19px; font-weight: 650; margin: 0; overflow-wrap: anywhere; }
 .bio {
@@ -181,7 +195,7 @@ body {
   </section>
 
   <section id="gone" class="card" hidden>
-    <div class="avatar" aria-hidden="true">⛰️</div>
+    <div class="avatar brand" aria-hidden="true"></div>
     <h1 class="title">This page isn’t available</h1>
     <!--
       One message for every failure. The RPC returns '{}' for an unknown slug
@@ -193,13 +207,13 @@ body {
 
   <noscript>
     <section class="card">
-      <div class="avatar" aria-hidden="true">⛰️</div>
+      <div class="avatar brand" aria-hidden="true"></div>
       <h1 class="title">JavaScript required</h1>
       <p class="bio">This page loads its content from FablePeak in your browser.</p>
     </section>
   </noscript>
 
-  <footer class="foot">⛰️ FablePeak Link</footer>
+  <footer class="foot"><span class="brand-mark" aria-hidden="true"></span> FablePeak Link</footer>
 </main>
 
 <script>
@@ -327,7 +341,9 @@ body {
     var avatar = text(page.avatar, MAX_AVATAR);
     var bio = text(page.bio, MAX_BIO);
 
-    byId("avatar").textContent = avatar || "⛰️";
+    var avatarEl = byId("avatar");
+    avatarEl.classList.toggle("brand", !avatar);
+    avatarEl.textContent = avatar;
     byId("title").textContent = title || slug;
     byId("bio").textContent = bio;
     // Assigning document.title is a string assignment, not markup parsing.
