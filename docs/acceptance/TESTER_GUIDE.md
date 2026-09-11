@@ -1,10 +1,10 @@
 # FablePeak acceptance tester guide
 
-- Product: FablePeak 1.6.1 at <https://fablepeak.com>
+- Product: FablePeak 1.6.5 at <https://fablepeak.com>
 - Purpose: collect the nine human-acceptance rows in
   [EXTERNAL_BETA_EVIDENCE.md](EXTERNAL_BETA_EVIDENCE.md)
 - Audience: two testers who do not work on FablePeak
-- Last updated: 2026-08-31
+- Last updated: 2026-09-11
 
 You do not need to know anything about programming to run this. Every step is
 something you click, type or look at. If a screen does not match what a step
@@ -139,17 +139,19 @@ account.
 Both testers do this. Script 1 continues straight on from here.
 
 1. Open <https://fablepeak.com> in your browser.
-2. You land on a dark blue welcome screen headed
-   **"All your social media, one clean workspace."**
-3. In the white card on the right, click the **Create account** tab.
+2. You land on a dark landing page headed
+   **"All your social media, one clean workspace."**, describing what FablePeak
+   does. There is no login form on it yet.
+3. Click **Get started** at the top right. An account card opens over the page.
+   Click the **Create account** tab in it.
 4. Type your fresh email in **Email** and a password of at least 8 characters in
    **Password**.
 5. Click **Create my account**.
 6. A green line appears: *"✉️ Check your inbox — click the confirmation link,
    then sign in here."*
 7. Open your email inbox and click the confirmation link.
-8. Return to <https://fablepeak.com>, click the **Sign in** tab, enter the same
-   email and password, and click **Sign in**. A small message reading
+8. Return to <https://fablepeak.com>, click **Sign in** at the top right, enter
+   the same email and password, and click **Sign in**. A small message reading
    *"Welcome back ✔"* appears at the bottom right.
 9. You now see a card headed **"Welcome to FablePeak, …!"** explaining that a
    brand is a workspace. Type a name for your workspace (for example
@@ -653,7 +655,8 @@ Now:
 
 **Evidence to capture (Script 7)**
 
-- [ ] Note: which method (A or B) you used to make Instagram fail
+- [ ] Note: confirm you used the revoke method (remove Instagram's permission
+      after scheduling) to make Instagram fail
 - [ ] Note: the time you typed into the composer, your own local time, and your
       time zone
 - [ ] Screenshot: the composer with both **FB** and **IG** ticked, before saving

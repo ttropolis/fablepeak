@@ -3,13 +3,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bootApp } from "../../test-harness/app.mjs";
 
-test("signed-out cloud mode shows the welcome gate and empties the workspace", async t => {
+test("signed-out cloud mode shows the landing page and empties the workspace", async t => {
   const app = await bootApp({ mode: "signedOut" });
   t.after(() => app.close());
 
   const welcome = app.$("#welcome");
   assert.equal(welcome.hidden, false, "the gate must be visible");
   assert.match(welcome.textContent, /All your social media, one clean workspace\./);
+  // ADR 0008: "/" is a marketing page, not a login page. No auth form until asked.
+  assert.equal(app.$("#w_email"), null, "the sign-in form is not rendered up front");
+  assert.equal(app.$(".wcard"), null, "the auth card is not rendered up front");
+  for (const heading of ["What you can do", "How it works",
+    "Built for small brands and teams", "Privacy by design",
+    "Join the invite-only beta"]) {
+    assert.ok(welcome.textContent.includes(heading), `landing section: ${heading}`);
+  }
+  assert.ok(app.$("#welcome header"), "the landing page has a header");
+  assert.ok(app.$("#welcome footer"), "the landing page has a footer");
+  // Same hostile-markup sweep hostile-input.test.mjs uses, plus the image and
+   // handler forms a marketing page could plausibly acquire.
+  assert.deepEqual(
+    app.$$("#welcome script, #welcome img, #welcome iframe, #welcome object, " +
+      "#welcome embed, #welcome [onerror], #welcome [onload], #welcome picture, " +
+      "#welcome svg image, #welcome [onclick]").map(el => el.tagName),
+    [], "no scriptable or image elements on the landing page");
 
   assert.equal(app.main().innerHTML, "", "main must be emptied behind the gate");
   assert.equal(app.$("#nav").innerHTML, "", "nav must be emptied behind the gate");
@@ -25,8 +42,13 @@ test("the gate offers sign in, create account and demo, and validates before cal
   t.after(() => app.close());
 
   assert.ok(app.byText("#welcome button", "Sign in"));
+  assert.ok(app.byText("#welcome button", "Get started"));
+  assert.ok(app.byText("#welcome button", "Explore the demo"));
+
+  // The form appears only once the visitor asks for it.
+  await app.click(app.byText(".lnavact button", "Sign in"));
+  assert.ok(app.$(".wcard"), "clicking Sign in reveals the auth card");
   assert.ok(app.byText("#welcome button", "Create account"));
-  assert.ok(app.byText("#welcome button", "Explore the demo first"));
 
   await app.click(".wcard button.wsubmit");
   assert.equal(app.text("#w_err"), "Email and password, please.");
@@ -43,7 +65,7 @@ test("entering the demo replaces the gate with a seeded planner", async t => {
   const app = await bootApp({ mode: "signedOut" });
   t.after(() => app.close());
 
-  await app.click(app.byText("#welcome button", "Explore the demo first"));
+  await app.click(app.byText(".lcta button", "Explore the demo"));
   await app.waitFor(() => app.main().querySelector("h1"), { label: "the planner" });
 
   assert.equal(app.$("#welcome").hidden, true);
@@ -99,4 +121,64 @@ test("an unnamed first brand is refused with a toast", async t => {
   await app.click(app.byText(".obwrap button", "Create brand"));
   assert.equal(app.toast(), "Give your brand a name");
   assert.equal(app.db.brands.length, 0);
+});
+
+/* ADR 0008 — the signed-out root is a landing page; the auth card is revealed. */
+test("Get started reveals the create-account tab and the close button hides it again", async t => {
+  const app = await bootApp({ mode: "signedOut" });
+  t.after(() => app.close());
+
+  await app.click(app.byText(".lnavact button", "Get started"));
+  assert.ok(app.$("#w_email"), "the form is revealed");
+  assert.equal(app.byText(".wtabs button.on", "Create account")?.textContent, "Create account");
+  assert.ok(app.byText(".wcard button", "Create my account"));
+
+  await app.click(".wcard .lclose");
+  assert.equal(app.$(".wcard"), null, "closing returns to the landing page");
+  assert.match(app.$("#welcome").textContent, /All your social media, one clean workspace\./);
+  assert.deepEqual(app.blockedRequests, []);
+});
+
+test("the revealed card still offers demo, password reset and the policy links", async t => {
+  const app = await bootApp({ mode: "signedOut" });
+  t.after(() => app.close());
+
+  await app.click(app.byText(".lnavact button", "Sign in"));
+  assert.ok(app.byText(".wcard button", "Forgot password?"));
+  assert.ok(app.byText(".wcard button", "👀 Explore the demo"));
+  assert.deepEqual(
+    [...app.$$(".wcard .wfoot a")].map(a => a.getAttribute("href")),
+    ["/privacy.html", "/terms.html", "/data-deletion.html"]);
+});
+
+test("Escape closes the auth dialog and returns focus to Sign in", async t => {
+  const app = await bootApp({ mode: "signedOut" });
+  t.after(() => app.close());
+
+  await app.click(app.byText(".lnavact button", "Sign in"));
+  assert.ok(app.$(".lauthwrap"), "the dialog is open");
+  assert.equal(app.document.activeElement, app.$(".wcard"),
+    "focus moves into the dialog");
+  assert.ok(app.$(".lpage").hasAttribute("inert"),
+    "the landing page behind the dialog is inert");
+
+  await app.press(app.$(".wcard"), "Escape");
+  assert.equal(app.$(".wcard"), null, "Escape closes the auth card");
+  assert.equal(app.document.activeElement?.id, "lp_signin",
+    "focus returns to the button that opened it");
+  assert.deepEqual(app.blockedRequests, []);
+});
+
+test("a click on the backdrop closes the auth dialog, a click inside it does not", async t => {
+  const app = await bootApp({ mode: "signedOut" });
+  t.after(() => app.close());
+
+  await app.click(app.byText(".lnavact button", "Get started"));
+  await app.click(".wcard");
+  assert.ok(app.$(".wcard"), "a click inside the card keeps it open");
+
+  await app.click(".lauthwrap");
+  assert.equal(app.$(".wcard"), null, "a click on the backdrop closes it");
+  assert.match(app.$("#welcome").textContent, /All your social media, one clean workspace\./);
+  assert.deepEqual(app.blockedRequests, []);
 });

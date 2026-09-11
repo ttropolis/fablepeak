@@ -492,6 +492,8 @@ async function signIn(api, cloud) {
   store.publishNow = async id => { record("publishNow", [id]); return api.intoPage(cloud.publishResults ?? []); };
   store.retryPost = async id => { record("retryPost", [id]); return api.intoPage(cloud.retryResults ?? []); };
 
+  // ADR 0008: the signed-out root is a landing page; reveal the auth card first.
+  await api.click(api.byText(".lnavact button", "Sign in"));
   await api.fill("#w_email", user.email);
   await api.fill("#w_pw", "correct-horse-battery");
   await api.click(".wcard button.wsubmit");

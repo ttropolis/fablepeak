@@ -558,3 +558,68 @@ its own Google Cloud project rather than sharing YouTube's, because Google
 revocation operates at project level. The application must use **Techpolity's
 correct identity — never "Tech Policy Ltd"** — and a `techpolity.com` address
 attached to the controlled Business Profile.
+
+## Amendment B (proposed 2026-09-11): TTropolis as the applying organisation
+
+- Status: **PROPOSED — not accepted.** Nothing above changes until the release
+  owner decides. The 2026-08-31 decisions stand as written.
+
+**Trigger.** The Techpolity Business Profile (location `01090885182245385978`,
+created 2026-09-01, online/service-area, no public address) has failed video
+verification twice — Google emails 2026-09-04 and 2026-09-11 — on "no view of
+surrounding area" and "business name not shown on legitimate assets". The
+authorisation item passed both times. The profile's verification screen offers
+**only** "Submit a Business Video". Decision 3 requires a *verified* profile
+≥60 days old owned by the applying organisation, so an unverifiable Techpolity
+profile blocks the Basic API Access application indefinitely. See
+`docs/acceptance/GBP_VERIFICATION_CONTINGENCY.md`.
+
+**The option.** File the Application for Basic API Access against the
+**TTropolis** profile (`14656449094685243305`, same Google account,
+**already Verified**) instead of Techpolity.
+
+**What changes**
+
+- The Google-facing applying organisation becomes **TTropolis**, not
+  Techpolity — every field on the application, and the identity Google holds
+  on record for the GBP integration.
+- Decision 3's domain-email prerequisite must be re-satisfied against
+  TTropolis: either an owner/manager address on a TTropolis-controlled domain,
+  or the `ttropolis@gmail.com` account owner if Google accepts the profile
+  owner in that role. **Confirm in the console; do not assume.**
+- `techpolity.com` stays the stated website **only if TTropolis can
+  legitimately claim it**. **QUESTION FOR THE OWNER:** does TTropolis own or
+  lawfully operate techpolity.com? If not, a TTropolis-owned domain is needed;
+  the website field must not name one the applicant does not control.
+- The 60-day age test is met today by TTropolis, rather than waiting on
+  Techpolity's ~2026-10-31 maturity.
+
+**What stays unchanged**
+
+- The dedicated `fablepeak-gbp` Cloud project and its own OAuth client
+  (decision 4) — the project-level revocation reasoning in decision 5 is
+  unaffected by which business files the application.
+- Post-beta-GO sequencing (decisions 1, 10) and the release gate (decision 12).
+- Every product decision: What's New only, one location per brand, no metrics,
+  no `gbp_options`. Decision 12's live run simply uses a TTropolis location.
+
+**Risks**
+
+- **Identity mismatch with the Meta/Techpolity story.** Meta verification runs
+  under Techpolity as the ABN-registered parent. Filing GBP under TTropolis
+  gives FablePeak two different parent identities across two providers, which
+  is exactly the applicant/verified-business mismatch decision 2 names as the
+  standard cause of refusal — only relocated from within one application to
+  across two.
+- **ABN and legal-name consistency.** If TTropolis is not itself
+  ABN-registered, or its registered name differs from "TTropolis", the
+  application inherits the naming problem it was meant to escape. The
+  "never Tech Policy Ltd" rule generalises: the filed name must be the
+  registered one, spelled exactly.
+
+**Owner decision required.** Accept Amendment B (file under TTropolis, subject
+to the techpolity.com ownership answer), reject it and keep pursuing Techpolity
+verification through the support route, or defer until attempt 3 and the
+support case resolve. Recommended: **defer, and run both tracks in parallel**
+per the contingency doc — GBP is post-beta and nothing is gained by settling
+the identity before Google settles the verification.

@@ -19,8 +19,8 @@ import {
   createFirstBrand, dismissModal, go, handleModalKeydown, render, switchBrand,
 } from "./shell.js";
 import {
-  completePasswordReset, enterDemo, exitDemo, requestPasswordReset, togglePassword,
-  wSubmit, wTab,
+  closeAuth, completePasswordReset, enterDemo, exitDemo, requestPasswordReset,
+  showAuth, togglePassword, wSubmit, wTab,
 } from "./welcome.js";
 import {
   addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
@@ -57,6 +57,15 @@ export const ACTIONS = {
   switchBrand:           el => switchBrand(el.value),
   dismissModal:          () => dismissModal(),
   /* welcome gate */
+  showAuth:              el => showAuth(el.dataset.arg),
+  /* Two ways out of the landing-page dialog: the ✕ button, and a click on the
+     backdrop itself. The backdrop carries the same action, so a click that
+     bubbled out of the card is ignored — the ✕ matches first and is never the
+     wrap, so it always closes. */
+  closeAuth:             (el, ev) => {
+    if(el.classList.contains("lauthwrap") && ev?.target?.closest?.(".wcard")) return;
+    closeAuth();
+  },
   wTab:                  el => wTab(el.dataset.arg),
   wSubmit:               () => wSubmit(),
   requestPasswordReset:  () => requestPasswordReset(),
@@ -211,7 +220,14 @@ export function installDelegatedHandlers(){
      listeners above. */
   document.addEventListener("focus", ev => runAction(ev, "focus"), true);
   document.addEventListener("keydown", ev => {
-    if(ev.key !== "Enter") return;                 // Escape and Tab stay with handleModalKeydown
+    /* Escape closes the landing-page auth dialog (ADR 0008). The workspace's
+       own modal is unaffected: it is never open behind the signed-out gate,
+       and its Escape/Tab handling stays with handleModalKeydown below. */
+    if(ev.key === "Escape"){
+      if(document.querySelector("#welcome .lauthwrap")) closeAuth();
+      return;
+    }
+    if(ev.key !== "Enter") return;                 // Tab stays with handleModalKeydown
     runAction(ev, "enter");
   });
   document.addEventListener("dragstart", ev => runAction(ev, "drag"));
