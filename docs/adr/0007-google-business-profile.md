@@ -561,7 +561,7 @@ attached to the controlled Business Profile.
 
 ## Amendment B (proposed 2026-09-11): TTropolis as the applying organisation
 
-- Status: **PROPOSED — not accepted.** Nothing above changes until the release
+- Status: **DEFERRED by the release owner (2026-09-11) — revisit after GBP video attempt 3.** Not accepted. Nothing above changes until the release
   owner decides. The 2026-08-31 decisions stand as written.
 
 **Trigger.** The Techpolity Business Profile (location `01090885182245385978`,
