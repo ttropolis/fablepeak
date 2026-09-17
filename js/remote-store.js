@@ -38,7 +38,7 @@ export const RemoteAdapter = {
     }catch(e){ this._sb=null; throw e; }
   },
 
-  _rowsToDb(brands, posts, inbox, targets=[], hashtagGroups=[]){
+  _rowsToDb(brands, posts, inbox, targets=[], hashtagGroups=[], postTemplates=[]){
     const mappedBrands = brands.map(b => ({
         id: b.id, name: b.name, seed: b.seed,
         connections: b.connections || {}, smartlink: b.smartlink || {},
@@ -83,6 +83,14 @@ export const RemoteAdapter = {
         // per-brand record created, renamed and deleted one at a time.
         hashtag_groups: hashtagGroups.filter(g => g.brand_id===b.id).map(g => ({
           id: g.id, name: g.name, tags: Array.isArray(g.tags) ? g.tags : [] })),
+        // Named, reusable post skeletons (ADR 0009). Synced exactly the way
+        // hashtag groups are, because a template is the same shape of thing:
+        // an independent per-brand record created, renamed, edited and deleted
+        // one at a time. The body is a plain string — this adapter never reads
+        // it, never parses its {slots}, and never sends it anywhere; the
+        // composer hands it to the Edge Function on the request.
+        post_templates: postTemplates.filter(t => t.brand_id===b.id).map(t => ({
+          id: t.id, name: t.name, body: typeof t.body === "string" ? t.body : "" })),
       }));
     const preferredBrand = localStorage.getItem("fablepeak_pref_activeBrand") || "";
     return {
@@ -92,7 +100,7 @@ export const RemoteAdapter = {
     };
   },
   _dbToRows(data){
-    const brands=[], posts=[], inbox=[], hashtagGroups=[];
+    const brands=[], posts=[], inbox=[], hashtagGroups=[], postTemplates=[];
     for(const b of data.brands){
       brands.push({ id:b.id, name:b.name, seed:b.seed,
         connections:b.connections||{}, smartlink:b.smartlink||{}, client_id:this._clientId });
@@ -129,40 +137,47 @@ export const RemoteAdapter = {
          table — simply has no groups, which is not an error. */
       for(const g of b.hashtag_groups||[]) hashtagGroups.push({ id:g.id, brand_id:b.id,
         name:g.name, tags:Array.isArray(g.tags) ? g.tags : [], client_id:this._clientId });
+      /* Guarded on the array for the same reason the line above is: a brand
+         created before this feature — in local storage, in an old backup, or on
+         a server whose row predates the table — simply has no templates. */
+      for(const t of b.post_templates||[]) postTemplates.push({ id:t.id, brand_id:b.id,
+        name:t.name, body:typeof t.body === "string" ? t.body : "", client_id:this._clientId });
     }
-    return { brands, posts, inbox, hashtagGroups };
+    return { brands, posts, inbox, hashtagGroups, postTemplates };
   },
 
   async load(){
     if(!this.user) return null;                 // logged out → local fallback
     try{
-      const [brandsResult, postsResult, inboxResult, targetsResult, groupsResult] = await Promise.all([
+      const [brandsResult, postsResult, inboxResult, targetsResult, groupsResult,
+             templatesResult] = await Promise.all([
         this._sb.from("brands").select("*"),
         this._sb.from("posts").select("*"),
         this._sb.from("inbox_threads").select("*"),
         this._sb.from("post_targets").select("*"),
         this._sb.from("hashtag_groups").select("*"),
+        this._sb.from("post_templates").select("*"),
       ]);
       const queryError=brandsResult.error||postsResult.error||inboxResult.error
-        ||targetsResult.error||groupsResult.error;
+        ||targetsResult.error||groupsResult.error||templatesResult.error;
       if(queryError) throw queryError;
       // first sign-in with an empty server: offer to upload existing local data
       if(!brandsResult.data.length){
         let local=null; try{ local=JSON.parse(localStorage.getItem(LS_KEY)); }catch(e){}
         if(local && local.brands?.length &&
            confirm("Your cloud workspace is empty. Upload this device's existing data to it?")){
-          this._snap = {brands:[],posts:[],inbox:[],hashtagGroups:[]};
+          this._snap = {brands:[],posts:[],inbox:[],hashtagGroups:[],postTemplates:[]};
           await this.persist(local);
           return local;
         }
       }
       this._snap = {
         brands:brandsResult.data, posts:postsResult.data, inbox:inboxResult.data,
-        hashtagGroups:groupsResult.data,
+        hashtagGroups:groupsResult.data, postTemplates:templatesResult.data,
       };
       const db = this._rowsToDb(
         brandsResult.data, postsResult.data, inboxResult.data, targetsResult.data,
-        groupsResult.data,
+        groupsResult.data, templatesResult.data,
       );
       if(!db.activeBrand && db.brands.length) db.activeBrand = db.brands[0].id;
       localStorage.setItem(LS_KEY, JSON.stringify(db));   // offline cache
@@ -177,7 +192,7 @@ export const RemoteAdapter = {
     localStorage.setItem(LS_KEY, JSON.stringify(data));   // cache first — never lose edits
     if(!this.user) return;
     const cur = this._dbToRows(data),
-          prev = this._snap || {brands:[],posts:[],inbox:[],hashtagGroups:[]};
+          prev = this._snap || {brands:[],posts:[],inbox:[],hashtagGroups:[],postTemplates:[]};
     const FIELDS = {
       brands: ["id","name","seed","connections","smartlink"],
       /* `approved_by` and `approved_at` are deliberately NOT here: the posts
@@ -189,6 +204,10 @@ export const RemoteAdapter = {
       /* The same three-edit rule the post columns follow: a field this list does
          not name is invisible to the sync even when the column exists. */
       hashtagGroups: ["id","brand_id","name","tags"],
+      /* The same rule once more. `body` is named here, and nothing else in this
+         file decides anything about it: the sync carries the string, it never
+         reads it. */
+      postTemplates: ["id","brand_id","name","body"],
     };
     const norm = (r, fs) => JSON.stringify(fs.map(f => r[f] ?? null));
     const changed = (rows, old, fs) => rows.filter(r => {
@@ -209,14 +228,19 @@ export const RemoteAdapter = {
     const prevGroups = prev.hashtagGroups || [];
     const cg = changed(cur.hashtagGroups, prevGroups, FIELDS.hashtagGroups);
     if(cg.length) ops.push(this._sb.from("hashtag_groups").upsert(cg));
+    const prevTemplates = prev.postTemplates || [];
+    const cx = changed(cur.postTemplates, prevTemplates, FIELDS.postTemplates);
+    if(cx.length) ops.push(this._sb.from("post_templates").upsert(cx));
     const gp = gone(cur.posts, prev.posts);   if(gp.length) ops.push(this._sb.from("posts").delete().in("id", gp));
     const gt = gone(cur.inbox, prev.inbox);   if(gt.length) ops.push(this._sb.from("inbox_threads").delete().in("id", gt));
     const gg = gone(cur.hashtagGroups, prevGroups);
     if(gg.length) ops.push(this._sb.from("hashtag_groups").delete().in("id", gg));
+    const gx = gone(cur.postTemplates, prevTemplates);
+    if(gx.length) ops.push(this._sb.from("post_templates").delete().in("id", gx));
     const gb = gone(cur.brands, prev.brands); if(gb.length) ops.push(this._sb.from("brands").delete().in("id", gb));
     (await Promise.all(ops)).forEach(fail);
     this._snap = { brands:cur.brands, posts:cur.posts, inbox:cur.inbox,
-                   hashtagGroups:cur.hashtagGroups };
+                   hashtagGroups:cur.hashtagGroups, postTemplates:cur.postTemplates };
   },
 
   async signIn(email, password){
@@ -446,6 +470,7 @@ export const RemoteAdapter = {
       posts:  this._snap.posts.filter(p => p.brand_id !== brandId),
       inbox:  this._snap.inbox.filter(t => t.brand_id !== brandId),
       hashtagGroups: (this._snap.hashtagGroups || []).filter(g => g.brand_id !== brandId),
+      postTemplates: (this._snap.postTemplates || []).filter(t => t.brand_id !== brandId),
     };
     try{
       const cached = JSON.parse(localStorage.getItem(LS_KEY));
@@ -567,8 +592,13 @@ export const RemoteAdapter = {
   /** Composer writing assist (supabase/functions/ai-assist).
       `request` is the function's own body minus brand_id and tier:
       {action:"caption", topic, tone?, network?} | {action:"hashtags", text,
-      network?} | {action:"rewrite", text, network}. Resolves to {suggestions,
-      truncated}.
+      network?} | {action:"rewrite", text, network} | {action:"template",
+      text, template_body}. Resolves to {suggestions, truncated}.
+      `template_body` is the saved skeleton itself, never its row id: the
+      function does not read public.post_templates, because a template body is
+      customer content on its way to a language model and looking it up
+      server-side would be authenticating a string into looking trustworthy
+      (ADR 0009 §3).
       The capability tier is sent explicitly rather than left to the server's
       default, so the day a picker ships the only change is where the value
       comes from. "standard" is the only tier any plan includes today; asking

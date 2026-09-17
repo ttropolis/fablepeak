@@ -13,7 +13,7 @@ export function defaultBrand(name){
   const b = {
     id: uid(), name,
     seed: Math.floor(Math.random()*10000),
-    connections: {}, posts: [], inbox: [], hashtag_groups: [],
+    connections: {}, posts: [], inbox: [], hashtag_groups: [], post_templates: [],
     smartlink: { title:name, bio:"Welcome! All my links in one place.", avatar:"🚀", color:"#22c1dc",
       links:[{id:uid(),title:"Our website",url:"https://example.com",clicks:132},
              {id:uid(),title:"Latest video",url:"https://example.com/video",clicks:87},
@@ -46,6 +46,15 @@ export function seedDemo(){
      tags:["#launch","#newfeature","#buildinpublic","#saas"]},
     {id:uid(), name:"Evergreen",
      tags:["#marketing","#socialmedia","#contentstrategy"]},
+  ];
+  /* One seeded template, for the same reason: the composer's "Fit to template"
+     button should be something the demo workspace can actually be tried with
+     rather than a control that only explains why it is disabled. */
+  b.post_templates = [
+    {id:uid(), name:"Podcast episode",
+     body:"🎙️ New episode {number}: {title}\n\n{hook}\n\n👉 Listen: {link}"},
+    {id:uid(), name:"Feature launch",
+     body:"{headline}\n\nWhat's new: {summary}\n\nWhy it matters: {benefit}\n\n{cta}"},
   ];
   b.inbox = [
     {id:uid(), net:"instagram", from:"@sofia.designs", resolved:false, unread:true,
