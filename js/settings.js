@@ -489,6 +489,14 @@ export function validBackupPost(p){
     // enforces, so a backup cannot smuggle an audience TikTok never offered.
     && (p.tiktok_options===undefined || p.tiktok_options===null
         || validBackupTikTokOptions(p.tiktok_options))
+    // ADR 0010: the TikTok posting mode, checked against the same closed set
+    // posts_tiktok_mode_check enforces. Null and absent both mean "legacy/direct"
+    // (every post that predates the column, and every post not targeting TikTok);
+    // an object rejects the file rather than being normalised, exactly as an
+    // invalid tiktok_options or status does — this file's model is refuse-the-file,
+    // so a bad mode is caught here as one sentence, not silently dropped.
+    && (p.tiktok_mode===undefined || p.tiktok_mode===null
+        || p.tiktok_mode==="direct" || p.tiktok_mode==="draft")
     // Instagram's Reel placement and image alt text. Null and absent both mean
     // "this post records no Instagram choices", which is every post that
     // predates the column and every post that does not target Instagram.

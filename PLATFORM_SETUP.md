@@ -313,6 +313,48 @@ The adapter maps those choices into `post_info`, calls `video/init/`, then
 polls `status/fetch/` for up to 60 seconds and reports success **only** on
 `PUBLISH_COMPLETE`.
 
+### Draft posting mode (sandbox only) — ADR 0010
+
+There is a second TikTok posting mode. **Direct Post** (above) is the default
+and is unchanged. **Draft** sends the video to the creator's TikTok inbox as an
+unfinished draft; the creator opens the TikTok app to add platform music, edit
+and post it themselves. FablePeak never publishes a draft, so a delivered draft
+has no public URL — the delivery panel shows "Sent to TikTok drafts", not a
+"view post" link — and TikTok emits no later signal when the creator posts it.
+This is the only route to TikTok's commercial music library, which Direct Post
+cannot use.
+
+In the composer, a TikTok post now offers **Direct post / Send as draft**.
+Choosing Draft hides the whole Direct Post options panel (a draft has no privacy
+or disclosure settings) and saves `posts.tiktok_mode = 'draft'`. A delivered
+draft keeps `post_targets.status = 'published'` with `delivered_as = 'draft'`,
+`remote_url` NULL and `remote_id` = TikTok's `publish_id`.
+
+**Enabling and testing it under `TIKTOK_SANDBOX=1`:**
+
+- The draft flow uses the inbox init endpoint
+  (`post/publish/inbox/video/init/`), which needs the **`video.upload`** scope —
+  a *different* grant from Direct Post's `video.publish`.
+- `video.upload` is added to the authorize request **only** when
+  `TIKTOK_SANDBOX=1`. Adding an unapproved scope to the production authorize
+  request would break the entire TikTok login (Direct Post included), so
+  production is left with exactly the two scopes it uses today.
+- Because the scope is new, an account connected **before** enabling drafts will
+  not have granted it. The draft branch checks the stored connection scopes and,
+  if `video.upload` is missing, refuses with a **reconnect** instruction rather
+  than a provider error. So after setting `TIKTOK_SANDBOX=1`, **disconnect and
+  reconnect** the sandbox TikTok account to pick up the scope, then compose a
+  TikTok post, choose **Send as draft**, and confirm the video appears in the
+  sandbox account's TikTok inbox/drafts.
+- The draft poll treats `SEND_TO_USER_INBOX` as terminal success. This enum is
+  marked owner-verify (ADR 0010) and should be confirmed against a real sandbox
+  run.
+
+**Production:** the `video.upload` scope line ships on the production authorize
+path **only after TikTok approves the scope in the developer portal** — an owner
+step. Until then, drafts are reachable in sandbox only, and the Direct Post
+production-flip sequence below is unaffected by any of this.
+
 1. <https://developers.tiktok.com> → create an app.
 2. Add the **Content Posting API** product, request `video.publish`.
 3. Add the callback URL above as a redirect URI.

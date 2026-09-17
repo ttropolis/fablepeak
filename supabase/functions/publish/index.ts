@@ -169,6 +169,12 @@ export async function publishPost(
            them, and the adapter is handed a finished value rather than a post.
            Adapters that do not publish to TikTok ignore the field. */
         tiktokOptions: post.tiktok_options ?? null,
+        /* `posts.tiktok_mode` rides here exactly the way `tiktok_options` does,
+           and for the same reason: the claim RPCs return `p.*`, so the column
+           arrives on the post row with no migration to any of them. Null or
+           "direct" is the existing Direct Post; "draft" drops the video into
+           the creator's TikTok inbox. Only the TikTok adapter reads it. */
+        tiktokMode: post.tiktok_mode ?? null,
         /* The Instagram carousel, threaded through for the same reason and by
            the same route as `tiktok_options`: the claim RPCs return `p.*`, so
            the column arrives on the post row with no migration to any of them.
@@ -187,8 +193,15 @@ export async function publishPost(
       await mark({ status: "published", connection_id: conn.id, attempts: currentAttempt,
         remote_id: out.remote_id, remote_url: out.remote_url ?? null,
         failure_kind: null, next_retry_at: null, error: null,
-        published_at: dependencies.now() });
-      results.push({ platform, status: "published", url: out.remote_url });
+        published_at: dependencies.now(),
+        /* A delivered draft IS a successful delivery, so it keeps
+           status:"published"; delivered_as is the only marker that it landed in
+           the inbox rather than on the profile. Added only when the adapter
+           returns it, so a Direct Post keeps writing exactly the patch it did
+           before (delivered_as stays NULL — the legacy/direct meaning). */
+        ...(out.delivered_as ? { delivered_as: out.delivered_as } : {}) });
+      results.push({ platform, status: "published", url: out.remote_url,
+        ...(out.delivered_as ? { delivered_as: out.delivered_as } : {}) });
     } catch (e) {
       const unknown = e instanceof PublishOutcomeUnknownError;
       const safelyTransient = e instanceof RetryablePublishError ||

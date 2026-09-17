@@ -1,7 +1,7 @@
 // Begins an OAuth connection. Called by the browser with the user's Supabase
 // JWT; returns the platform authorize URL to open. No secrets leave the server.
 import {
-  ADAPTERS, configuredPlatforms, platformConnectionEnabled,
+  ADAPTERS, authorizeScopes, configuredPlatforms, platformConnectionEnabled,
 } from "../_shared/platforms.ts";
 import { getUser, isMember, sbDelete, sbInsert } from "../_shared/db.ts";
 
@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
     });
     const configId = adapter.authorizeConfigEnv ? env(adapter.authorizeConfigEnv) : undefined;
     if (configId) p.set("config_id", configId);
-    else p.set("scope", adapter.scopes.join(adapter.scopeSeparator ??
+    else p.set("scope", authorizeScopes(adapter, env).join(adapter.scopeSeparator ??
       (adapter.id === "tiktok" ? "," : " ")));
     if (challenge) { p.set("code_challenge", challenge); p.set("code_challenge_method", "S256"); }
     if (adapter.id === "tiktok") { p.delete("client_id"); p.set("client_key", clientId); }

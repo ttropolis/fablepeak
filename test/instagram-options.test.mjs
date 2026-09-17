@@ -106,7 +106,7 @@ test("a column the sync whitelist does not name is invisible, so instagram_optio
      here as well as there. `instagram_options` is the fourth such widening,
      after `variants`, `tiktok_options` and `media_urls`. */
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options","tiktok_mode"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter, /instagram_options: p\.instagram_options \|\| null,/,
     "server row -> app post");

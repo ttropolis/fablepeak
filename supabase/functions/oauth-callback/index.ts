@@ -1,6 +1,6 @@
 // OAuth redirect target. Exchanges the code for tokens, identifies the remote
 // account, stores the connection, and closes the popup.
-import { ADAPTERS, exchangeAuthorizationCode } from "../_shared/platforms.ts";
+import { ADAPTERS, authorizeScopes, exchangeAuthorizationCode } from "../_shared/platforms.ts";
 import { isMember, sbDelete, sbOne, sbRpc, sbUpsert } from "../_shared/db.ts";
 import { providerConnectionError } from "../_shared/oauth-errors.ts";
 import { encryptToken } from "../_shared/token-crypto.ts";
@@ -79,7 +79,7 @@ const handleCallback = async (req: Request) => {
         access_token: await encryptToken(identity.access_token ?? tokens.access_token),
         refresh_token: await encryptToken(tokens.refresh_token),
         token_expires_at: expiresAt,
-        scopes: tokens.scope ?? adapter.scopes.join(" "),
+        scopes: tokens.scope ?? authorizeScopes(adapter, env).join(" "),
         meta: {
           ...(identity.meta ?? {}),
           ...(authorizationId ? { authorization_id: authorizationId } : {}),

@@ -31,7 +31,14 @@ export interface PublishInput {
   text: string;
   mediaUrl?: string | null;
   accessToken: string;
-  connection: { external_id: string; meta: Record<string, any> };
+  connection: { external_id: string; meta: Record<string, any>; scopes?: string };
+  /** `posts.tiktok_mode` for this post, or null. Threaded through the same way
+   * `tiktokOptions` is: the publish loop reads the column off the claimed post
+   * row (the claim RPCs already return `p.*`) and hands the adapter a finished
+   * value. Null or "direct" is the existing Direct Post; "draft" drops the
+   * video into the creator's TikTok inbox as a draft. Only the TikTok adapter
+   * reads it; every other adapter ignores it. */
+  tiktokMode?: string | null;
   /** `posts.tiktok_options` for this post, or null. Threaded through the same
    * way `text` is: the publish loop resolves it per target from the claimed
    * post row (which the claim RPCs already return as `p.*`) and hands the
@@ -55,7 +62,15 @@ export interface PublishInput {
   instagramOptions?: unknown;
 }
 
-export interface PublishResult { remote_id: string; remote_url?: string; }
+export interface PublishResult {
+  remote_id: string;
+  remote_url?: string;
+  /** How the delivery landed, when it is not an ordinary published post. The
+   * TikTok draft path sets "draft"; the publish loop writes it to
+   * `post_targets.delivered_as` and leaves `remote_url` NULL. Absent means an
+   * ordinary delivery, which is every other adapter and TikTok Direct Post. */
+  delivered_as?: string;
+}
 
 /** X refuses a tweet over 280 characters. ADR 0005 decision 12 replaced this
  * adapter's silent `text.slice(0, 280)` with a refusal, so the number is named
@@ -1435,6 +1450,14 @@ export interface TikTokPostOptions {
 export const TIKTOK_OPTIONS_REQUIRED =
   "TikTok post needs its privacy and disclosure options";
 
+/** The sentence a TikTok draft target fails with when the connection never
+ *  granted the inbox upload scope (`video.upload`). Only a fresh authorization
+ *  can add a scope, so this is a permanent failure the customer resolves by
+ *  reconnecting — never a raw provider scope error. Exported because a test
+ *  pins it. */
+export const TIKTOK_DRAFT_SCOPE_REQUIRED =
+  "Reconnect TikTok to enable drafts — this account hasn't granted draft upload access yet.";
+
 /** Read `posts.tiktok_options` into the shape the request body needs.
  *
  *  Returns null for anything that is missing, malformed, or self-contradictory.
@@ -1536,8 +1559,16 @@ const tiktok: PlatformAdapter = {
    *  `status/fetch/` says PUBLISH_COMPLETE. Reporting success at init would
    *  mark posts published that TikTok later rejected for a duration, format or
    *  policy reason nobody would ever see. */
-  async publish({ text, mediaUrl, accessToken, tiktokOptions }) {
+  async publish({ text, mediaUrl, accessToken, tiktokOptions, tiktokMode, connection }) {
     if (!mediaUrl) throw new Error("TikTok requires a video URL.");
+    // Draft mode drops the video into the creator's TikTok inbox instead of
+    // publishing it. A draft carries no privacy/disclosure options, so it must
+    // branch BEFORE readTikTokOptions and the TIKTOK_OPTIONS_REQUIRED refusal:
+    // there is nothing to require. Null/"direct" is the Direct Post path below,
+    // unchanged. Everything after this line stays byte-identical.
+    if (tiktokMode === "draft") {
+      return await tiktokPublishDraft(mediaUrl, accessToken, connection);
+    }
     const options = readTikTokOptions(tiktokOptions);
     // Before the network, and before any state changes: an unusable options
     // object is the customer's composer to fix, not a provider failure, so it
@@ -1582,12 +1613,16 @@ const tiktok: PlatformAdapter = {
   },
 };
 
-/** Poll `status/fetch/` until TikTok has actually posted the video.
+/** Poll `status/fetch/` until TikTok has actually landed the delivery.
  *
- *  Three outcomes, and no fourth:
- *    PUBLISH_COMPLETE  the only success. Its `publish_id` is the remote id —
- *                      TikTok gives no permalink here, and inventing one from a
- *                      display name would produce a link that 404s.
+ *  `terminalSuccess` parameterises which status counts as done: Direct Post
+ *  passes none and gets the default PUBLISH_COMPLETE; the draft path (below)
+ *  passes SEND_TO_USER_INBOX, since a draft never reaches PUBLISH_COMPLETE.
+ *  Three outcomes, and no fourth, for whichever terminal is in play:
+ *    terminalSuccess   the only success for this call. Its `publish_id` is the
+ *                      remote id — TikTok gives no permalink here, and
+ *                      inventing one from a display name would produce a link
+ *                      that 404s.
  *    FAILED            reported with TikTok's `fail_reason` code and nothing
  *                      else. The code is a documented enum, so it is the whole
  *                      answer; the response body is never forwarded.
@@ -1595,12 +1630,71 @@ const tiktok: PlatformAdapter = {
  *                      may still complete — so it is a PublishOutcomeUnknown,
  *                      which the publish loop refuses to retry automatically
  *                      rather than risk a duplicate public video. */
+/** TikTok's terminal success for a draft dropped into the creator's inbox — the
+ *  draft equivalent of PUBLISH_COMPLETE. Referenced in exactly one place, the
+ *  draft poll below. */
+// TODO(owner-verify): confirm against TikTok status enum
+const TIKTOK_DRAFT_SUCCESS = "SEND_TO_USER_INBOX";
+
+/** Draft mode: hand TikTok a URL to pull from and drop the result into the
+ *  creator's inbox as a draft, rather than onto the profile.
+ *
+ *  The inbox init needs the `video.upload` scope, which is a different grant
+ *  from Direct Post's `video.publish`. A connection made before drafts existed
+ *  will not have it, so the branch fails with a reconnect instruction (a
+ *  permanent Error — no retry can add a scope) rather than letting TikTok
+ *  answer with a raw scope error. A draft has no privacy or disclosure options
+ *  and no public URL: the creator finishes and posts it from the TikTok app, so
+ *  the request carries source_info only (no post_info) and the result maps to a
+ *  NULL remote_url with delivered_as="draft". */
+async function tiktokPublishDraft(
+  mediaUrl: string,
+  accessToken: string,
+  connection?: { scopes?: string },
+): Promise<PublishResult> {
+  const granted = String(connection?.scopes ?? "").split(/[\s,]+/).filter(Boolean);
+  if (!granted.includes("video.upload")) throw new Error(TIKTOK_DRAFT_SCOPE_REQUIRED);
+  const safeMediaUrl = publicMediaUrl(mediaUrl, "TikTok");
+  // The direct-post strings send the creator to their profile; a draft never
+  // reaches one, so its ambiguity points at the TikTok inbox/drafts instead.
+  const draftUnknown =
+    "TikTok may have accepted this draft. Check your TikTok inbox before retrying.";
+  let response: Response;
+  try {
+    response = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_info: { source: "PULL_FROM_URL", video_url: safeMediaUrl },
+      }),
+    });
+  } catch {
+    throw new PublishOutcomeUnknownError(draftUnknown);
+  }
+  let d: any;
+  try {
+    d = await j(response, "tiktok draft");
+  } catch (error) {
+    rethrowFinalPublishFailure(error, response, draftUnknown);
+  }
+  const publishId = d.data?.publish_id;
+  if (!publishId) throw new PublishOutcomeUnknownError(draftUnknown);
+  const result = await tiktokAwaitPublished(String(publishId), accessToken, TIKTOK_DRAFT_SUCCESS,
+    "TikTok is still processing this draft. Check your TikTok inbox before retrying.");
+  return { ...result, delivered_as: "draft" };
+}
+
+/** `terminalSuccess` and `unknownMessage` are parameters with the direct-post
+ *  values as defaults, so the Direct Post call (which passes neither) polls
+ *  byte-identically to before. The draft path passes SEND_TO_USER_INBOX and its
+ *  own inbox-facing message. */
 async function tiktokAwaitPublished(
   publishId: string,
   accessToken: string,
+  terminalSuccess = "PUBLISH_COMPLETE",
+  unknownMessage = "TikTok is still processing this video. Check the profile before retrying.",
 ): Promise<PublishResult> {
-  const unknown = () => new PublishOutcomeUnknownError(
-    "TikTok is still processing this video. Check the profile before retrying.");
+  const unknown = () => new PublishOutcomeUnknownError(unknownMessage);
   const deadline = Date.now() + TIKTOK_STATUS_POLL.timeoutMs;
   for (;;) {
     await delay(TIKTOK_STATUS_POLL.intervalMs);
@@ -1617,7 +1711,7 @@ async function tiktokAwaitPublished(
       status = null;
     }
     const state = String(status?.data?.status ?? "");
-    if (state === "PUBLISH_COMPLETE") return { remote_id: publishId };
+    if (state === terminalSuccess) return { remote_id: publishId };
     if (state === "FAILED") {
       const reason = String(status?.data?.fail_reason ?? "").slice(0, 100);
       throw new Error(`TikTok rejected this video${reason ? ` (${reason})` : ""}.`);
@@ -1833,6 +1927,25 @@ export function configuredPlatforms(env: (k: string) => string | undefined) {
       env(a.clientIdEnv) && env(a.clientSecretEnv) &&
       (!a.authorizeConfigEnv || env(a.authorizeConfigEnv)))
     .map((a) => a.id);
+}
+
+/** The scopes the authorize request asks for. Static for every adapter but
+ *  TikTok's draft/inbox path: the inbox init needs `video.upload`, but that
+ *  scope is not yet approved for this app, and adding an unapproved scope to the
+ *  authorize request breaks the WHOLE TikTok login (Direct Post included). So it
+ *  is requested ONLY under the sandbox gate, where TikTok's own sandbox
+ *  credentials grant it. The production line — requesting `video.upload`
+ *  unconditionally — ships the day TikTok approves the scope in the developer
+ *  portal (an owner step); until then production keeps exactly the two scopes it
+ *  logs in with today. */
+export function authorizeScopes(
+  adapter: PlatformAdapter,
+  env: (k: string) => string | undefined = deploymentEnv,
+): string[] {
+  if (adapter.id === "tiktok" && tiktokSandboxEnabled(env)) {
+    return [...adapter.scopes, "video.upload"];
+  }
+  return adapter.scopes;
 }
 
 /** Exchange an authorization code (or refresh token) for tokens. */

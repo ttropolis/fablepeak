@@ -179,5 +179,5 @@ test("the descriptions ride in instagram_options, so the sync whitelist is uncha
   assert.doesNotMatch(adapter, /carousel_alt_texts/,
     "a per-item description is an Instagram option, not a column of its own");
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"\]/);
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options","tiktok_mode"\]/);
 });

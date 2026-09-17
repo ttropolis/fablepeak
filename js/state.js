@@ -138,6 +138,11 @@ export const COMPOSER_TIKTOK_IDLE = Object.freeze({
   loading: false, loaded: false, simulated: false, error: "", creator: null,
   /** probed duration of the media URL in seconds, or null when unknown */
   duration: null, durationUrl: "",
+  /** ADR 0010: which of the two posting routes this composer is on.
+      "direct" is Direct Post (the default, today's behaviour); "draft" sends the
+      video to the creator's TikTok inbox to finish and post themselves. A draft
+      carries none of the options below, so this lives beside them, not inside. */
+  mode: "direct",
   options: Object.freeze({
     privacy_level: "", disable_comment: false, disable_duet: false,
     disable_stitch: false, disclose_commercial: false,

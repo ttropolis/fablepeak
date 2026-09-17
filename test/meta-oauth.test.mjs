@@ -27,7 +27,7 @@ test("Facebook Pages use Facebook Login for Business configuration", async () =>
   assert.match(facebook[1], /connection\.external_id/);
 
   assert.match(oauthStart, /if \(configId\) p\.set\("config_id", configId\)/);
-  assert.match(oauthStart, /else p\.set\("scope", adapter\.scopes\.join/);
+  assert.match(oauthStart, /else p\.set\("scope", authorizeScopes\(adapter, env\)\.join/);
 });
 
 test("Facebook stays unavailable until its config ID is deployed", async () => {
