@@ -1,4 +1,4 @@
-const CACHE = "fablepeak-v1.6.5";
+const CACHE = "fablepeak-v1.6.6";
 // Every js/ module is precached: since ADR 0003 Phase 2b the app is native ES
 // modules, so a missing one is a blank page rather than a degraded one. The
 // installed PWA is the offline story (decision 3), which makes this list part
@@ -12,7 +12,8 @@ const ASSETS = [
   "./js/local-store.js",
   "./js/metrics.js", "./js/planner.js", "./js/remote-store.js", "./js/reports.js",
   "./js/settings.js", "./js/shell.js", "./js/smartlinks.js", "./js/state.js",
-  "./js/store.js", "./js/team.js", "./js/util.js", "./js/welcome.js",
+  "./js/store.js", "./js/team.js", "./js/templates.js", "./js/util.js",
+  "./js/welcome.js",
   "./js/workspace.js", "./js/x-thread.js",
 ];
 

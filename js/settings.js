@@ -3,12 +3,17 @@ import { LS_KEY, OWNER_ONLY_TITLE } from "./constants.js";
 import { attr, esc, slColorOf } from "./escape.js";
 import { todayStr, uid } from "./util.js";
 import {
-  db, deferredInstallPrompt, editingHashtagGroup, setDb, setDeferredInstallPrompt,
-  setEditingHashtagGroup,
+  db, deferredInstallPrompt, editingHashtagGroup, editingTemplate, setDb,
+  setDeferredInstallPrompt,
+  setEditingHashtagGroup, setEditingTemplate,
 } from "./state.js";
 import {
   GROUP_NAME_MAX, describeGroupProblem, groupsOf, parseTags, validHashtagGroup,
 } from "./hashtags.js";
+import {
+  charLength, describeTemplateProblem,
+  normalizeTemplateBody, parsePlaceholders, templatesOf, validTemplate,
+} from "./templates.js";
 import { liveMode, store } from "./store.js";
 import { approvalRequired, brand, defaultBrand, isOwner, save, seedDemo } from "./workspace.js";
 import { renderTeamCard } from "./team.js";
@@ -61,6 +66,7 @@ export function renderSettings(m){
       ${approvalCard(owner)}
     </div>
     ${hashtagGroupsCard()}
+    ${postTemplatesCard()}
     <div class="card" style="flex:1;min-width:280px">
       <h4 style="margin-bottom:10px">Cloud sync &amp; team accounts</h4>
       <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -259,6 +265,126 @@ export function deleteHashtagGroup(id){
   save(); render(); toast("Hashtag group deleted");
 }
 
+/* ---------- post templates (ADR 0009) ---------- */
+/* Named, reusable post skeletons for the ACTIVE brand, beside the hashtag
+   groups card and scoped exactly the way it is scoped, because a template
+   belongs to one brand and the composer that fills it is always open in one.
+
+   Not owner-gated, for the same reason: ADR 0006 reserves is_owner for
+   destructive and account-shaped acts, composing is everyday editor work, and
+   the post_templates_all RLS policy is is_member(brand_id) to match. So there
+   is no disabled-with-a-reason control here — an editor may do all of this, and
+   the database agrees.
+
+   Unlike the composer's "Fit to template" button, this card is fully functional
+   in local and demo mode: writing and keeping a template touches no network at
+   all. Only the *filling* needs the Edge Function, which is why the AI row
+   hides itself outside live mode and this does not. save() persists through
+   whichever adapter is installed, exactly as renaming a brand does. */
+
+/** The first line of a body, as a hint beside the name — the line a customer
+    recognises the template by. Truncated by characters rather than by words
+    because a skeleton's first line is often one long sentence with a slot in
+    the middle of it.
+
+    Measured and cut in *code points*, like every other length in this feature.
+    `.slice(0, 70)` cuts between the two UTF-16 units an emoji is stored as, and
+    a template opening "🎙️ New episode" is exactly the kind this app has: the
+    preview would render a lone surrogate, which is a replacement glyph in the
+    card and an invalid string in anything that reads it. */
+function templatePreview(body){
+  const first=String(body).split("\n").find(line => line.trim()) || "";
+  return charLength(first) > 70 ? [...first].slice(0, 70).join("") + "…" : first;
+}
+function templateRow(t){
+  const slots=parsePlaceholders(t.body);
+  return `<div class="tpl">
+    <div class="tpl-head">
+      <strong>${esc(t.name)}</strong>
+      <span class="tpl-count">${slots.length} slot${slots.length===1?"":"s"}</span>
+    </div>
+    <div class="tpl-preview">${esc(templatePreview(t.body))}</div>
+    <div class="tpl-slots">${esc(slots.map(s=>"{"+s+"}").join(" "))}</div>
+    <div class="tpl-acts">
+      <button class="btn ghost mini" data-action="editTemplate" data-arg="${attr(t.id)}"
+        >Edit</button>
+      <button class="btn dangerb mini" data-action="deleteTemplate" data-arg="${attr(t.id)}"
+        aria-label="${attr("Delete the post template "+t.name)}">✕</button>
+    </div>
+  </div>`;
+}
+function postTemplatesCard(){
+  const templates=templatesOf(brand());
+  const editing=templates.find(t=>t.id===editingTemplate) || null;
+  return `<div class="card" style="flex:1;min-width:280px">
+    <h4 style="margin-bottom:10px">Post templates</h4>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">Reusable post
+      skeletons for <strong>${esc(brand().name)}</strong>. Write the shape once with
+      <strong>{slots}</strong> where the details go, then pick it in the composer and
+      let AI assist fit your notes into it.</p>
+    ${templates.length ? templates.map(templateRow).join("")
+      : `<p style="color:var(--muted);font-size:13px">No templates yet. Create your first one below.</p>`}
+    <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+      <label class="f" for="tplName">${editing?"Edit template":"New template"}</label>
+      <!-- No maxlength on either box: it counts UTF-16 code units, so it would
+           silently truncate an emoji value the rule measures in characters —
+           a 60-character name of emoji would be cut at about 20.
+           describeTemplateProblem() reports the real count in words instead. -->
+      <input type="text" id="tplName"
+        placeholder="Podcast episode" value="${attr(editing?editing.name:"")}">
+      <label class="f" for="tplBody" style="margin-top:10px">Template</label>
+      <!-- No maxlength: it counts UTF-16 code units, so it would silently
+           truncate a pasted 2000-character emoji template the rule accepts.
+           describeTemplateProblem() says so in words instead. -->
+      <textarea id="tplBody" style="min-height:130px"
+        placeholder="🎙️ New episode {number}: {title}&#10;&#10;{hook}&#10;&#10;👉 Listen: {link}"
+        >${esc(editing?editing.body:"")}</textarea>
+      <div style="color:var(--muted);font-size:12px;margin-top:4px">A slot is a name in
+        curly braces — letters, numbers and underscores, like
+        <strong>{title}</strong>. Everything outside the slots is kept exactly as you
+        write it. If your notes don't cover a slot, AI assist leaves it in place so
+        you can see what's missing.</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn mini" data-action="saveTemplate"
+          data-arg="${attr(editing?editing.id:"")}">${editing?"Save changes":"Create template"}</button>
+        ${editing?`<button class="btn ghost mini" data-action="cancelTemplate">Cancel</button>`:""}
+      </div>
+    </div>
+  </div>`;
+}
+export function editTemplate(id){ setEditingTemplate(id); render(); }
+export function cancelTemplate(){ setEditingTemplate(null); render(); }
+export function saveTemplate(id){
+  const b=brand();
+  const name=document.getElementById("tplName").value.trim();
+  /* The body is NOT trimmed. Leading and trailing whitespace is part of the
+     skeleton, and the one promise this feature makes is that everything outside
+     the slots comes back byte for byte. The only repair is the line ending —
+     see normalizeTemplateBody(). */
+  const body=normalizeTemplateBody(document.getElementById("tplBody").value);
+  /* One sentence per refusal, from the same vocabulary the CHECK constraint
+     enforces — the customer gets English, and the database still gets the last
+     word if anything ever reaches it another way. */
+  const problem=describeTemplateProblem(name, body);
+  if(problem) return toast(problem);
+  if(!Array.isArray(b.post_templates)) b.post_templates=[];
+  const existing=b.post_templates.find(t=>t.id===id);
+  if(existing){ existing.name=name; existing.body=body; }
+  else b.post_templates.push({ id:uid(), name, body });
+  setEditingTemplate(null);
+  save(); render();
+  toast(existing?"Post template updated ✔":"Post template created ✔");
+}
+export function deleteTemplate(id){
+  const b=brand();
+  const template=templatesOf(b).find(t=>t.id===id);
+  if(!template) return;
+  if(!confirm(`Delete the post template “${template.name}”?`)) return;
+  b.post_templates=templatesOf(b).filter(t=>t.id!==id);
+  if(editingTemplate===id) setEditingTemplate(null);
+  save(); render(); toast("Post template deleted");
+}
+
 export function renameBrand(id,name){ db.brands.find(b=>b.id===id).name=name.trim()||"Brand"; save(); render(); }
 export function addBrand(){
   const name=document.getElementById("newBrand").value.trim(); if(!name)return toast("Give it a name");
@@ -392,9 +518,23 @@ export function validBackupSmartlink(sl){
 export function validBackupHashtagGroups(v){
   return Array.isArray(v) && v.every(validHashtagGroup);
 }
+/* Post templates ride the backup the same way, and are checked against the same
+   rules `valid_post_template_body` enforces — a name of 1..60 characters and a
+   body of 1..2000 carrying 1..20 `{slot}` placeholders and no control character
+   but tab and newline. Absent means "this brand has no templates", which is
+   every brand exported before this feature.
+   This is not decoration: an imported body is stored, is rendered back into
+   Settings and the composer, and is sent to a language model on the next "Fit
+   to template" — so a file is held to the CHECK's own rules here, where the
+   customer can be told the file is bad, rather than at the next persistNow()
+   where Postgres would refuse the row by constraint name. */
+export function validBackupTemplates(v){
+  return Array.isArray(v) && v.every(validTemplate);
+}
 export function validBackupBrand(b){
   return isPlainObject(b) && isId(b.id) && isText(b.name)
     && (b.hashtag_groups===undefined || validBackupHashtagGroups(b.hashtag_groups))
+    && (b.post_templates===undefined || validBackupTemplates(b.post_templates))
     && (b.seed===undefined || typeof b.seed === "number")
     // Carried by a cloud export, never *applied* by an import: the flag is
     // owner-gated server-side and is not part of a brand upsert, so restoring a
@@ -416,6 +556,8 @@ export function acceptBackup(d){
     // A file exported before hashtag groups existed carries none. Normalised to
     // [] rather than left absent so every brand in `db` has the same shape.
     if(!Array.isArray(b.hashtag_groups)) b.hashtag_groups = [];
+    // …and the same for a file exported before post templates existed.
+    if(!Array.isArray(b.post_templates)) b.post_templates = [];
   });
   d.activeBrand = d.brands[0].id;
   return d;

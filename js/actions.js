@@ -25,6 +25,7 @@ import {
 import {
   addCarouselItem, approvePost, calMove, clearAiAssist, deletePost, dragPost,
   dropPost, dupPost, focusVariant, insertHashtagGroup, openPostModal, publishNow,
+  pickAiTemplate,
   rejectPost, removeCarouselItem, renderCarousel, renderInstagramPanel,
   renderTikTokPanel, renderVariantSections, retryPost, runAiAssist, savePost,
   setApprovalScope, setInstagramOption, setTikTokOption, showMediaPreview,
@@ -41,9 +42,12 @@ import {
   connectNet, connectReal, disconnectNet, disconnectReal, selectReal,
 } from "./connections.js";
 import {
-  addBrand, cancelHashtagGroup, changeCloudPassword, cloudSignOut, deleteBrand,
-  deleteCloudAccount, deleteHashtagGroup, editHashtagGroup, exportData, importData,
-  installPhoneApp, renameBrand, resetData, saveHashtagGroup, simulatedApprovalToggle,
+  addBrand, cancelHashtagGroup, cancelTemplate, changeCloudPassword, cloudSignOut,
+  deleteBrand,
+  deleteCloudAccount, deleteHashtagGroup, deleteTemplate, editHashtagGroup,
+  editTemplate, exportData, importData,
+  installPhoneApp, renameBrand, resetData, saveHashtagGroup, saveTemplate,
+  simulatedApprovalToggle,
   toggleApproval,
 } from "./settings.js";
 import {
@@ -137,6 +141,9 @@ export const ACTIONS = {
   /* composer → AI assist. "Rewrite for network" also depends on the picker
      above, which is why toggleNet re-syncs the row too. */
   runAiAssist:           el => runAiAssist(el.dataset.arg),
+  /* …and "Fit to template" depends on the select beside it. The chosen id is
+     kept in state, not in the DOM, because paintAiAssist() rebuilds the row. */
+  pickAiTemplate:        el => pickAiTemplate(el),
   useAiSuggestion:       el => useAiSuggestion(el.dataset.arg),
   clearAiAssist:         () => clearAiAssist(),
   syncAiAssist:          () => syncAiAssist(),
@@ -179,6 +186,12 @@ export const ACTIONS = {
   editHashtagGroup:      el => editHashtagGroup(el.dataset.arg),
   cancelHashtagGroup:    () => cancelHashtagGroup(),
   deleteHashtagGroup:    el => deleteHashtagGroup(el.dataset.arg),
+  /* settings → post templates (ADR 0009). Member-level work for the same
+     reason, and the post_templates_all RLS policy is is_member(brand_id). */
+  saveTemplate:          el => saveTemplate(el.dataset.arg),
+  editTemplate:          el => editTemplate(el.dataset.arg),
+  cancelTemplate:        () => cancelTemplate(),
+  deleteTemplate:        el => deleteTemplate(el.dataset.arg),
   exportData:            () => exportData(),
   pickImportFile:        () => document.getElementById("impFile").click(),
   importData:            el => importData(el),

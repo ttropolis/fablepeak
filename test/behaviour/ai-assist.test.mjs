@@ -71,13 +71,15 @@ test("the signed-out demo composer offers no AI assist either", async t => {
   assert.equal(row(app), null);
 });
 
-test("a signed-in cloud composer offers all three assists", async t => {
+test("a signed-in cloud composer offers all four assists", async t => {
   const app = await bootComposer();
   t.after(() => app.close());
 
   assert.ok(row(app), "cloud mode shows the row");
   assert.deepEqual(assistButtons(app).map(b => b.textContent.trim()),
-    ["Suggest captions", "Hashtags", "Rewrite for network"]);
+    ["Suggest captions", "Hashtags", "Rewrite for network", "Fit to template"]);
+  assert.equal(app.$("#pm_ai_template"), null,
+    "a brand with no saved templates gets no picker — the button already says where to make one");
 });
 
 test("a published post is read-only, so it gets no assist row", async t => {
@@ -110,14 +112,18 @@ test("an empty composer disables every assist and says what it wants", async t =
   t.after(() => app.close());
 
   await app.fill("#pm_text", "");
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true]);
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true, true]);
   assert.match(assistButton(app, "Suggest captions").title, /Type the topic/);
   assert.equal(assistButton(app, "Hashtags").title, "Write some content first");
 
   // Typing re-enables them without waiting for the textarea to lose focus.
+  // "Fit to template" stays disabled: this brand has saved none, which is a
+  // different problem from an empty box and says so.
   await app.fill("#pm_text", "Our new espresso blend");
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false]);
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false, true]);
   assert.equal(assistButton(app, "Hashtags").hasAttribute("title"), false);
+  assert.equal(assistButton(app, "Fit to template").title,
+    "Save a template in Settings → Post templates first");
 });
 
 test("rewrite needs exactly one network the assist knows a house style for", async t => {
@@ -152,7 +158,7 @@ test("input longer than the server's ceiling is refused before a round trip", as
   t.after(() => app.close());
 
   await app.fill("#pm_text", "x".repeat(4001));
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true]);
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true, true]);
   assert.match(assistButton(app, "Hashtags").title, /up to 4000 characters — this is 4001/);
   assert.deepEqual(calls(app, "aiAssist"), []);
 });
@@ -182,14 +188,14 @@ test("the clicked button says it is thinking, and nothing else can start", async
 
   assistButton(app, "Suggest captions").click();          // deliberately not awaited
   assert.ok(app.byText("#pm_ai button", "Thinking"), "the clicked button reports itself");
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true],
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [true, true, true, true],
     "one request at a time");
 
   assistButton(app, "Hashtags").click();
   await app.flush();
   assert.equal(calls(app, "aiAssist").length, 1, "the second click was ignored");
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false],
-    "the row comes back when the answer does");
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false, true],
+    "the row comes back when the answer does — bar the one this brand has no templates for");
 });
 
 test("choosing a caption replaces the content and still counts as an unsaved edit", async t => {
@@ -280,7 +286,7 @@ test("a rate limit is reported with how long it has left to run", async t => {
   assert.equal(app.toast(),
     "AI assist is limited to 20 requests an hour. Try again in about 60 minutes.");
   assert.deepEqual(suggestions(app), []);
-  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false],
+  assert.deepEqual(assistButtons(app).map(b => b.disabled), [false, false, false, true],
     "a failure releases the row for another attempt");
 });
 
@@ -455,4 +461,154 @@ test("moving the caret back to the post's own content retargets the rewrite with
   assert.equal(rewrite().disabled, true);
   assert.equal(rewrite().title, "Select exactly one network to rewrite for",
     "the base text is the subject again, and two networks cannot both claim it");
+});
+
+/* ---------- ADR 0009: fitting a post to a saved template ----------
+
+   The distinctive thing about this action is that it is the only one with a
+   *second* subject: the post's text and the skeleton it goes into. The
+   skeleton is chosen in a <select> that lives in a row paintAiAssist() rebuilds
+   from scratch on every request, so "does the choice survive the re-render" is
+   the behaviour these tests exist to hold. */
+
+const TEMPLATE_BODY = "🎙️ New episode {number}: {title}\n\n{hook}\n\n👉 Listen: {link}";
+
+/** The seeded fixture plus two saved templates on the brand. */
+function templateFixture(extra = {}) {
+  const base = fixture(extra);
+  base.db.brands[0].post_templates = [
+    { id: "t1", name: "Podcast episode", body: TEMPLATE_BODY },
+    { id: "t2", name: "Feature launch", body: "{headline}\n\n{summary}" },
+  ];
+  return base;
+}
+async function bootTemplateComposer(extra = {}) {
+  const app = await bootApp({ mode: "cloud", cloud: templateFixture(extra) });
+  await openSeededPost(app);
+  return app;
+}
+const picker = app => app.$("#pm_ai_template");
+
+test("with templates saved, the picker appears and the button waits for a choice", async t => {
+  const app = await bootTemplateComposer();
+  t.after(() => app.close());
+
+  assert.deepEqual([...picker(app).options].map(o => [o.value, o.textContent.trim()]),
+    [["", "Template…"], ["t1", "Podcast episode"], ["t2", "Feature launch"]]);
+  assert.equal(assistButton(app, "Fit to template").disabled, true);
+  assert.equal(assistButton(app, "Fit to template").title,
+    "Choose a template to fit this post into", "a different refusal from having none");
+
+  await app.fill(picker(app), "t1");
+  assert.equal(assistButton(app, "Fit to template").disabled, false);
+  assert.equal(assistButton(app, "Fit to template").hasAttribute("title"), false);
+});
+
+test("the chosen template survives the row being repainted mid-request", async t => {
+  const app = await bootTemplateComposer({
+    aiAssist: { suggestions: ["🎙️ New episode 12: Old text\n\nA hook.\n\n👉 Listen: {link}"] },
+  });
+  t.after(() => app.close());
+
+  await app.fill(picker(app), "t1");
+  // paintAiAssist() replaces #pm_ai's innerHTML when the request starts and
+  // again when it lands. A <select> that held the choice in the DOM would come
+  // back on "Template…" both times, and the second click would be refused.
+  assistButton(app, "Fit to template").click();          // deliberately not awaited
+  assert.equal(picker(app).value, "t1", "…during the request");
+  await app.flush();
+  assert.equal(picker(app).value, "t1", "…and after it");
+  assert.equal(assistButton(app, "Fit to template").disabled, false,
+    "so a second fit needs no second choice");
+});
+
+test("the request carries the template body itself, and no network", async t => {
+  const app = await bootTemplateComposer({
+    aiAssist: { suggestions: ["🎙️ New episode 12: Old text\n\nA hook.\n\n👉 Listen: {link}"] },
+  });
+  t.after(() => app.close());
+
+  await app.fill(picker(app), "t1");
+  await app.click(assistButton(app, "Fit to template"));
+
+  assert.deepEqual(calls(app, "aiAssist").map(c => c.args), [[
+    "b1", { action: "template", text: "Old text", template_body: TEMPLATE_BODY },
+  ]], "the body travels on the request — the Edge Function never reads the table — "
+    + "and no network, because the skeleton is the shape");
+
+  assert.match(app.$("#pm_ai .ai-outhead").textContent, /Tap the filled-in template/);
+  await app.click(app.$("#pm_ai .ai-sugg"));
+  assert.equal(app.$("#pm_text").value,
+    "🎙️ New episode 12: Old text\n\nA hook.\n\n👉 Listen: {link}",
+    "the answer replaces the content, unfilled slot and all");
+  assert.equal(app.toast(), "Content replaced");
+});
+
+test("a template deleted under the composer blocks the button rather than sending a stale body", async t => {
+  const app = await bootTemplateComposer();
+  t.after(() => app.close());
+
+  await app.fill(picker(app), "t1");
+  app.db.brands[0].post_templates = app.db.brands[0].post_templates.filter(t => t.id !== "t1");
+  await app.call("syncAiAssist");
+
+  assert.equal(assistButton(app, "Fit to template").disabled, true);
+  assert.equal(assistButton(app, "Fit to template").title, "Choose a template to fit this post into");
+  await app.click(assistButton(app, "Fit to template"));
+  assert.deepEqual(calls(app, "aiAssist"), [], "nothing is sent for a template that is gone");
+});
+
+test("the choice does not outlive the composer that made it", async t => {
+  const app = await bootTemplateComposer();
+  t.after(() => app.close());
+
+  await app.fill(picker(app), "t2");
+  await app.click(app.byText(".modalfoot button", "Cancel"));
+  assert.equal(app.modalOpen(), false);
+  assert.equal(app.state.composerTemplate, "", "cleared on close, like the suggestions");
+
+  await openSeededPost(app);
+  assert.equal(picker(app).value, "", "a reopened composer starts with nothing chosen");
+});
+
+test("a filled template reaches the box whole, whitespace and all", async t => {
+  /* The composer is the last place a filled template can be damaged, and it had
+     the same bug the Edge Function's parser had: an unconditional
+     `.map(s => s.trim())` over every suggestion. Both readRequest and
+     saveTemplate promise that whitespace outside the slots is part of the
+     skeleton; a trim here breaks that promise at the last possible moment, and
+     a skeleton that opens with a blank line cannot round-trip.
+
+     The provider-side half of this — that a multi-line answer arrives as ONE
+     suggestion rather than three — is asserted against the real parser in
+     supabase/functions/ai-assist/index.deno.ts. This test is about what the
+     composer does with the answer it is handed. */
+  const filled = "\n🎙️ New episode 12: Compilers\n\nA hook, with a blank line above it.\n\n👉 example.test/12  ";
+  const app = await bootTemplateComposer({ aiAssist: { suggestions: [filled] } });
+  t.after(() => app.close());
+
+  await app.fill(picker(app), "t1");
+  await app.click(assistButton(app, "Fit to template"));
+
+  assert.equal(app.$$("#pm_ai .ai-sugg").length, 1,
+    "one filled template is one choice, never one per line");
+  await app.click(app.$("#pm_ai .ai-sugg"));
+  assert.equal(app.$("#pm_text").value, filled,
+    "byte for byte, leading newline and trailing spaces included");
+
+  // An answer that is only whitespace is still nothing, not a blank post.
+  const blank = await bootTemplateComposer({ aiAssist: { suggestions: ["   \n  "] } });
+  t.after(() => blank.close());
+  await blank.fill(picker(blank), "t1");
+  await blank.click(assistButton(blank, "Fit to template"));
+  assert.deepEqual(blank.$$("#pm_ai .ai-sugg").map(b => b.textContent), []);
+  assert.equal(blank.toast(), "AI assist returned nothing usable. Try again.");
+
+  // …and the other actions still get their whitespace tidied, so this is the
+  // template action's rule and not a lost behaviour.
+  const caption = await bootTemplateComposer({ aiAssist: { suggestions: ["  Meet the blend  "] } });
+  t.after(() => caption.close());
+  await caption.click(assistButton(caption, "Suggest captions"));
+  await caption.click(caption.$("#pm_ai .ai-sugg"));
+  assert.equal(caption.$("#pm_text").value, "Meet the blend");
 });

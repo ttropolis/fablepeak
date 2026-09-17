@@ -175,7 +175,8 @@ test("hashtag_groups joins the synced tables the way inbox_threads does", async 
   // …and into the diff baseline, so the next persist() does not re-upsert
   // everything it just read.
   assert.match(adapter, /hashtagGroups:groupsResult\.data/);
-  assert.match(adapter, /this\._snap = \{ brands:cur\.brands, posts:cur\.posts, inbox:cur\.inbox,\s*\n?\s*hashtagGroups:cur\.hashtagGroups \}/);
+  assert.match(adapter, /this\._snap = \{ brands:cur\.brands, posts:cur\.posts, inbox:cur\.inbox,\s*\n?\s*hashtagGroups:cur\.hashtagGroups[,}]/,
+    "the diff baseline carries the groups it just wrote; later tables may follow it");
 
   // server rows -> app brand, and app brand -> server rows.
   assert.match(adapter,
@@ -184,7 +185,8 @@ test("hashtag_groups joins the synced tables the way inbox_threads does", async 
   assert.match(adapter,
     /for\(const g of b\.hashtag_groups\|\|\[\]\) hashtagGroups\.push\(\{ id:g\.id, brand_id:b\.id,/,
     "app brand -> server row, guarded because a brand created before this feature has none");
-  assert.match(adapter, /return \{ brands, posts, inbox, hashtagGroups \};/);
+  assert.match(adapter, /return \{ brands, posts, inbox, hashtagGroups[,}]/,
+    "…and _dbToRows returns them; later tables may be appended to the same tuple");
 
   // persist(): upsert the changed rows and delete the removed ones, exactly as
   // posts and inbox threads are.

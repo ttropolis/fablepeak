@@ -56,6 +56,11 @@ export let slCache = { brandId:null, slug:"", published:false, totals:{},
     is creating a new one. Not persisted: "I am part-way through renaming this
     group" is a property of the screen, not of the workspace. */
 export let editingHashtagGroup = null;
+/** Which post template Settings has open in its editor, or null while the form
+    is creating a new one. Not persisted, for the same reason the line above is
+    not: "I am part-way through rewriting this template" is a property of the
+    screen, not of the workspace. */
+export let editingTemplate = null;
 /** welcome gate tab: "signin" | "signup" */
 export let wMode = "signin";
 /** element focused before the modal opened, restored on close */
@@ -70,6 +75,15 @@ export const AI_ASSIST_IDLE = Object.freeze({
   busy: null, action: null, items: Object.freeze([]), truncated: false,
 });
 export let aiAssist = AI_ASSIST_IDLE;
+/** Which saved template the open composer's "Fit to template" will use — the
+    id, or "" for none chosen. Lives here rather than in the DOM because
+    paintAiAssist() replaces the whole AI row's innerHTML every time a request
+    starts or finishes, and a <select> rebuilt from scratch would forget the
+    customer's choice mid-request. The variable is the source of truth and the
+    markup is rendered from it, so a re-render restores the selection instead of
+    losing it. Reset whenever a modal opens or closes, like aiAssist itself, so
+    no composer inherits another one's template. */
+export let composerTemplate = "";
 /** The open composer's per-network copy (ADR 0005 decision 2), keyed by network
     id. Holds what is typed *and* what was retained: a variant for a network the
     customer has since deselected stays here so re-selecting restores the draft,
@@ -148,10 +162,12 @@ export function setTeamCache(value){ teamCache = value; }
 export function setInviteCache(value){ inviteCache = value; }
 export function setSlCache(value){ slCache = value; }
 export function setEditingHashtagGroup(value){ editingHashtagGroup = value; }
+export function setEditingTemplate(value){ editingTemplate = value; }
 export function setWMode(value){ wMode = value; }
 export function setPreviousModalFocus(value){ previousModalFocus = value; }
 export function setComposerBaseline(value){ composerBaseline = value; }
 export function setAiAssist(value){ aiAssist = value; }
+export function setComposerTemplate(value){ composerTemplate = value; }
 export function setComposerVariants(value){ composerVariants = value; }
 export function setComposerVariantFocus(value){ composerVariantFocus = value; }
 export function setComposerCarousel(value){ composerCarousel = value; }
@@ -167,9 +183,10 @@ const SETTERS = {
   deferredInstallPrompt: setDeferredInstallPrompt,
   metricsCache: setMetricsCache, connCache: setConnCache, slCache: setSlCache,
   roleCache: setRoleCache, teamCache: setTeamCache, inviteCache: setInviteCache,
-  editingHashtagGroup: setEditingHashtagGroup,
+  editingHashtagGroup: setEditingHashtagGroup, editingTemplate: setEditingTemplate,
   wMode: setWMode, previousModalFocus: setPreviousModalFocus,
   composerBaseline: setComposerBaseline, aiAssist: setAiAssist,
+  composerTemplate: setComposerTemplate,
   composerVariants: setComposerVariants,
   composerVariantFocus: setComposerVariantFocus,
   composerCarousel: setComposerCarousel,

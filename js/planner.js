@@ -7,14 +7,16 @@ import { fileSizeLabel, fmtDate, mediaContentType, todayStr, uid } from "./util.
 import {
   AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, aiAssist,
   approvalFilter, calCursor, composerCarousel, composerCarouselAlts,
-  composerInstagram, composerTikTok,
+  composerInstagram, composerTemplate, composerTikTok,
   composerVariantFocus, composerVariants, mediaUploadActive, setAiAssist,
   setApprovalFilter, setComposerBaseline, setComposerCarousel,
   setComposerCarouselAlts,
-  setComposerInstagram, setComposerTikTok, setComposerVariantFocus,
+  setComposerInstagram, setComposerTemplate, setComposerTikTok,
+  setComposerVariantFocus,
   setComposerVariants, setMediaUploadActive,
 } from "./state.js";
 import { appendTags, groupsOf } from "./hashtags.js";
+import { templatesOf } from "./templates.js";
 import { splitXThread } from "./x-thread.js";
 import { liveMode, store } from "./store.js";
 import {
@@ -1316,11 +1318,13 @@ const AI_ACTIONS = [
   ["caption",  "Suggest captions"],
   ["hashtags", "Hashtags"],
   ["rewrite",  "Rewrite for network"],
+  ["template", "Fit to template"],
 ];
 const AI_RESULT_LABEL = {
   caption:  "Tap a caption to use it",
   hashtags: "Tap a hashtag to add it",
   rewrite:  "Tap a rewrite to use it",
+  template: "Tap the filled-in template to use it",
 };
 /* Mirrors NETWORK_CONVENTIONS in the Edge Function. Asking it to rewrite for a
    network it has no house style for is a 400, so the button says so instead. */
@@ -1367,6 +1371,12 @@ function aiTargetNetwork(){
   if(focused) return AI_NETWORKS.includes(focused) ? focused : null;
   return aiNetwork();
 }
+/** The template "Fit to template" would use, or null — the composer's chosen id
+    looked up in the brand, so a template deleted in another tab resolves to
+    nothing rather than to a stale body. */
+function aiTemplate(){
+  return templatesOf(brand()).find(t => t.id===composerTemplate) || null;
+}
 /** Why this button cannot run yet — shown as its title — or "" when it can. */
 export function aiAssistBlocked(action){
   const text=aiText();
@@ -1379,7 +1389,39 @@ export function aiAssistBlocked(action){
     return focusedVariantNetwork() || aiCheckedNets().length===1
       ? "AI assist has no house style for that network yet"
       : "Select exactly one network to rewrite for";
+  /* Two distinct reasons, because they have two distinct answers: one is "go
+     to Settings and write one", the other is "the picker is right there". */
+  if(action==="template"){
+    if(!templatesOf(brand()).length)
+      return "Save a template in Settings → Post templates first";
+    if(!aiTemplate()) return "Choose a template to fit this post into";
+  }
   return "";
+}
+/* The template picker.
+   Rendered from `composerTemplate` rather than read back off the DOM, and that
+   is the whole trick: paintAiAssist() replaces this row's innerHTML every time
+   a request starts and again when it finishes, so a <select> that held the
+   choice in the DOM would forget it the moment the customer pressed the button.
+   The state is the source of truth, `selected` is derived from it, and
+   pickAiTemplate() writes it and then calls syncAiAssist() — which only touches
+   the buttons' disabled/title, so the select is never re-rendered under the
+   customer's cursor and keeps focus.
+   Absent entirely when the brand has no templates: the button beside it already
+   says where to make one, and an empty picker is a control that answers nothing. */
+function aiTemplateSelect(){
+  const templates=templatesOf(brand());
+  if(!templates.length) return "";
+  return `<select class="ai-template" id="pm_ai_template" data-change="pickAiTemplate"
+    aria-label="Template to fit this post into"${aiAssist.busy?" disabled":""}>
+    <option value="">Template…</option>
+    ${templates.map(t=>`<option value="${attr(t.id)}"${t.id===composerTemplate?" selected":""}
+      >${esc(t.name)}</option>`).join("")}
+  </select>`;
+}
+export function pickAiTemplate(el){
+  setComposerTemplate(el.value);
+  syncAiAssist();                                // re-gate the button, not the row
 }
 function aiAssistInner(){
   const buttons=AI_ACTIONS.map(([action,label])=>{
@@ -1389,7 +1431,7 @@ function aiAssistInner(){
       >${aiAssist.busy===action?"Thinking…":esc(label)}</button>`;
   }).join("");
   const items=aiAssist.items||[];
-  return `<div class="ai-row"><span class="ai-label">✨ AI assist</span>${buttons}</div>
+  return `<div class="ai-row"><span class="ai-label">✨ AI assist</span>${buttons}${aiTemplateSelect()}</div>
     ${items.length?`<div class="ai-out">
       <div class="ai-outhead"><span>${esc(AI_RESULT_LABEL[aiAssist.action]||"Suggestions")}</span>
         <button type="button" class="btn ghost mini" data-action="clearAiAssist"
@@ -1424,7 +1466,21 @@ export async function runAiAssist(action){
   const blocked=aiAssistBlocked(action);
   if(blocked) return toast(blocked);
   const request = action==="caption" ? {action, topic:aiText()} : {action, text:aiText()};
-  const network=aiTargetNetwork();
+  if(action==="template"){
+    /* The body travels on the request, not a row id: the Edge Function does not
+       read public.post_templates, because a skeleton is customer content that is
+       about to be handed to a model and looking it up server-side would be
+       authenticating a string into looking trustworthy (ADR 0009 §3). */
+    const template=aiTemplate();
+    if(!template) return toast("Choose a template to fit this post into");
+    request.template_body=template.body;
+  }
+  /* No network for "Fit to template". The house styles are instructions to
+     rewrite *towards* a length and a shape, and this action's contract is that
+     everything outside the slots comes back exactly as written — the Edge
+     Function ignores the field for this action, and not sending it says so on
+     this side too. */
+  const network=action==="template" ? null : aiTargetNetwork();
   if(network) request.network=network;
   setAiAssist({...aiAssist, busy:action});
   paintAiAssist();
@@ -1433,7 +1489,16 @@ export async function runAiAssist(action){
     // Modal open/close resets state to idle; a response for a composer that
     // no longer exists must not repopulate the fresh one.
     if(aiAssist.busy!==action) return;
-    const items=(out?.suggestions||[]).map(s=>String(s).trim()).filter(Boolean);
+    /* Every other action returns a list of short strings, and trimming the
+       model's stray whitespace off each of them is right. "Fit to template"
+       returns one whole post whose leading and trailing whitespace is part of
+       the skeleton the customer saved — readRequest and saveTemplate both
+       refuse to trim it, and trimming it here would undo both at the last
+       possible moment. An answer that is only whitespace is still nothing. */
+    const raw=(out?.suggestions||[]).map(s=>String(s));
+    const items = action==="template"
+      ? raw.filter(s=>s.trim())
+      : raw.map(s=>s.trim()).filter(Boolean);
     setAiAssist({busy:null, action, items, truncated:!!out?.truncated});
     if(!items.length) toast("AI assist returned nothing usable. Try again.");
   }catch(e){

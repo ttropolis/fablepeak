@@ -7,7 +7,7 @@ import {
   AI_ASSIST_IDLE, COMPOSER_INSTAGRAM_IDLE, COMPOSER_TIKTOK_IDLE, composerBaseline,
   db, mediaUploadActive, previousModalFocus, setAiAssist, setAnalyticsNet,
   setComposerBaseline, setComposerCarousel, setComposerCarouselAlts,
-  setComposerInstagram, setComposerTikTok,
+  setComposerInstagram, setComposerTemplate, setComposerTikTok,
   setComposerVariantFocus, setComposerVariants, setPreviousModalFocus,
   setSelectedMsg, setView, view,
 } from "./state.js";
@@ -35,6 +35,7 @@ export function openModal(html){
   setPreviousModalFocus(document.activeElement);
   setComposerBaseline(null);                   // openPostModal re-arms this
   setAiAssist(AI_ASSIST_IDLE);                 // no answer outlives its composer
+  setComposerTemplate("");                     // …nor the template it was aimed at
   setComposerVariants({});                     // …and no per-network copy either
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);     // …and no other creator's account
@@ -54,6 +55,7 @@ export function closeModal(){
   document.getElementById("overlay").classList.remove("open");
   setComposerBaseline(null);
   setAiAssist(AI_ASSIST_IDLE);
+  setComposerTemplate("");
   setComposerVariants({});
   setComposerVariantFocus(null);
   setComposerTikTok(COMPOSER_TIKTOK_IDLE);
