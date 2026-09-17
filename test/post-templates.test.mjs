@@ -243,12 +243,14 @@ test("the composer and Settings share one set of limits with the CHECK", async (
   /* Built rather than written out, so this file does not have to contain the
      escape sequences it is asserting about — a \u in a test source is a value,
      not the two characters the module has to spell. */
-  const escapes = [0, 8, 0x0B, 0x1F, 0x7F, 0x9F]
-    .map(n => "\\u" + n.toString(16).toUpperCase().padStart(4, "0"));
-  const expectedClass = `const BODY_CONTROL = /[${escapes[0]}-${escapes[1]}`
-    + `${escapes[2]}-${escapes[3]}${escapes[4]}-${escapes[5]}]/;`;
+  const esc = n => "\\u" + n.toString(16).toUpperCase().padStart(4, "0");
+  const [c0, c0end, c0b, c0bend, del, c1end, ls, ps] =
+    [0, 8, 0x0B, 0x1F, 0x7F, 0x9F, 0x2028, 0x2029].map(esc);
+  const expectedClass = `const BODY_CONTROL = /[${c0}-${c0end}${c0b}-${c0bend}`
+    + `${del}-${c1end}${ls}${ps}]/;`;
   assert.ok(vocabulary.includes(expectedClass),
-    "C0, DEL and C1 — the range Postgres' [[:cntrl:]] covers in a UTF-8 lc_ctype");
+    "C0, DEL and C1 — the range Postgres' [[:cntrl:]] covers in a UTF-8 lc_ctype — "
+    + "plus U+2028/U+2029, which glibc classes with them and an iOS paste emits");
   assert.doesNotMatch(vocabulary, /^import /m,
     "js/templates.js imports nothing, the way js/escape.js and js/hashtags.js do");
 
@@ -621,7 +623,12 @@ test("the one-time suffix carries the entropy the comment claims", async () => {
   for (const [name, text] of [["index.ts", source], ["ADR 0009", adr]]) {
     assert.doesNotMatch(text, /crypto\.randomUUID\(/,
       `${name}: the call, not the word — both files explain why it is not used`);
-    assert.match(text, /90/, `${name}: …and that explanation states what it would have cost`);
+    /* Not /90/. The migration is 20260917090000_post_templates.sql and both
+       files name it, so a bare 90 matches the timestamp and the pin would pass
+       with the entire explanation deleted — it was exactly that until a review
+       ran the mutation. Match the words around the number. */
+    assert.match(text, /90 random bits|carried 90/,
+      `${name}: …and that explanation states what it would have cost`);
   }
   assert.match(adr, /96\s+(fresh\s+)?random bits/,
     "the ADR may keep the number now that it is true");
@@ -659,7 +666,10 @@ test("a card preview slices characters, not UTF-16 units", async () => {
 test("ADR 0009 describes substitution, and is honest about what is left", async () => {
   const adr = await read("docs/adr/0009-post-templates.md");
   assert.match(adr, /slot values/i);
-  assert.doesNotMatch(adr, /byte-identical reproduction is the entire promise/,
+  /* \s+ between the words, not a space: the sentence this refuses lived across
+     a line break in the ADR, so the single-space form passed while the sentence
+     was still there. A pin on prose has to survive the wrapping of that prose. */
+  assert.doesNotMatch(adr, /byte-identical\s+reproduction\s+is\s+the\s+entire\s+promise/,
     "reproduction is no longer a promise asked of the model");
   assert.match(adr, /by construction/, "it is a property of where the characters come from");
   assert.match(adr, /quality/i, "what remains model-dependent is the quality of each slot value");
@@ -698,7 +708,8 @@ test("the Edge Function's template behaviour is executed in the Deno suite", asy
     "an answer that is not a JSON object of values is a 502, with no salvage",
     "the model is asked for values, and told which slots exist",
     "the template posture is on the template action and nowhere else",
-    "the token ceiling is per action, and the template asks for far less",
+    "the token ceiling is per action, and no action is given less",
+    "an object with keys but no slot value is refused, not answered",
   ]) {
     assert.ok(denoTests.includes(`Deno.test("${title}"`), `missing Deno test: ${title}`);
   }
@@ -759,8 +770,18 @@ test("the Edge Function's template behaviour is executed in the Deno suite", asy
   assert.match(posture, /no template block exists on this request/);
   assert.match(posture, /the content posture itself is untouched/);
 
-  const budget = bodyOf("the token ceiling is per action, and the template asks for far less");
-  assert.match(budget, /assert\(templateBudget < listBudget/);
+  /* The assertion this slice pins was inverted, not tightened: `template` used
+     to be held BELOW the list actions on the reasoning that slot values are
+     smaller than a post. A slot-heavy skeleton and a reasoning model's <think>
+     block both break that, and both truncate the JSON into a 502 that says
+     "try again" when the retry meets the same ceiling. */
+  const budget = bodyOf("the token ceiling is per action, and no action is given less");
+  assert.match(budget, /assertEquals\(templateBudget, listBudget/);
+
+  const wrapper = bodyOf("an object with keys but no slot value is refused, not answered");
+  assert.match(wrapper, /assertEquals\(status, 502/, "the wrapper shapes are refused");
+  assert.match(wrapper, /assertEquals\(empty\.status, 200\)/,
+    "…and `{}` stays the honest 200 it was, or this check has gone too far");
 
   const delimiter = bodyOf("a hostile template body cannot break out of its delimiter, on any tier");
   assert.match(delimiter, /the opening tag must carry a one-time suffix/);

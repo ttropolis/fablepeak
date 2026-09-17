@@ -58,14 +58,23 @@ const PLACEHOLDER = /\{[A-Za-z0-9_]{1,40}\}/g;
    exact failure this mirroring exists to prevent. It is also simply right: a C1
    character is never legitimate text, it is what a Windows-1252 mis-decode
    leaves behind. U+00A0, the next code point up, is ordinary typography and is
-   deliberately not touched. */
-const BODY_CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/;
+   deliberately not touched.
+
+   U+2028 and U+2029 are refused for the same reasons, and named because they do
+   not look like control characters: glibc's UTF-8 ctype classes them as cntrl,
+   so Postgres very likely refuses them too, and an iOS or macOS field emits one
+   invisibly on a paste — a template the customer can read perfectly well that
+   will not save, with nothing on screen to explain it. Not verified against a
+   live Postgres; the class errs toward refusing, because stricter than the
+   CHECK costs a paste nobody meant to make and looser is the raw constraint
+   name this mirroring exists to prevent. */
+const BODY_CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/;
 /* A *name* has no line breaks to protect: it comes from an <input type="text">,
    which cannot contain a newline or a tab. So the whole C0 range is refused
    there, the way a hashtag refuses it. This is deliberately stricter than the
    `char_length(name)` CHECK, which only bounds the length — the database is the
    last line, not the first, and it has nothing to say about what renders. */
-const NAME_CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
+const NAME_CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 
 /* Length in *characters*, the unit Postgres `char_length()` counts.
    JavaScript's `.length` counts UTF-16 code units, so an emoji is one character

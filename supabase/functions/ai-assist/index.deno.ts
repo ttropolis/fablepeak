@@ -749,6 +749,16 @@ Deno.test("a template request is refused before any spend when the body is unusa
        is what a Windows-1252 mis-decode leaves behind. */
     ["a C1 control character", "{a}\u0085b", "template_body must not contain control characters"],
     ["the top of the C1 range", "{a}\u009Fb", "template_body must not contain control characters"],
+    /* U+2028 and U+2029, which do not look like control characters and are the
+       one rule in the mirror not verified against a live Postgres. glibc's
+       UTF-8 ctype classes them as cntrl, so the CHECK very likely refuses them;
+       and an iOS or macOS text field emits one invisibly on a paste, which
+       would be a template the customer can read perfectly well and cannot save,
+       with nothing on screen to say why. The class errs toward refusing,
+       because stricter than the CHECK costs a paste nobody meant to make and
+       looser is the raw constraint name. */
+    ["a line separator", "{a}\u2028b", "template_body must not contain control characters"],
+    ["a paragraph separator", "{a}\u2029b", "template_body must not contain control characters"],
   ];
   for (const [label, value, message] of cases) {
     const { handler, calls, recorded } = harness();
@@ -1190,13 +1200,20 @@ Deno.test("the template posture is on the template action and nowhere else", asy
   }
 });
 
-Deno.test("the token ceiling is per action, and the template asks for far less", async () => {
-  /* MAX_TOKENS was one number for every action, and the Cloudflare adapter
-     hard-codes truncated:false — so an emoji-dense template near the 2000
-     character ceiling truncated silently. Two things close that: the answer no
-     longer contains the skeleton at all (it is slot values, an order of
-     magnitude smaller), and a truncated object fails to parse, which is a 502
-     rather than a short post nobody notices. */
+Deno.test("the token ceiling is per action, and no action is given less", async () => {
+  /* This test used to assert the opposite — that `template` needs *less* than
+     the list-shaped actions, because its answer is slot values rather than a
+     post. That reasoning holds for a three-or-four-slot skeleton and fails for
+     the two cases that matter: a skeleton that is almost entirely slots wants
+     as many characters of values as a post wants of text, and a reasoning model
+     spends the ceiling on its <think> block before writing a single slot.
+     Either one truncates the JSON object, which does not parse, which is a 502
+     saying "try again" — advice that cannot work, because the retry meets the
+     same ceiling. An output ceiling bills only what is generated, so the
+     headroom is not paid for by the common case.
+
+     What the per-action map still buys is the plumbing: the ceiling travels as
+     an argument to runModel(), so tuning one action never touches an adapter. */
   const { calls } = await fillWith('{"number":"12"}');
   const templateBudget = calls[0].body.max_tokens;
 
@@ -1205,7 +1222,42 @@ Deno.test("the token ceiling is per action, and the template asks for far less",
   const listBudget = captionCalls[0].body.max_tokens;
 
   assertEquals(listBudget, 1024, "the list-shaped actions keep the budget they had");
-  assert(templateBudget < listBudget,
-    `the template answer is values only, so it needs less than ${listBudget}`);
-  assert(templateBudget >= 256, "…but enough for 20 slots with names and quoting");
+  assertEquals(templateBudget, listBudget,
+    "a slot-heavy skeleton or a thinking model needs every bit as much room");
+});
+
+/* An object whose keys carry no usable value is a model that misunderstood the
+   format, not one that had nothing to say — and the two look identical to a
+   customer unless the first is refused. Both cases below are shapes a small
+   model actually produces: a wrapper object, and every value of the wrong type. */
+Deno.test("an object with keys but no slot value is refused, not answered", async () => {
+  for (const [label, reply] of [
+    ["a wrapper object", '{"slots":{"number":"12","title":"Compilers"}}'],
+    ["every value the wrong type", '{"number":12,"title":null}'],
+    ["values nested one level down", '{"values":{"hook":"a hook"}}'],
+  ]) {
+    const { status, body } = await fillWith(reply);
+    assertEquals(status, 502, `${label} must not reach the composer`);
+    assertEquals(body, { error: "AI assist returned nothing usable. Try again." });
+  }
+
+  /* …and the boundary this must not cross. `{}` is the contract's own way of
+     saying the notes filled nothing in, so it stays a 200 with every
+     placeholder standing. Refusing it would turn an honest answer into an
+     error the author cannot act on. */
+  const empty = await fillWith("{}");
+  assertEquals(empty.status, 200);
+  assertEquals(empty.body.suggestions, [SKELETON]);
+});
+
+/* The ceiling was briefly 512 for this action, on the reasoning that slot
+   values are smaller than the post they fill. A skeleton that is mostly slots
+   breaks that reasoning, and a reasoning model's <think> block breaks it before
+   a slot is written at all — and either one truncates the JSON, which does not
+   parse, which is a 502 telling the author to try again when the next attempt
+   hits the same ceiling. An output ceiling bills only what is generated, so the
+   headroom costs the common case nothing. */
+Deno.test("the template ceiling is not smaller than any other action's", async () => {
+  const { calls } = await fillWith(JSON.stringify({ number: "12" }));
+  assertEquals(calls.at(-1)!.body.max_tokens, 1024);
 });
