@@ -70,6 +70,88 @@ test("publish now persists the visible composer values before calling the backen
   assert.equal(app.modalOpen(), false);
 });
 
+test("publishing a TikTok draft says so in the confirm and the toast, never 'Published'", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: {
+      available: ["tiktok"],
+      accounts: [{ id: "a1", platform: "tiktok", display_name: "@acme", status: "active",
+        is_default: true, needs_reauth: false, last_verified_at: "2026-06-15T11:55:00Z" }],
+      db: {
+        activeBrand: "b1",
+        brands: [{
+          id: "b1", name: "Acme", seed: 5, connections: {},
+          smartlink: { title: "Acme", bio: "", avatar: "🚀", color: "#22c1dc", links: [] },
+          inbox: [],
+          posts: [{
+            id: "p1", date: TODAY, time: "10:00", text: "Behind the scenes",
+            networks: ["tiktok"], status: "draft", tiktok_mode: "draft",
+            media_url: "https://cdn.example.com/clip.mp4", targets: [],
+          }],
+        }],
+      },
+      publishResults: [{ platform: "tiktok", status: "published", delivered_as: "draft" }],
+    },
+  });
+  t.after(() => app.close());
+
+  await app.click(".calgrid .post");
+  await app.waitFor(() => app.$("#pm_text"), { label: "the composer" });
+  await app.click(app.byText(".modalfoot button", "Publish now"));
+  await app.waitFor(() => app.toast().startsWith("Sent to TikTok drafts"), { label: "the draft toast" });
+
+  assert.match(app.confirms.at(-1), /TikTok receives this as a draft/,
+    "the confirm must not claim the video goes public");
+  assert.doesNotMatch(app.confirms.at(-1), /This posts to the real accounts/);
+  assert.equal(app.toast(), "Sent to TikTok drafts: TikTok");
+  assert.doesNotMatch(app.toast(), /^Published/, "a draft never reads as Published in the toast");
+});
+
+test("a mixed draft+public post still warns the public networks go live now", async t => {
+  const app = await bootApp({
+    mode: "cloud",
+    cloud: {
+      available: ["tiktok", "youtube"],
+      accounts: [
+        { id: "a1", platform: "tiktok", display_name: "@acme", status: "active",
+          is_default: true, needs_reauth: false, last_verified_at: "2026-06-15T11:55:00Z" },
+        { id: "a2", platform: "youtube", display_name: "Acme TV", status: "active",
+          is_default: true, needs_reauth: false, last_verified_at: "2026-06-15T11:55:00Z" },
+      ],
+      db: {
+        activeBrand: "b1",
+        brands: [{
+          id: "b1", name: "Acme", seed: 5, connections: {},
+          smartlink: { title: "Acme", bio: "", avatar: "🚀", color: "#22c1dc", links: [] },
+          inbox: [],
+          posts: [{
+            id: "p1", date: TODAY, time: "10:00", text: "Behind the scenes",
+            networks: ["tiktok", "youtube"], status: "draft", tiktok_mode: "draft",
+            media_url: "https://cdn.example.com/clip.mp4", targets: [],
+          }],
+        }],
+      },
+      publishResults: [
+        { platform: "tiktok", status: "published", delivered_as: "draft" },
+        { platform: "youtube", status: "published" },
+      ],
+    },
+  });
+  t.after(() => app.close());
+
+  await app.click(".calgrid .post");
+  await app.waitFor(() => app.$("#pm_text"), { label: "the composer" });
+  await app.click(app.byText(".modalfoot button", "Publish now"));
+  await app.waitFor(() => app.toast().startsWith("Published to"), { label: "the mixed toast" });
+
+  // The public network must still be warned it goes live now — the draft
+  // exemption applies only to TikTok, not the whole post.
+  assert.match(app.confirms.at(-1), /YouTube posts? to the real accounts now/,
+    "a public network in a draft post must keep its go-live warning");
+  assert.match(app.confirms.at(-1), /TikTok receives this as a draft/);
+  assert.equal(app.toast(), "Published to YouTube · Sent to TikTok drafts: TikTok");
+});
+
 test("a mixed publish result names the failed platform and its reason", async t => {
   const app = await bootApp({
     mode: "cloud",

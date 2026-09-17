@@ -1,8 +1,10 @@
 import {
   ADAPTERS,
+  authorizeScopes,
   effectiveText,
   configuredPlatforms,
   exchangeAuthorizationCode,
+  TIKTOK_DRAFT_SCOPE_REQUIRED,
   INSTAGRAM_ALT_TEXT_MAX,
   INSTAGRAM_CAROUSEL_MAX,
   instagramCarouselItems,
@@ -2396,4 +2398,207 @@ Deno.test("discovery offers TikTok only when the sandbox variable is really set"
     if (had === undefined) Deno.env.delete("TIKTOK_SANDBOX");
     else Deno.env.set("TIKTOK_SANDBOX", had);
   }
+});
+
+/* ------------------------------------------- TikTok draft posting (M2) ---
+ *
+ * Additive: a delivered draft is a normal *published* delivery whose only
+ * marker is delivered_as="draft". These assert the request the draft path
+ * actually makes, that it never touches the Direct Post options machinery, and
+ * that the resend guard keeps a re-publish from ever re-uploading it.
+ */
+
+const DRAFT_SCOPES = "user.info.basic video.publish video.upload";
+
+Deno.test("a TikTok draft hits the inbox init with source_info, no post_info, and needs no options", async () => {
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch([{ status: "SEND_TO_USER_INBOX" }], calls);
+  try {
+    const result = await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Behind the scenes",
+      mediaUrl: "https://cdn.example/clip.mp4",
+      accessToken: "token",
+      connection: { external_id: "creator-1", meta: {}, scopes: DRAFT_SCOPES },
+      tiktokMode: "draft",
+      // A draft has no privacy/disclosure options; it must succeed without them
+      // and must never reach the TIKTOK_OPTIONS_REQUIRED refusal.
+      tiktokOptions: null,
+    }));
+    assertEquals(calls[0].url.split("/v2/")[1], "post/publish/inbox/video/init/");
+    assertEquals(calls[0].body,
+      { source_info: { source: "PULL_FROM_URL", video_url: "https://cdn.example/clip.mp4" } });
+    if ("post_info" in calls[0].body) throw new Error("a draft must not send post_info");
+    // Success maps to a draft delivery: the publish_id is the remote id, there
+    // is no public URL, and delivered_as records how it landed.
+    assertEquals(result, { remote_id: "publish-1", delivered_as: "draft" });
+    if ("remote_url" in result) throw new Error("a draft has no public URL");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a TikTok draft succeeds on SEND_TO_USER_INBOX and not on the direct PUBLISH_COMPLETE", async () => {
+  // PUBLISH_COMPLETE is the DIRECT terminal success; it is not terminal for a
+  // draft, so a draft that only ever sees it never falsely resolves — it times
+  // out as an ambiguous outcome instead.
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch([{ status: "PUBLISH_COMPLETE" }], calls);
+  try {
+    await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token",
+      connection: { external_id: "creator-1", meta: {}, scopes: DRAFT_SCOPES },
+      tiktokMode: "draft",
+    })).then(
+      () => { throw new Error("PUBLISH_COMPLETE must not complete a draft"); },
+      (error) => {
+        if (!(error instanceof PublishOutcomeUnknownError)) {
+          throw new Error(`expected an unknown outcome, got ${error.name}: ${error.message}`);
+        }
+      },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a TikTok draft without the video.upload scope is refused before any request", async () => {
+  let called = false;
+  globalThis.fetch = () => { called = true; return Promise.reject(new Error("must not run")); };
+  try {
+    for (const scopes of [
+      "user.info.basic video.publish", "user.info.basic,video.publish", "", undefined,
+    ]) {
+      await ADAPTERS.tiktok.publish({
+        text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token",
+        connection: { external_id: "creator-1", meta: {}, scopes } as any,
+        tiktokMode: "draft",
+      }).then(
+        () => { throw new Error(`accepted scopes ${JSON.stringify(scopes)}`); },
+        (error) => {
+          assertEquals(error.name, "Error",
+            "a missing scope is a permanent, self-fixable failure, not an ambiguous outcome");
+          assertEquals(error.message, TIKTOK_DRAFT_SCOPE_REQUIRED);
+        },
+      );
+    }
+    if (called) throw new Error("no request may be made without the draft upload scope");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("a TikTok draft accepts TikTok's real comma-separated scopes string", async () => {
+  // TikTok stores `connection.scopes` verbatim from the token response, which
+  // is comma-separated ("a,b,c"), not space-separated. A space-only split
+  // would treat the whole string as one token and always refuse.
+  const calls: { url: string; body: any }[] = [];
+  globalThis.fetch = tiktokFetch([{ status: "SEND_TO_USER_INBOX" }], calls);
+  try {
+    const result = await withFastPolling(() => ADAPTERS.tiktok.publish({
+      text: "Clip", mediaUrl: "https://cdn.example/clip.mp4", accessToken: "token",
+      connection: {
+        external_id: "creator-1", meta: {},
+        scopes: "user.info.basic,video.publish,video.upload",
+      },
+      tiktokMode: "draft",
+    }));
+    assertEquals(result, { remote_id: "publish-1", delivered_as: "draft" });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+Deno.test("video.upload is requested only under the sandbox gate, and never widens prod login", () => {
+  const off = () => undefined;
+  const on = (key: string) => (key === "TIKTOK_SANDBOX" ? "1" : undefined);
+  // Production (no sandbox variable): exactly the two scopes TikTok logs in with
+  // today. Adding an unapproved scope here would break the whole TikTok login.
+  assertEquals(authorizeScopes(ADAPTERS.tiktok, off), ["user.info.basic", "video.publish"]);
+  // Sandbox: the inbox scope is appended for testing.
+  assertEquals(authorizeScopes(ADAPTERS.tiktok, on),
+    ["user.info.basic", "video.publish", "video.upload"]);
+  // The adapter's stored scopes are untouched either way.
+  assertEquals(ADAPTERS.tiktok.scopes, ["user.info.basic", "video.publish"]);
+  // No other adapter grows a scope under the gate.
+  for (const id of ["facebook", "instagram", "youtube", "x", "linkedin", "pinterest"]) {
+    assertEquals(authorizeScopes(ADAPTERS[id], on), ADAPTERS[id].scopes, `${id} is unaffected`);
+  }
+});
+
+Deno.test("the publish loop delivers a draft as a published target, and a direct post stays untouched", async () => {
+  const patches: any[] = [];
+  const seenMode: unknown[] = [];
+  const dependencies = {
+    adapters: {
+      tiktok: {
+        label: "TikTok", clientIdEnv: "TIKTOK_CLIENT_KEY", supportsMedia: true,
+        publish: async (input: any) => {
+          seenMode.push(input.tiktokMode);
+          return input.tiktokMode === "draft"
+            ? { remote_id: "publish-1", delivered_as: "draft" }
+            : { remote_id: "publish-2", remote_url: "https://tiktok.com/@a/video/2" };
+        },
+      },
+    },
+    platformConnectionEnabled: () => true,
+    env: () => "configured",
+    sbOne: async (table: string) => table === "post_targets" ? null : {
+      id: "connection-1", status: "active", external_id: "creator-1", meta: {}, scopes: DRAFT_SCOPES,
+    },
+    sbUpsert: async (_table: string, row: any) => { patches.push(row); return row; },
+    sbUpdate: async (_table: string, _query: string, patch: any) => patch,
+    freshConnectionToken: async () => "token",
+    now: () => "2026-09-17T00:00:00.000Z",
+  } as any;
+
+  const draftResults = await publishPost({
+    id: "post-draft", brand_id: "brand-1", networks: ["tiktok"],
+    text: "Behind the scenes", media_url: "https://cdn.example/clip.mp4", tiktok_mode: "draft",
+  }, dependencies);
+  const draftPatch = patches.find((p) => p.status === "published");
+  assertEquals(seenMode[0], "draft", "the loop threads posts.tiktok_mode to the adapter");
+  assertEquals(draftPatch.delivered_as, "draft");
+  assertEquals(draftPatch.remote_id, "publish-1");
+  assertEquals(draftPatch.remote_url, null, "a draft has no public URL");
+  assertEquals(draftResults[0].status, "published");
+
+  patches.length = 0;
+  await publishPost({
+    id: "post-direct", brand_id: "brand-1", networks: ["tiktok"],
+    text: "On the profile", media_url: "https://cdn.example/clip.mp4",
+  }, dependencies);
+  const directPatch = patches.find((p) => p.status === "published");
+  assertEquals(seenMode[1], null, "a post with no tiktok_mode hands the adapter null, not undefined");
+  if ("delivered_as" in directPatch) {
+    throw new Error("a Direct Post must write exactly the patch it did before drafts existed");
+  }
+  assertEquals(directPatch.remote_url, "https://tiktok.com/@a/video/2");
+});
+
+Deno.test("re-publishing an already-delivered TikTok draft issues zero fetches", async () => {
+  let fetches = 0;
+  // The REAL adapter, so a removed guard would actually reach and re-upload.
+  globalThis.fetch = (input: any) => {
+    fetches++;
+    const url = String(input);
+    if (url.endsWith("/video/init/")) return Promise.resolve(json({ data: { publish_id: "publish-2" } }));
+    if (url.endsWith("/status/fetch/")) {
+      return Promise.resolve(json({ data: { status: "SEND_TO_USER_INBOX" } }));
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  };
+  try {
+    const dependencies = {
+      adapters: { tiktok: ADAPTERS.tiktok },
+      platformConnectionEnabled: () => true,
+      env: () => "configured",
+      sbOne: async (table: string) => table === "post_targets"
+        ? { status: "published", remote_id: "publish-1", remote_url: null,
+            delivered_as: "draft", attempts: 1 }
+        : { id: "connection-1", status: "active", external_id: "creator-1", meta: {},
+            scopes: DRAFT_SCOPES },
+      sbUpsert: async (_t: string, row: any) => row,
+      sbUpdate: async (_t: string, _q: string, patch: any) => patch,
+      freshConnectionToken: async () => "token",
+      now: () => "2026-09-17T00:00:00.000Z",
+    } as any;
+    const results = await withFastPolling(() => publishPost({
+      id: "post-draft", brand_id: "brand-1", networks: ["tiktok"],
+      text: "Behind the scenes", media_url: "https://cdn.example/clip.mp4", tiktok_mode: "draft",
+    }, dependencies));
+    assertEquals(results[0].recovered, true, "an already-delivered target is recovered, not re-sent");
+    if (fetches !== 0) throw new Error(`a delivered draft must trigger zero TikTok fetches, saw ${fetches}`);
+  } finally { globalThis.fetch = originalFetch; }
 });

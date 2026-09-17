@@ -23,7 +23,7 @@ globalThis.localStorage = {
   setItem() {}, removeItem() {},
 };
 
-const { deliveryPanel, postStatusFromResults, postVisibleStatus } = await import("../js/planner.js");
+const { deliveryPanel, postIsPublished, postStatusFromResults, postVisibleStatus } = await import("../js/planner.js");
 const { realMetricSeries } = await import("../js/metrics.js");
 const { RemoteAdapter } = await import("../js/remote-store.js");
 const { store } = await import("../js/store.js");
@@ -66,6 +66,98 @@ test("delivery panel makes retryable and ambiguous target outcomes actionable", 
 
   assert.equal(deliveryPanel({ id:"p3", targets:[] }), "",
     "a post with no delivery records renders no panel at all");
+});
+
+/* -------------------------------------------- TikTok draft delivery (ADR 0010) */
+
+test("a delivered TikTok draft reads as sent to drafts, never as a published post", () => {
+  // delivered_as="draft" is a successful delivery (status:"published") with no
+  // public URL: TikTok stored the upload in the creator's inbox, it was never
+  // posted to a profile. The row must not say "Published" and must offer no link.
+  const draft = deliveryPanel({ id:"p1", targets:[{
+    platform:"tiktok", status:"published", delivered_as:"draft",
+    remote_id:"publish-1", remote_url:null,
+  }]});
+  assert.match(draft, /Sent to TikTok drafts/);
+  assert.doesNotMatch(draft, /Published/, "a draft reached no profile");
+  assert.doesNotMatch(draft, /view post/, "and has no public URL to link");
+  assert.doesNotMatch(draft, /href=/, "so no link at all");
+
+  // A Direct Post is unchanged: published, with its permalink.
+  const direct = deliveryPanel({ id:"p2", targets:[{
+    platform:"tiktok", status:"published", delivered_as:null,
+    remote_url:"https://tiktok.com/@a/video/1",
+  }]});
+  assert.match(direct, /Published — view post/);
+  assert.doesNotMatch(direct, /Sent to TikTok drafts/);
+});
+
+test("a draft-only post's chip says sent to drafts; a mixed or direct post stays published", () => {
+  assert.equal(postVisibleStatus({ status:"published", targets:[
+    { platform:"tiktok", status:"published", delivered_as:"draft" },
+  ]}), "drafted", "nothing went public, so the post-level label must not read published");
+
+  assert.equal(postVisibleStatus({ status:"published", targets:[
+    { platform:"tiktok", status:"published", delivered_as:"draft" },
+    { platform:"instagram", status:"published", delivered_as:null },
+  ]}), "published", "a genuinely published sibling keeps the post published");
+
+  assert.equal(postVisibleStatus({ status:"published", targets:[
+    { platform:"tiktok", status:"published", delivered_as:null },
+  ]}), "published", "a Direct Post is published exactly as before");
+});
+
+test("every status postVisibleStatus can return has a chip colour in index.html", async () => {
+  // The machine check for the bug this fix set found: postVisibleStatus can
+  // return "drafted" with no `.post.drafted` rule to paint it, which is white
+  // text on a white cell — invisible, not merely mislabelled. Source-pinned
+  // against index.html so a future new status cannot go invisible the same way.
+  const { readFile } = await import("node:fs/promises");
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const statuses = ["draft", "pending_approval", "scheduled", "publishing",
+    "published", "failed", "drafted"];
+  for (const status of statuses) {
+    assert.match(html, new RegExp(`\\.post\\.${status}\\{`),
+      `.post.${status} has no chip colour rule in index.html`);
+  }
+});
+
+test("a simulated post is drafted, not published, when its only network is a TikTok draft", () => {
+  // Local/simulated mode has no post_targets — tickPublish() writes
+  // status:"published" straight onto the post — so this is the one path
+  // postVisibleStatus must recognise from the post itself.
+  assert.equal(postVisibleStatus({ status:"published", networks:["tiktok"],
+    tiktok_mode:"draft" }), "drafted");
+  assert.equal(postVisibleStatus({ status:"published", networks:["tiktok"],
+    tiktok_mode:"direct" }), "published", "Direct Post keeps its ordinary label");
+  assert.equal(postVisibleStatus({ status:"published", networks:["tiktok","x"],
+    tiktok_mode:"draft" }), "published",
+    "TikTok is not the only network, so something else really did go public");
+  assert.equal(postVisibleStatus({ status:"published", networks:["tiktok"],
+    tiktok_mode:"draft", targets:[{ platform:"tiktok", status:"published", delivered_as:null }] }),
+    "published", "a recorded delivery always wins over the simulated-mode guess");
+});
+
+test("postIsPublished excludes a delivered TikTok draft everywhere it is asked", () => {
+  // The invariant reports.js, analytics.js and metrics.js now all share: a
+  // draft is never counted as a published post.
+  assert.equal(postIsPublished({ status:"published", targets:[
+    { platform:"tiktok", status:"published", delivered_as:"draft" },
+  ]}), false);
+  assert.equal(postIsPublished({ status:"published", targets:[
+    { platform:"facebook", status:"published", delivered_as:null },
+  ]}), true);
+  assert.equal(postIsPublished({ status:"draft" }), false);
+});
+
+test("reports, analytics and metrics count a published post through postIsPublished, not a raw status check", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const file of ["reports.js", "analytics.js", "metrics.js"]) {
+    const src = await readFile(new URL(`../js/${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(src, /p\.status\s*===\s*"published"/,
+      `${file} still checks p.status==="published" directly, bypassing postIsPublished`);
+    assert.match(src, /postIsPublished/, `${file} must route through postIsPublished`);
+  }
 });
 
 test("mixed permanent delivery failures remain visible in planner status", () => {
@@ -114,6 +206,30 @@ test("cloud initialization is idempotent across auth and demo transitions", asyn
   RemoteAdapter._sb = null;
   await assert.rejects(() => RemoteAdapter.init());
   assert.equal(RemoteAdapter._sb, null, "a failed init resets _sb so it can be retried");
+});
+
+test("tiktok_mode round-trips through sync and leaves with the network", () => {
+  // server row -> app post
+  const app = RemoteAdapter._rowsToDb(
+    [{ id: "b1", name: "Acme" }],
+    [{ id: "p1", brand_id: "b1", networks: ["tiktok"], tiktok_mode: "draft" },
+     { id: "p2", brand_id: "b1", networks: ["tiktok"] }],
+    [], []);
+  const [p1, p2] = app.brands[0].posts;
+  assert.equal(p1.tiktok_mode, "draft", "a draft mode survives the trip from the server");
+  assert.equal(p2.tiktok_mode, null, "a post that never set a mode reads as null, not undefined");
+
+  // app post -> server row, written only while the post still targets TikTok
+  const rows = RemoteAdapter._dbToRows({ activeBrand: "b1", brands: [{
+    id: "b1", name: "Acme", inbox: [], posts: [
+      { id: "p1", networks: ["tiktok"], tiktok_mode: "draft" },
+      { id: "p2", networks: ["x"], tiktok_mode: "draft" },
+    ],
+  }] });
+  const r1 = rows.posts.find(p => p.id === "p1");
+  const r2 = rows.posts.find(p => p.id === "p2");
+  assert.equal(r1.tiktok_mode, "draft", "a TikTok post carries its mode to the server");
+  assert.equal(r2.tiktok_mode, null, "dropping TikTok clears the mode, like tiktok_options");
 });
 
 /* ---------------------------------------------------------------- metrics */

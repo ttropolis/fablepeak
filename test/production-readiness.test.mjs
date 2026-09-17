@@ -462,14 +462,71 @@ test("the TikTok adapter cannot go back to a hardcoded audience or an unconfirme
   assert.match(platforms, /export const TIKTOK_OPTIONS_REQUIRED =\s*\n?\s*"TikTok post needs its privacy and disclosure options";/);
   assert.match(tiktok, /if \(!options\) throw new Error\(TIKTOK_OPTIONS_REQUIRED\)/);
 
-  // init is not a publish: only PUBLISH_COMPLETE is success.
+  // init is not a publish: the poll's terminal success is a parameter whose
+  // default — the direct-post value — is PUBLISH_COMPLETE, so Direct Post polls
+  // exactly as it always has.
   assert.match(platforms, /post\/publish\/status\/fetch\//);
-  assert.match(platforms, /state === "PUBLISH_COMPLETE"/);
+  assert.match(platforms, /terminalSuccess = "PUBLISH_COMPLETE"/,
+    "the direct-post terminal success is the default, kept byte-identical");
+  assert.match(platforms, /if \(state === terminalSuccess\) return \{ remote_id: publishId \}/);
   assert.match(platforms, /state === "FAILED"/);
   assert.match(platforms, /fail_reason/);
 
   // …and the options reach the adapter the way the resolved text does.
   assert.match(publish, /tiktokOptions: post\.tiktok_options \?\? null/);
+});
+
+/* ---------------------------------------------------------------------------
+ * TikTok draft posting (milestone 2). Additive: a delivered draft is a normal
+ * published delivery whose only marker is delivered_as="draft". These pins are
+ * the source-level half; the request/behaviour half is in the Deno mirror. */
+test("the TikTok draft path is additive, sandbox-gated, and never widens prod login", async () => {
+  const platforms = await read("supabase/functions/_shared/platforms.ts");
+  const publish = await read("supabase/functions/publish/index.ts");
+  const start = await read("supabase/functions/oauth-start/index.ts");
+  const tiktok = platforms.slice(platforms.indexOf("const tiktok: PlatformAdapter = {"),
+    platforms.indexOf("/* ---------------------------------------------------------------- Pinterest */"));
+
+  // The draft branches BEFORE readTikTokOptions, so a draft never reaches the
+  // options refusal.
+  assert.match(tiktok, /if \(tiktokMode === "draft"\) \{[\s\S]*?return await tiktokPublishDraft/);
+  assert.ok(tiktok.indexOf('tiktokMode === "draft"') < tiktok.indexOf("readTikTokOptions(tiktokOptions)"),
+    "the draft branch must sit before the options read");
+
+  // Draft init is the inbox endpoint with source_info and NO post_info.
+  assert.match(platforms, /v2\/post\/publish\/inbox\/video\/init\//);
+  const draft = platforms.slice(platforms.indexOf("async function tiktokPublishDraft"),
+    platforms.indexOf("async function tiktokAwaitPublished"));
+  assert.match(draft, /source_info: \{ source: "PULL_FROM_URL", video_url: safeMediaUrl \}/);
+  assert.doesNotMatch(draft, /post_info/, "a draft carries no post_info");
+  assert.match(draft, /delivered_as: "draft"/);
+
+  // The terminal-success enum is a named, owner-verify constant referenced once.
+  assert.match(platforms, /\/\/ TODO\(owner-verify\): confirm against TikTok status enum\s*\nconst TIKTOK_DRAFT_SUCCESS = "SEND_TO_USER_INBOX";/);
+  assert.equal((platforms.match(/TIKTOK_DRAFT_SUCCESS/g) || []).length, 2,
+    "the constant is defined once and referenced in exactly one place");
+
+  // The scope gate fails cleanly, before any request.
+  assert.match(platforms, /export const TIKTOK_DRAFT_SCOPE_REQUIRED =/);
+  assert.match(draft, /if \(!granted\.includes\("video\.upload"\)\) throw new Error\(TIKTOK_DRAFT_SCOPE_REQUIRED\)/);
+
+  // video.upload is requested ONLY under the sandbox gate; the adapter's base
+  // scopes (prod login) are untouched, so an unapproved scope never ships.
+  assert.match(platforms, /adapter\.id === "tiktok" && tiktokSandboxEnabled\(env\)\)[\s\S]*?return \[\.\.\.adapter\.scopes, "video\.upload"\]/);
+  // The adapter's static scopes (the prod login) stay the two it logs in with;
+  // the object literal itself must never carry video.upload.
+  const tiktokStart = platforms.indexOf("const tiktok: PlatformAdapter = {");
+  const adapterObject = platforms.slice(tiktokStart,
+    platforms.indexOf("async publish(", tiktokStart));
+  assert.match(adapterObject, /scopes: \["user\.info\.basic", "video\.publish"\]/);
+  assert.doesNotMatch(adapterObject, /"video\.upload"/,
+    "the adapter's static scopes must not carry video.upload");
+  assert.match(start, /authorizeScopes\(adapter, env\)/);
+
+  // The pipeline threads the mode and writes delivered_as, keeping status published.
+  assert.match(publish, /tiktokMode: post\.tiktok_mode \?\? null/);
+  assert.match(publish, /out\.delivered_as \? \{ delivered_as: out\.delivered_as \} : \{\}/);
+  assert.match(publish, /status: "published"/);
 });
 
 test("the TikTok options column is guarded by a CHECK, not by client discipline", async () => {
@@ -735,7 +792,7 @@ test("a column the sync whitelist does not name is invisible, so variants is nam
      widening of what the browser may write, and it should have to be stated
      here as well as there. `tiktok_options` is the second such widening. */
   assert.match(adapter,
-    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"\]/,
+    /posts:\s+\["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options","tiktok_mode"\]/,
     "FIELDS.posts decides what is diffed and upserted");
   assert.match(adapter, /variants: p\.variants \|\| \{\}/, "server row -> app post");
   assert.match(adapter, /variants:p\.variants \|\| \{\}/, "app post -> server row");

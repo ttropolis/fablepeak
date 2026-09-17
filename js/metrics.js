@@ -6,6 +6,7 @@ import { metricsCache, setMetricsCache, view } from "./state.js";
 import { liveMode, store } from "./store.js";
 import { brand } from "./workspace.js";
 import { render } from "./shell.js";
+import { postIsPublished } from "./planner.js";
 
 /* =============== deterministic demo metrics =============== */
 export function metricSeries(days, netId){
@@ -20,7 +21,7 @@ export function metricSeries(days, netId){
     const d = new Date(); d.setDate(d.getDate()-i);
     const ds = fmtDate(d);
     f += Math.floor(r()*40 - 8);
-    const posted = b.posts.filter(p=>p.date===ds && p.status==="published" &&
+    const posted = b.posts.filter(p=>p.date===ds && postIsPublished(p) &&
       (netId==="all" || p.networks.includes(netId))).length;
     const eng = Math.floor(r()*120 + posted*260);
     const imp = Math.floor(eng * (14 + r()*10));

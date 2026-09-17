@@ -460,3 +460,116 @@ test("a backup carrying choices TikTok itself refuses never reaches the workspac
     assert.equal(JSON.stringify(app.db), before, "a rejected import changes nothing");
   }
 });
+
+/* ---------- draft posting mode: the sync plumbing (M2) ----------
+ *
+ * The composer that sets tiktok_mode is M3; M2 only wires the column through
+ * browser sync, under the same three-edit rule tiktok_options follows. */
+test("tiktok_mode is sync-plumbed under the three-edit rule, and delivered_as is not", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const adapter = await readFile(new URL("../../js/remote-store.js", import.meta.url), "utf8");
+  assert.match(adapter,
+    /posts:\s+\[[^\]]*"instagram_options","tiktok_mode"\]/,
+    "FIELDS.posts names tiktok_mode, so the browser may write it");
+  assert.match(adapter, /tiktok_mode: p\.tiktok_mode \|\| null/, "server row -> app post");
+  assert.match(adapter,
+    /tiktok_mode:\(p\.networks \|\| \[\]\)\.includes\("tiktok"\) \? \(p\.tiktok_mode \|\| null\) : null/,
+    "app post -> server row, cleared when the post no longer targets TikTok");
+  // post_targets is server-written: the client loads it (select *) but never
+  // upserts it, so delivered_as needs no client mapping and must not gain one.
+  assert.doesNotMatch(adapter, /delivered_as/,
+    "delivered_as is server-only; the client never writes post_targets");
+});
+
+/* ---------- draft posting mode: the composer (M3, ADR 0010) ----------
+ *
+ * A draft drops the video into the creator's TikTok inbox to finish and post
+ * themselves, so it carries none of the Direct Post options. The composer must
+ * let the customer pick the mode, hide the whole options panel for a draft, and
+ * NOT refuse a draft for having no audience. Direct Post is the default and is
+ * unchanged. */
+
+const modeDirect = "#pm_tt_mode_direct";
+const modeDraft = "#pm_tt_mode_draft";
+
+test("choosing Draft hides the Direct Post options, saves the mode, and records no options", async t => {
+  const app = await bootCloud(t);
+  await composeForTikTok(app);                  // the Direct Post panel is up
+  assert.equal(app.$(modeDirect).checked, true, "Direct Post is the default");
+
+  await app.check(modeDraft, true);
+  await app.waitFor(() => app.$(PRIVACY) === null, { label: "the draft panel" });
+  assert.equal(app.$(PRIVACY), null, "a draft collects no audience");
+  assert.equal(app.$("#pm_tt_disclose"), null, "and no commercial disclosure");
+  assert.match(app.text("#pm_tiktok"), /TikTok inbox as a draft/i);
+  assert.match(consent(app), /sent to your TikTok inbox as a draft/i);
+
+  // A draft saves with no audience chosen — the Direct Post refusal must not fire.
+  await app.click(saveButton(app));
+  await app.waitFor(() => app.db.brands[0].posts.length, { label: "the saved draft" });
+  const [post] = app.db.brands[0].posts;
+  assert.equal(post.tiktok_mode, "draft", "the chosen mode rides the post");
+  assert.equal(post.tiktok_options, null, "a draft records no TikTok options");
+  assert.notEqual(app.toast(), "Choose who can see this video on TikTok");
+
+  // It reopens on Draft, because that is the choice the customer made.
+  await app.call("openPostModal", post.id);
+  await app.waitFor(() => app.$(modeDraft), { label: "the reopened panel" });
+  assert.equal(app.$(modeDraft).checked, true, "a draft reopens as a draft");
+  assert.equal(app.$(PRIVACY), null, "and still shows no Direct Post options");
+});
+
+test("Direct Post still refuses a post with no audience, and saving one records direct", async t => {
+  const app = await bootCloud(t);
+  await composeForTikTok(app);
+  // Prove the draft branch did not loosen Direct Post: no audience chosen.
+  await app.click(saveButton(app));
+  assert.equal(app.toast(), "Choose who can see this video on TikTok",
+    "Direct Post is unchanged — it still requires an audience");
+  assert.equal(app.db.brands[0].posts.length, 0, "and refuses to save without one");
+
+  await app.fill(PRIVACY, "PUBLIC_TO_EVERYONE");
+  await app.click(saveButton(app));
+  await app.waitFor(() => app.db.brands[0].posts.length, { label: "the saved post" });
+  const [post] = app.db.brands[0].posts;
+  assert.equal(post.tiktok_mode, "direct", "an explicit Direct Post choice reads back as direct");
+  assert.equal(post.tiktok_options.privacy_level, "PUBLIC_TO_EVERYONE");
+});
+
+test("switching Draft back to Direct restores the options and their refusal", async t => {
+  const app = await bootCloud(t);
+  await composeForTikTok(app);
+  await app.check(modeDraft, true);
+  await app.waitFor(() => app.$(PRIVACY) === null, { label: "the draft panel" });
+  await app.check(modeDirect, true);
+  await app.waitFor(() => app.$(PRIVACY), { label: "the Direct Post panel back" });
+  assert.ok(app.$(PRIVACY), "the audience select returns with Direct Post");
+
+  await app.click(saveButton(app));
+  assert.equal(app.toast(), "Choose who can see this video on TikTok",
+    "back on Direct Post, the audience is required again");
+});
+
+test("a backup's tiktok_mode is held to direct/draft, and a draft survives the round trip", async t => {
+  const app = await bootApp({ mode: "local" });
+  t.after(() => app.close());
+  await openSettings(app);
+  const json = await exportBackup(app);
+  const before = JSON.stringify(app.db);
+
+  // A mode outside posts_tiktok_mode_check rejects the whole file, like a bad
+  // status — this file's model is refuse-the-file, not silently normalise.
+  for (const tiktok_mode of ["published", "DRAFT", "", 1, true]) {
+    const parsed = JSON.parse(json);
+    parsed.brands[0].posts[0].tiktok_mode = tiktok_mode;
+    await importBackup(app, JSON.stringify(parsed));
+    assert.equal(app.toast(), "Invalid backup file", `accepted ${JSON.stringify(tiktok_mode)}`);
+    assert.equal(JSON.stringify(app.db), before, "a rejected import changes nothing");
+  }
+
+  const good = JSON.parse(json);
+  good.brands[0].posts[0].tiktok_mode = "draft";
+  await importBackup(app, JSON.stringify(good));
+  assert.equal(app.toast(), "Backup restored ✔");
+  assert.equal(app.db.brands[0].posts[0].tiktok_mode, "draft", "a valid draft mode is accepted");
+});

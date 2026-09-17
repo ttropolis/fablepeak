@@ -41,7 +41,11 @@ import { closeModal, composerSnapshot, openModal, render, toast } from "./shell.
    other status reads identically either way, so this map changes nothing for
    the five statuses that predate it — including the chip aria-labels and the
    composer's <option> text, which two suites pin. */
-export const POST_STATUS_LABEL = { pending_approval: "pending approval" };
+export const POST_STATUS_LABEL = { pending_approval: "pending approval",
+  /* Display-only, never a database value: postVisibleStatus() returns it for a
+     post whose only delivered targets are TikTok drafts, so the chip does not
+     call an unpublished inbox draft "published". */
+  drafted: "Sent to drafts" };
 export function statusLabel(status){ return POST_STATUS_LABEL[status] || status; }
 /** Posts in the active brand waiting on a decision — the owner's badge count. */
 export function pendingApprovalCount(){
@@ -130,6 +134,7 @@ export function renderPlanner(m){
       <span><i style="background:var(--chip-sched)"></i>Scheduled</span>
       ${liveMode()?`<span><i style="background:#2f91b5"></i>Publishing</span>`:""}
       <span><i style="background:var(--chip-pub)"></i>Published</span>
+      <span><i style="background:var(--chip-drafted)"></i>Sent to drafts</span>
       ${liveMode()?`<span><i style="background:var(--chip-fail)"></i>Needs attention</span>`:""}
     </div>
     <div class="mobile-agenda">
@@ -168,7 +173,11 @@ export function deliveryPanel(p){
     ${targets.map(t=>{
       const name=netOf(t.platform)?.name||t.platform;
       const detail=t.status==="published"
-        ? safeUrl(t.remote_url) ? `<a href="${attr(safeUrl(t.remote_url))}" target="_blank" rel="noopener">Published — view post</a>` : "Published"
+        // A delivered draft succeeded — TikTok stored the upload — but it was
+        // not published: it sits in the creator's inbox with no public URL, so
+        // "Published — view post" would be a link to a post that does not exist.
+        ? t.delivered_as==="draft" ? "Sent to TikTok drafts"
+          : safeUrl(t.remote_url) ? `<a href="${attr(safeUrl(t.remote_url))}" target="_blank" rel="noopener">Published — view post</a>` : "Published"
         : t.failure_kind==="retryable"
           ? `Automatic retry scheduled${t.next_retry_at?` for ${new Date(t.next_retry_at).toLocaleString()}`:""}`
           : t.failure_kind==="unknown"
@@ -183,10 +192,33 @@ export function deliveryPanel(p){
   </section>`;
 }
 export function postVisibleStatus(p){
-  const needsAttention=(p?.targets||[]).some(target=>
+  const targets=p?.targets||[];
+  const needsAttention=targets.some(target=>
     target.status!=="published" && ["permanent","unknown"].includes(target.failure_kind));
-  return needsAttention?"failed":p.status;
+  if(needsAttention) return "failed";
+  /* A post whose only delivered targets are TikTok drafts reached no profile, so
+     the chip says "Sent to drafts" rather than "Published" — the per-target rows
+     already do. A mixed post (a genuinely published target beside a draft) keeps
+     "Published": something did go public. delivered_as arrives via select *. */
+  const delivered=targets.filter(t=>t.status==="published");
+  if(p?.status==="published" && delivered.length
+     && delivered.every(t=>t.delivered_as==="draft")) return "drafted";
+  /* Local/simulated mode never writes post_targets — tickPublish() flips
+     status straight to "published" with no targets recorded at all — so a
+     TikTok-draft post reaching here has no delivered target to read
+     delivered_as off. Recognise the same fact from the post itself: TikTok is
+     the only network selected and this post was composed as a draft. */
+  if(p?.status==="published" && !targets.length
+     && (p.networks||[]).length===1 && p.networks[0]==="tiktok"
+     && p.tiktok_mode==="draft") return "drafted";
+  return p.status;
 }
+/** Is this post published for counting purposes — reports, analytics, the
+ *  metrics simulation? The same question the chip answers, asked the same
+ *  way: a delivered TikTok draft is not a published post anywhere, so every
+ *  place that used to check `p.status==="published"` routes through here
+ *  instead, and a draft is excluded from published counts everywhere at once. */
+export function postIsPublished(p){ return postVisibleStatus(p)==="published"; }
 export function postStatusFromResults(results){
   if(results.some(result=>result.failure_kind==="retryable")) return "scheduled";
   return results.length && results.every(result=>result.status==="published")
@@ -286,6 +318,9 @@ export function openPostModal(id, dateStr){
      no-preselected-default rule is about a *new* composer having no audience
      chosen for it, not about hiding a choice the customer already made. */
   setComposerTikTok({...COMPOSER_TIKTOK_IDLE,
+    // A post reopens on the mode it was saved with; anything but "draft" is the
+    // Direct Post default, which is also every post that predates the column.
+    mode: p?.tiktok_mode==="draft" ? "draft" : "direct",
     options:{...COMPOSER_TIKTOK_IDLE.options, ...readStoredTikTokOptions(p)}});
   /* A post that already carries a carousel reopens showing it. Only the extras
      live in composer state — item one is `media_url`, which #pm_media already
@@ -1164,11 +1199,36 @@ export function renderTikTokPanel(){
   if(consent) consent.innerHTML=tiktokConsentInner();
   if(focused) document.getElementById(focused)?.focus?.();
 }
+/* The Direct-post / Draft choice. Rendered above everything else and in every
+   panel state, because it decides whether the rest of the panel is even shown:
+   a draft has no privacy or disclosure options to collect. Draft mode is offered
+   even before creator_info answers, because the draft path never reads it. */
+function tiktokModePicker(mode){
+  const opt=(value, label, why) =>
+    `<label class="tiktok-mode-opt${mode===value?" on":""}">
+      <input type="radio" name="pm_tt_mode" id="pm_tt_mode_${attr(value)}" value="${attr(value)}"
+        ${mode===value?"checked":""} data-change="tiktokMode">
+      ${esc(label)}<small class="netreason">${esc(why)}</small></label>`;
+  return `<div class="tiktok-mode" role="radiogroup" aria-label="TikTok posting mode">
+    ${opt("direct","Direct post","Publishes straight to the TikTok profile.")}
+    ${opt("draft","Send as draft","Drops the video in the creator's TikTok inbox to finish and post there.")}
+  </div>`;
+}
 function tiktokPanelInner(){
-  const {loading, error, creator, simulated, duration, options}=composerTikTok;
+  const {loading, error, creator, simulated, duration, options, mode}=composerTikTok;
   const head=`<h4>TikTok</h4>`;
   const shell=body => `<section class="tiktok-panel" aria-label="TikTok posting options">
-    ${head}${body}</section>`;
+    ${head}${tiktokModePicker(mode)}${body}</section>`;
+  const simulatedNote=simulated ? `<p class="tiktok-note"><strong>Simulated — posting to TikTok needs a cloud
+    workspace and a connected TikTok account.</strong> These controls behave exactly as the
+    real ones do; nothing here contacts TikTok.</p>` : "";
+  // Draft mode has nothing to collect and needs no creator lookup: the creator
+  // finishes and posts the video from the TikTok app, so the panel only explains
+  // where the video is going.
+  if(mode==="draft") return shell(`${simulatedNote}
+    <p class="tiktok-note">This video is sent to <strong>${esc(creator?.nickname||"your TikTok account")}</strong>'s
+      TikTok inbox as a draft. They finish and post it themselves from the TikTok app —
+      FablePeak doesn't publish it, so there are no privacy or disclosure options to set here.</p>`);
   if(loading) return shell(`<p class="tiktok-note">Reading your TikTok account settings…</p>`);
   if(!creator) return shell(`<p class="tiktok-note">${esc(error ||
     "TikTok did not return your account settings, so this post cannot be composed for TikTok yet.")}</p>`);
@@ -1225,9 +1285,7 @@ function tiktokPanelInner(){
             checked here, so TikTok's own answer at publish time is the final word.</p>`;
 
   return shell(`
-    ${simulated ? `<p class="tiktok-note"><strong>Simulated — posting to TikTok needs a cloud
-      workspace and a connected TikTok account.</strong> These controls behave exactly as the
-      real ones do; nothing here contacts TikTok.</p>` : ""}
+    ${simulatedNote}
     <p class="tiktok-creator">Posting to <strong>${esc(creator.nickname)}</strong></p>
     ${privacy}
     ${interactions}
@@ -1238,6 +1296,12 @@ function tiktokPanelInner(){
     changes with the declaration: branded content adds the Branded Content
     Policy to the Music Usage Confirmation every post carries. */
 function tiktokConsentInner(){
+  // A draft is not published by FablePeak, so it carries none of the Direct Post
+  // consents: the line explains where the video lands instead. Shown without a
+  // creator lookup, for the same reason the draft panel body is.
+  if(composerTikTok.mode==="draft")
+    return `<p>This video is sent to your TikTok inbox as a draft. You finish and post it
+      yourself in the TikTok app — FablePeak doesn't publish it.</p>`;
   if(!composerTikTok.creator) return "";
   const music=`<a href="${TIKTOK_MUSIC_USAGE_URL}" target="_blank" rel="noopener">Music Usage Confirmation</a>`;
   return composerTikTok.options.brand_content
@@ -1278,17 +1342,43 @@ export function setTikTokOption(el){
   syncComposer();
   if(message) toast(message);
 }
+/** The posting mode picker changed. Rebuilds the panel — the privacy/disclosure
+    controls appear or vanish with the choice — and the consent line beside Save,
+    then records the change so the Escape guard defends it like any other edit. */
+export function setTikTokMode(el){
+  const mode=el.value==="draft" ? "draft" : "direct";
+  setComposerTikTok({...composerTikTok, mode});
+  renderTikTokPanel();
+  syncComposer();
+}
 /** The options this composer would save, or null when TikTok is not a target.
  *  Deliberately not "whatever the panel happens to hold": a post that does not
  *  publish to TikTok has no TikTok choices, and writing them would be a claim
  *  about an audience nobody picked for it. */
 function tiktokOptionsForSave(nets){
   if(!nets.includes("tiktok")) return null;
+  // A draft carries no privacy or disclosure options — the creator sets them in
+  // the TikTok app — so, like a post that does not target TikTok, it records
+  // none. Writing an options object here would also fail valid_post_tiktok_options,
+  // which requires a real privacy level a draft never has.
+  if(composerTikTok.mode==="draft") return null;
   return {...composerTikTok.options};
 }
+/** The posting mode this composer would save, or null when TikTok is not a
+ *  target. "direct" is written explicitly rather than left null: the customer
+ *  chose it, and an explicit choice reads back as itself. NULL stays reserved
+ *  for a post that predates the column — the adapter treats both as Direct. */
+function tiktokModeForSave(nets){
+  if(!nets.includes("tiktok")) return null;
+  return composerTikTok.mode==="draft" ? "draft" : "direct";
+}
 /** Why this post cannot go to TikTok yet, as a sentence — or "" when it can. */
-export function tiktokBlocked(nets, options){
+export function tiktokBlocked(nets, options, mode){
   if(!nets.includes("tiktok")) return "";
+  // A draft carries no privacy or disclosure options — the creator finishes and
+  // posts it in the TikTok app — so none of the Direct Post requirements below
+  // apply, and a draft must be savable with no audience chosen.
+  if(mode==="draft") return "";
   if(!options || !TIKTOK_PRIVACY_LABELS[options.privacy_level])
     return "Choose who can see this video on TikTok";
   if(options.disclose_commercial && !options.brand_organic && !options.brand_content)
@@ -1617,6 +1707,10 @@ export function readPostForm(){
      always present: null is the meaningful value for a post that does not
      target TikTok, and writing it is how deselecting TikTok clears them. */
   const tiktok_options=tiktokOptionsForSave(nets);
+  /* TikTok's posting mode, on the same always-present terms as its choices: null
+     is the meaningful value for a post that does not target TikTok, and writing
+     it is how deselecting TikTok clears the mode with the rest. */
+  const tiktok_mode=tiktokModeForSave(nets);
   /* The Instagram carousel, on the same terms as TikTok's choices: always
      present, because null is the meaningful value for a post with no carousel,
      and writing it is how deselecting Instagram — or removing the last extra —
@@ -1628,7 +1722,7 @@ export function readPostForm(){
      clears the choices that no longer apply. */
   const instagram_options=instagramOptionsForSave(nets, media_url, media_urls);
   return {text,nets,date,time,status,media_url,media_urls,variants,tiktok_options,
-    instagram_options,
+    tiktok_mode,instagram_options,
     ...(noteBox ? {approval_note:noteBox.value.trim()} : {})};
 }
 export function showMediaPreview(url,contentType=""){
@@ -1692,7 +1786,7 @@ export async function uploadPostMedia(input){
   }
 }
 export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
-                                  variants={},tiktok_options=null,
+                                  variants={},tiktok_options=null,tiktok_mode=null,
                                   instagram_options=null}){
   if(!text) return toast("Write some content first");
   if(!nets.length) return toast("Pick at least one network");
@@ -1747,7 +1841,7 @@ export function validatePostForm({text,nets,date,time,media_url,media_urls=null,
      three again at publish time and the CHECK constraint refuses the row, so
      this is the sentence the customer gets rather than the only line of
      defence. */
-  const tiktokProblem=tiktokBlocked(nets, tiktok_options);
+  const tiktokProblem=tiktokBlocked(nets, tiktok_options, tiktok_mode);
   if(tiktokProblem) return toast(tiktokProblem);
   /* The carousel's own two rules, refused here rather than trimmed: an item
      Instagram could not fetch, and an eleventh item. posts_media_urls_valid
@@ -1797,7 +1891,22 @@ export async function publishNow(id){
   const p = brand().posts.find(x=>x.id===id);
   const values=readPostForm();
   if(!validatePostForm(values)) return;
-  if(!confirm(`Publish to ${values.nets.map(n=>netOf(n).name).join(", ")} right now? This posts to the real accounts.`)) return;
+  /* A TikTok draft never goes public — it lands in the creator's inbox for
+     them to finish and post themselves — so the confirmation must not claim
+     it does, the way "This posts to the real accounts" would for every other
+     network here. */
+  const draftMode = values.tiktok_mode==="draft";
+  const netNames = values.nets.map(n=>netOf(n).name).join(", ");
+  // A mixed draft post still publishes its non-TikTok networks publicly right
+  // now, so the confirm must keep the public-post warning for them and only
+  // exempt TikTok — a draft-only post is the sole case with no public post.
+  const publicNets = values.nets.filter(n=>n!=="tiktok");
+  const confirmMsg = !draftMode
+    ? `Publish to ${netNames} right now? This posts to the real accounts.`
+    : publicNets.length
+      ? `Publish to ${netNames} right now? ${publicNets.map(n=>netOf(n).name).join(", ")} post${publicNets.length===1?"s":""} to the real accounts now; TikTok receives this as a draft in the creator's inbox — it will not go public until they post it from the TikTok app.`
+      : `Publish to ${netNames} right now? TikTok receives this as a draft in the creator's inbox — it will not go public until they post it from the TikTok app.`;
+  if(!confirm(confirmMsg)) return;
   toast("Publishing…");
   try{
     const {nets,...postValues}=values;
@@ -1806,14 +1915,23 @@ export async function publishNow(id){
     const results = await store.publishNow(id);
     const ok = results.filter(r=>r.status==="published");
     const bad = results.filter(r=>r.status!=="published");
+    // A delivered draft succeeded but never went public — the toast has to
+    // say so instead of folding it into "Published", the same truthfulness
+    // rule the delivery panel and the chip already follow.
+    const okPublished = ok.filter(r=>r.delivered_as!=="draft");
+    const okDrafted = ok.filter(r=>r.delivered_as==="draft");
     const failures = bad.map(r=>
       `${netOf(r.platform).name}: ${r.error||r.status}`
     ).join(" | ");
     p.status = postStatusFromResults(results);
     await refreshPostTargets();
     save(); closeModal(); render();
+    const okLabel = [
+      okPublished.length ? `Published to ${okPublished.map(r=>netOf(r.platform).name).join(", ")}` : "",
+      okDrafted.length ? `Sent to TikTok drafts: ${okDrafted.map(r=>netOf(r.platform).name).join(", ")}` : "",
+    ].filter(Boolean).join(" · ");
     toast(ok.length
-      ? `Published to ${ok.map(r=>netOf(r.platform).name).join(", ")}${failures?` · Failed — ${failures}`:""}`.slice(0,240)
+      ? `${okLabel}${failures?` · Failed — ${failures}`:""}`.slice(0,240)
       : `Failed: ${failures}`.slice(0,240));
     if(bad.length) console.warn("FablePeak publish issues:", bad);
   }catch(e){ toast(e.message); }

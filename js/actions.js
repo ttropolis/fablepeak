@@ -28,7 +28,7 @@ import {
   pickAiTemplate,
   rejectPost, removeCarouselItem, renderCarousel, renderInstagramPanel,
   renderTikTokPanel, renderVariantSections, retryPost, runAiAssist, savePost,
-  setApprovalScope, setInstagramOption, setTikTokOption, showMediaPreview,
+  setApprovalScope, setInstagramOption, setTikTokMode, setTikTokOption, showMediaPreview,
   syncAiAssist, syncCarouselAlt, syncCarouselItem, syncComposer, syncInstagramAlt,
   syncVariant,
   togglePerNetwork, uploadPostMedia, useAiSuggestion,
@@ -130,6 +130,7 @@ export const ACTIONS = {
      panel; which one is being changed travels in data-arg, so the conditional
      rules the guidelines impose live in one function instead of six. */
   tiktokOption:          el => setTikTokOption(el),
+  tiktokMode:            el => setTikTokMode(el),
   /* composer → per-network copy (ADR 0005 decisions 11-13) */
   togglePerNetwork:      () => togglePerNetwork(),
   syncVariant:           el => syncVariant(el),

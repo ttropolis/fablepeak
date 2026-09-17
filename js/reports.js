@@ -4,6 +4,7 @@ import { attr, esc } from "./escape.js";
 import { metricsCache } from "./state.js";
 import { brand, connectedNets, netOf } from "./workspace.js";
 import { ensureMetricsLoaded, metricSeries, realMetricSeries } from "./metrics.js";
+import { postIsPublished } from "./planner.js";
 
 export function renderReports(m){
   const b=brand();
@@ -11,7 +12,7 @@ export function renderReports(m){
   const realSeries=realMetricSeries(30,"all");
   const usingReal=!!realSeries;
   const s=realSeries||metricSeries(30,"all");
-  const pub=b.posts.filter(p=>p.status==="published");
+  const pub=b.posts.filter(postIsPublished);
   const reportNetworks=usingReal
     ? NETWORKS.filter(n=>metricsCache.rows.some(r=>r.platform===n.id))
     : NETWORKS;

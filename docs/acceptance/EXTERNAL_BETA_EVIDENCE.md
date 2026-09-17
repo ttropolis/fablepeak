@@ -49,6 +49,22 @@ failed or workload-failed runs.
 | Account deletion and provider-data deletion instructions complete | Unrelated test account |  | Pending |  |
 | Owner-vs-editor enforcement: an invited editor composes and schedules but cannot delete the brand, disconnect or re-select accounts, or publish SmartLinks | Two unrelated FablePeak users (owner + editor) |  | Pending | ADR 0006 decision 14: the owner-vs-editor axis is a mandatory release gate for the role-enforcement step, not a follow-up. TESTER_GUIDE Script 9; run after the tenant-isolation row |
 
+## TikTok draft posting (ADR 0010) — acceptance row shape
+
+TikTok's draft/inbox mode (ADR 0010) delivers a video to the creator's TikTok
+inbox instead of publishing it, so its acceptance evidence **cannot be a public
+URL**. It is defined here so a future sandbox/beta run records the right thing.
+
+| Evidence type | What proves a delivered draft |
+|---|---|
+| Automated | `post_targets.status = 'published'`, `delivered_as = 'draft'`, `remote_url` NULL, and `remote_id` = TikTok's `publish_id`, reached via the terminal poll status `SEND_TO_USER_INBOX`. |
+| Human | A tester screenshot of the video sitting in the TikTok app's **inbox/drafts** for the connected account. There is no permalink, and TikTok emits **no later signal** when the creator finishes and posts it, so "sent to inbox" is the terminal record — nothing reconciles a draft to a published post. |
+
+Owner-verify (ADR 0010): the `SEND_TO_USER_INBOX` terminal enum must be confirmed
+against a real TikTok sandbox run, and the production `video.upload` scope ships
+only after TikTok portal approval. Until both clear, draft posting stays
+sandbox-only and is **not** part of the release gate below.
+
 ## Release decision
 
 The invite-only beta may open only when:

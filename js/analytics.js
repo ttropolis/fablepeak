@@ -5,6 +5,7 @@ import { analyticsNet, metricsCache } from "./state.js";
 import { liveMode } from "./store.js";
 import { brand, connectedNets } from "./workspace.js";
 import { ensureMetricsLoaded, metricSeries, realMetricSeries } from "./metrics.js";
+import { postIsPublished } from "./planner.js";
 
 export function lineChart(series, key, color){
   const W=560,H=170,P=28;
@@ -63,7 +64,7 @@ export function renderAnalytics(m){
   const totEng=s.reduce((a,x)=>a+x.engagement,0), totImp=s.reduce((a,x)=>a+x.impressions,0);
   const monthPosts=usingReal
     ? s.reduce((a,x)=>a+(x.posts||0),0)
-    : b.posts.filter(p=>p.status==="published" &&
+    : b.posts.filter(p=>postIsPublished(p) &&
         (analyticsNet==="all" || p.networks.includes(analyticsNet))).length;
   const engRate=((totEng/Math.max(totImp,1))*100).toFixed(1);
   m.innerHTML=`

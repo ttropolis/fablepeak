@@ -68,6 +68,11 @@ export const RemoteAdapter = {
           // forbid a preselected privacy level, so "no choices recorded" has to
           // stay distinguishable from "these are the choices".
           tiktok_options: p.tiktok_options || null,
+          // TikTok posting mode (ADR: draft posting). Same three-edit rule as
+          // `tiktok_options`, and nullable for the same reason: NULL means
+          // "legacy/direct", the only meaning every pre-draft post can have,
+          // so it must stay distinguishable from an explicit "direct"/"draft".
+          tiktok_mode: p.tiktok_mode || null,
           // The per-post Instagram choices. Same three-edit rule again, and
           // nullable for the same reason: an absent share_to_feed is what every
           // Reel published so far used, so "no choices" must stay a value of its
@@ -113,6 +118,10 @@ export const RemoteAdapter = {
            stale object forward would be a claim about an audience nobody
            picked for this post — so the column is cleared with the target. */
         tiktok_options:(p.networks || []).includes("tiktok") ? (p.tiktok_options || null) : null,
+        /* Written only for posts that actually target TikTok, for the same
+           reason tiktok_options is: a post that no longer names tiktok has no
+           posting mode to record, so the column is cleared with the target. */
+        tiktok_mode:(p.networks || []).includes("tiktok") ? (p.tiktok_mode || null) : null,
         /* Written only for a post that actually targets Instagram *and* carries
            more than one item. A post that no longer names instagram has no
            carousel, and a one-entry array is an ordinary single-media post said
@@ -199,7 +208,7 @@ export const RemoteAdapter = {
          status trigger writes them from auth.uid() and now(), and a column this
          list does not name is one no client payload can carry — which is what
          keeps an approval attributable to the account that made it. */
-      posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options"],
+      posts:  ["id","brand_id","date","time","text","networks","status","media_url","media_urls","variants","approval_note","tiktok_options","instagram_options","tiktok_mode"],
       inbox:  ["id","brand_id","net","sender","resolved","unread","msgs"],
       /* The same three-edit rule the post columns follow: a field this list does
          not name is invisible to the sync even when the column exists. */
